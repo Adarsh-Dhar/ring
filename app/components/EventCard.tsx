@@ -21,10 +21,19 @@ interface EventCardProps {
 
 /** Single event card - memoized to prevent unnecessary re-renders */
 export const EventCard = memo(function EventCard({ event, expanded, onToggle }: EventCardProps) {
+  const getEventColor = (eventType: string) => {
+    switch (eventType) {
+      case 'person_detected': return 'bg-cyan-400'
+      case 'ai_analysis': return 'bg-purple-400'
+      case 'wander_alert': return 'bg-red-400'
+      default: return 'bg-green-400'
+    }
+  }
+
   return (
     <div className="card cursor-pointer hover:border-slate-500 transition" onClick={onToggle}>
       <div className="flex items-center gap-3">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${event.event_type === 'person_detected' ? 'bg-cyan-400' : 'bg-green-400'}`} />
+        <span className={`w-2 h-2 rounded-full shrink-0 ${getEventColor(event.event_type)}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-white">{event.event_type}</span>

@@ -10,6 +10,8 @@ import { ProcessorPanel } from './components/ProcessorPanel'
 import { useWebRTCStream } from './hooks/useWebRTCStream'
 import { useEventStream } from './hooks/useEventStream'
 import { useCanvasOverlay } from './hooks/useCanvasOverlay'
+import { useSceneDescription } from './hooks/useSceneDescription'
+import { SceneDescription } from './components/SceneDescription'
 
 type RightPanelTab = 'events' | 'processors'
 type AuthMode = 'access_token' | 'refresh_token' | null
@@ -65,6 +67,7 @@ export default function Dashboard() {
     enabled: streamActive,
     fps: 10,
   })
+  const scene = useSceneDescription({ videoRef, active: streamActive, deviceId })
 
   // Canvas overlay rendering
   useCanvasOverlay({ videoRef, canvasRef, events, results })
@@ -140,6 +143,16 @@ export default function Dashboard() {
               </button>
             )}
           </div>
+
+          <SceneDescription
+            latest={scene.latest}
+            history={scene.history}
+            analyzing={scene.analyzing}
+            error={scene.error}
+            enabled={scene.enabled}
+            onToggle={scene.setEnabled}
+            retryCount={scene.retryCount}
+          />
 
           {/* Webhook URL helper — only in full mode */}
           {!isSimpleMode && (
