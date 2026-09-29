@@ -8,6 +8,7 @@ import { broadcastEvent } from '@/lib/sse-broadcast'
  *   POST /api/webhook/test
  *   POST /api/webhook/test?type=motion_detected
  *   POST /api/webhook/test?type=device_added
+ *   POST /api/webhook/test?type=wander_alert
  */
 export async function POST(request: NextRequest) {
   const eventType = request.nextUrl.searchParams.get('type') || 'motion_detected'
@@ -40,6 +41,19 @@ export async function POST(request: NextRequest) {
             width: Math.floor(Math.random() * 150) + 100,
             height: Math.floor(Math.random() * 250) + 150,
           },
+        }),
+        // Wander Watch style alert: person at door at night
+        ...(eventType === 'wander_alert' && {
+          confidence: Math.random() * 0.2 + 0.8, // 0.8-1.0
+          bounding_box: {
+            x: Math.floor(Math.random() * 300) + 150,
+            y: Math.floor(Math.random() * 200) + 100,
+            width: Math.floor(Math.random() * 100) + 80,
+            height: Math.floor(Math.random() * 200) + 200,
+          },
+          alert_type: 'person_detected',
+          time_of_day: 'night',
+          severity: 'high',
         }),
       },
       relationships: {
@@ -89,6 +103,7 @@ export async function GET() {
       motion: 'POST /api/webhook/test?type=motion_detected',
       device_added: 'POST /api/webhook/test?type=device_added',
       device_removed: 'POST /api/webhook/test?type=device_removed',
+      wander_alert: 'POST /api/webhook/test?type=wander_alert',
     },
   })
 }
