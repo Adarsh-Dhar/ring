@@ -1,5 +1,7 @@
 'use client'
 
+import Link from 'next/link'
+
 interface HeaderProps {
   connected: boolean
   enabledCount: number
@@ -12,6 +14,7 @@ export function Header({ connected, enabledCount, simpleMode }: HeaderProps) {
       <div className="flex items-center gap-3">
         <span className="text-xl">📡</span>
         <h1 className="text-lg font-bold text-white">Live Detection Dashboard</h1>
+        <Link href="/clips" className="text-sm text-dash-cyan hover:underline">🎞️ Clips</Link>
       </div>
       {!simpleMode && (
         <div className="flex items-center gap-3">
