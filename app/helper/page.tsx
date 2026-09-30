@@ -28,8 +28,9 @@ export default function HelperPage() {
 
   const helper = snap.helpers.find((h) => h.id === me)
   const c = snap.current
-  const visible = !!c && (c.kind === 'sos' || c.helperIndex >= snap.helpers.findIndex((h) => h.id === me) || c.status !== 'waiting')
-  const myTurn = !!c && c.status === 'waiting' && (c.kind === 'sos' || c.chain[c.helperIndex] === me)
+  const idx = c ? c.chain.indexOf(me) : -1
+  const visible = !!c && idx >= 0 && (c.kind === 'sos' || c.helperIndex >= idx || c.status !== 'waiting')
+  const myTurn = !!c && c.status === 'waiting' && idx >= 0 && (c.kind === 'sos' || c.helperIndex === idx)
 
   const answer = async (a: Answer) => {
     if (!c) return
@@ -67,7 +68,7 @@ export default function HelperPage() {
   return (
     <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto">
       <header className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-bold">Helper: {helper?.emoji} {helper?.name}</h1>
+        <h1 className="text-xl font-bold">Helper: {helper?.emoji} {helper?.name ?? 'choose a helper'}</h1>
         <div className="flex gap-2">
           {snap.helpers.map((h) => (
             <button
@@ -92,7 +93,7 @@ export default function HelperPage() {
           <p className="text-lg">Nothing needs you right now.</p>
           {c && c.status === 'waiting' && (
             <p className="text-sm text-slate-400 mt-2">
-              {snap.helpers[c.helperIndex]?.name} has been asked. It reaches you if they do not answer.
+              {snap.helpers.find((h) => h.id === c.chain[c.helperIndex])?.name} has been asked. It reaches you if they do not answer.
             </p>
           )}
         </div>

@@ -25,7 +25,7 @@ function normalizeRingEvent(body: any) {
 function normalizeGenericEvent(body: any) {
   return {
     event_id: body.event_id || body.id || `evt_${Date.now()}`,
-    event_type: body.event_type || body.type || 'unknown',
+    event_type: body.event_type || body.type || body.data?.type || 'unknown',
     timestamp: body.timestamp || new Date().toISOString(),
     device_id: body.device_id || null,
     raw: body,

@@ -18,7 +18,7 @@ export default function ResidentPage() {
 
   const helpers = snap?.helpers ?? []
   const c = snap?.current ?? null
-  const currentHelper = c ? helpers.find((h) => h.id === c.chain[c.helperIndex]) : undefined
+  const currentHelper = (c ? helpers.find((h) => h.id === c.chain[c.helperIndex]) : undefined) ?? helpers[0]
   const answeredBy = c?.answeredBy ? helpers.find((h) => h.id === c.answeredBy) : undefined
   const callTarget = answeredBy ?? helpers[0]
 

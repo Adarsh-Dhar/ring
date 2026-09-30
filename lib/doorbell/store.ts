@@ -205,7 +205,7 @@ function openCase(kind: CaseKind, eventType: string, clip: string | null, note: 
     deadlineAt: now + state.timeoutSec * 1000,
     status: 'waiting',
     log: [],
-    chain: HELPERS.filter((h) => h.consent === 'approved').map((h) => h.id),
+    chain: approvedHelpers().map((h) => h.id),
   }
   addLog(c, note)
   const exp = state.expected.find((e) => e.startsAt <= now && now < e.endsAt)
