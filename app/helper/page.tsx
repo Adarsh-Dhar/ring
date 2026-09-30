@@ -4,41 +4,79 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useDoorbell } from '../hooks/useDoorbell'
 import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
-import type { Helper } from '@/lib/doorbell/config'
 import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
+import LiveView from './LiveView'
 
 export default function HelperPage() {
-  const { snap, refresh, secondsLeft } = useDoorbell()
-  const [me, setMe] = useState('h1')
+  const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
+  const [err, setErr] = useState('')
   const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [, force] = useState(0)
+  
+  // Dev-only: allow switching between helpers for testing
+  const isDev = process.env.NODE_ENV !== 'production'
+  const [devHelperId, setDevHelperId] = useState('')
 
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get('as')
-    if (q) setMe(q)
     const t = setInterval(() => force((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [])
 
   const caseId = snap?.current?.id
   useEffect(() => setVisitor(null), [caseId])
+  
+  // Initialize dev helper ID from sessionStorage on mount
+  useEffect(() => {
+    const me = snap?.me ?? ''
+    if (isDev) {
+      setDevHelperId(sessionStorage.getItem('devHelperId') || me)
+    } else {
+      setDevHelperId(me)
+    }
+  }, [isDev, snap?.me])
+  
+  // In dev mode, allow switching helpers by setting a dev-specific helper ID
+  const switchDevHelper = (helperId: string) => {
+    setDevHelperId(helperId)
+    // Store in sessionStorage for persistence during dev
+    sessionStorage.setItem('devHelperId', helperId)
+    refresh()
+  }
+  
+  // Use dev helper ID if set, otherwise use session ID
+  const me = snap?.me ?? ''
+  const effectiveMe = isDev && devHelperId ? devHelperId : me
 
+  if (unauthorized) {
+    return <main className="p-6 text-center text-amber-300">You are not signed in. Open your personal link again, or ask the guardian for a new one.</main>
+  }
   if (!snap) return <main className="p-6 text-slate-400">Loading…</main>
 
-  const helper = snap.helpers.find((h) => h.id === me)
+  const helper = snap.helpers.find((h) => h.id === effectiveMe)
   const c = snap.current
-  const idx = c ? c.chain.indexOf(me) : -1
+  const idx = c ? c.chain.indexOf(effectiveMe) : -1
   const visible = !!c && idx >= 0 && (c.kind === 'sos' || c.helperIndex >= idx || c.status !== 'waiting')
   const myTurn = !!c && c.status === 'waiting' && idx >= 0 && (c.kind === 'sos' || c.helperIndex === idx)
 
   const answer = async (a: Answer) => {
     if (!c) return
-    await fetch('/api/doorbell/answer', {
+    setErr('')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (isDev && devHelperId) headers['x-dev-helper-id'] = devHelperId
+    const r = await fetch('/api/doorbell/answer', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ caseId: c.id, helperId: me, answer: a, visitor: visitor ?? undefined }),
+      headers,
+      body: JSON.stringify({ caseId: c.id, answer: a, visitor: visitor ?? undefined }),
     })
+    if (!r.ok) setErr((await r.json().catch(() => ({}))).error || 'Could not send your answer. Try again or call the resident.')
+    refresh()
+  }
+  const ack = async () => {
+    if (!c) return
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (isDev && devHelperId) headers['x-dev-helper-id'] = devHelperId
+    await fetch('/api/doorbell/ack', { method: 'POST', headers, body: JSON.stringify({ caseId: c.id }) })
     refresh()
   }
 
@@ -69,22 +107,26 @@ export default function HelperPage() {
     <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Helper: {helper?.emoji} {helper?.name ?? 'choose a helper'}</h1>
-        <div className="flex gap-2">
-          {snap.helpers.map((h) => (
-            <button
-              key={h.id}
-              onClick={() => setMe(h.id)}
-              className={`px-3 py-1 rounded-full text-sm ${h.id === me ? 'bg-cyan-500 text-black font-semibold' : 'bg-slate-700'}`}
-            >
-              {h.name}
-            </button>
-          ))}
-        </div>
+        {isDev && (
+          <div className="flex gap-2">
+            {snap.helpers.map((h) => (
+              <button
+                key={h.id}
+                onClick={() => switchDevHelper(h.id)}
+                className={`px-3 py-1 rounded-full text-sm ${effectiveMe === h.id ? 'bg-cyan-500 text-black font-semibold' : 'bg-slate-700'}`}
+              >
+                {h.name}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
       <div className="flex items-center justify-between mb-4">
-        <EnableAlerts helperId={me} />
+        <EnableAlerts />
         <Link href="/setup" className="text-sm text-cyan-400">⚙️ Setup</Link>
       </div>
+      {stale && <p className="mb-4 rounded-xl bg-amber-700 p-3 text-center font-semibold">Connection lost. What you see may be out of date.</p>}
+      {err && <p className="mb-4 rounded-xl bg-red-900 p-3 text-center">{err}</p>}
       <a href="/helper/history" className="mb-4 inline-block text-sm text-cyan-400">📋 History</a>
 
       {!c || !visible ? (
@@ -109,21 +151,19 @@ export default function HelperPage() {
           </div>
 
           {c.clip ? (
-            <video
-              key={c.id}
-              src={`/api/doorbell/clip?file=${encodeURIComponent(c.clip)}`}
-              autoPlay
-              loop
-              muted
-              playsInline
-              controls
-              className="w-full rounded-xl bg-black aspect-video"
-            />
+            <video key={c.id} src={`/api/doorbell/clip?file=${encodeURIComponent(c.clip)}`} autoPlay loop muted playsInline controls className="w-full rounded-xl bg-black aspect-video" />
+          ) : c.kind === 'visitor' && c.deviceId && !c.deviceId.startsWith('sim-') ? (
+            <LiveView caseId={c.id} />
           ) : c.kind === 'visitor' ? (
             <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
-              No clip attached. With a real Ring, open the Ring app (Shared User) to watch live.
+              No video for this case. Open the Ring app to look.
             </div>
           ) : null}
+
+          {c.kind === 'sos' && c.status === 'waiting' && !c.ackedAt && (
+            <button onClick={ack} className="mt-3 w-full rounded-2xl bg-white py-4 text-lg font-bold text-rose-900">👀 I have seen this. I am on it.</button>
+          )}
+          {c.ackedAt && <p className="mt-3 text-sm text-emerald-300">Seen by {snap.helpers.find((h) => h.id === c.ackedBy)?.name}.</p>}
 
           {snap.expectedNow.length > 0 && (
             <p className="mb-2 text-sm text-amber-300">Expected now: {snap.expectedNow.map((e: ExpectedVisit) => `${e.icon} ${e.label}`).join(', ')}</p>

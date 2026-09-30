@@ -7,16 +7,38 @@ export interface Helper {
   emoji: string
   consent: Consent
   consentAt?: number
+  /** Bump to revoke every link/token ever issued to this helper. */
+  tokenEpoch?: number
 }
 
-/** First-run defaults only. After the first save, data/state.json is the source of truth. */
-export const HELPERS: Helper[] = [
-  { id: 'h1', name: 'Mom', phone: '+910000000001', emoji: '👩', consent: 'approved' }, // Replace with real phone number for SMS testing
-  { id: 'h2', name: 'Brother', phone: '+910000000002', emoji: '👨', consent: 'approved' }, // Replace with real phone number for SMS testing
-]
+/** What other screens may see about a helper. Phone is only sent to the resident (to call). */
+export interface PublicHelper {
+  id: string
+  name: string
+  emoji: string
+  phone?: string
+}
 
+/**
+ * No fake helpers by default. A system with pretend helpers looks like it works while nobody is alerted.
+ * For local demos only: SEED_DEMO_HELPERS=1 (ignored in production).
+ */
+export const HELPERS: Helper[] =
+  process.env.SEED_DEMO_HELPERS === '1' && process.env.NODE_ENV !== 'production'
+    ? [
+        { id: 'h1', name: 'Mom', phone: '+918926130730', emoji: '👩', consent: 'approved' },
+        { id: 'h2', name: 'Brother', phone: '+918926130730', emoji: '👨', consent: 'approved' },
+      ]
+    : []
+
+export const RESIDENT_TZ = process.env.RESIDENT_TZ || 'Asia/Kolkata'
 export const DEFAULT_ESCALATION_SECONDS = Number(process.env.ESCALATION_SECONDS || 30)
 export const RESULT_TTL_MS = 60_000
 export const NO_RESPONSE_TTL_MS = 5 * 60_000
 export const CHECKIN_HOUR = Number(process.env.CHECKIN_HOUR || 10)
 export const CHECKIN_GRACE_MIN = Number(process.env.CHECKIN_GRACE_MIN || 60)
+/** Emergency number shown on the resident screen (India: 112). */
+export const EMERGENCY_NUMBER = process.env.EMERGENCY_NUMBER || '112'
+
+/** A phone that is obviously a placeholder (+910000000001 etc.) must never count as "a helper who can be reached". */
+export const isPlaceholderPhone = (p: string) => /0{6,}/.test(p.replace(/^\+\d{1,3}/, ''))

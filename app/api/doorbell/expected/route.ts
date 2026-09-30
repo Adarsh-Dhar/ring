@@ -1,21 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { addExpected, removeExpected } from '@/lib/doorbell/store'
+import { authorize, parse } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
+const Add = z.object({
+  icon: z.string().max(8),
+  label: z.string().min(1).max(40),
+  startsAt: z.number().finite(),
+  endsAt: z.number().finite(),
+}).refine((v) => v.endsAt > v.startsAt)
+
 export async function POST(req: NextRequest) {
-  const { icon, label, startsAt, endsAt } = await req.json()
-  const ok =
-    typeof label === 'string' && label.length > 0 && label.length <= 40 &&
-    typeof icon === 'string' && icon.length <= 8 &&
-    Number.isFinite(startsAt) && Number.isFinite(endsAt) && endsAt > startsAt
-  if (!ok) return NextResponse.json({ error: 'bad request' }, { status: 400 })
+  const a = authorize(req, 'helper', 'admin')
+  if (!a.ok) return a.res
+  const p = await parse(req, Add)
+  if (!p.ok) return p.res
+  const { icon, label, startsAt, endsAt } = p.data
   return NextResponse.json({ ok: true, expected: addExpected(icon, label, startsAt, endsAt) })
 }
 
 export async function DELETE(req: NextRequest) {
-  const { id } = await req.json()
-  removeExpected(id)
+  const a = authorize(req, 'helper', 'admin')
+  if (!a.ok) return a.res
+  const p = await parse(req, z.object({ id: z.string().max(80) }))
+  if (!p.ok) return p.res
+  removeExpected(p.data.id)
   return NextResponse.json({ ok: true })
 }

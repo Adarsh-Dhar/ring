@@ -47,7 +47,8 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
   const sid = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from = process.env.TWILIO_FROM
-  if (!sid || !token || !from) {
+  // In development, just mock SMS to avoid Twilio trial account errors
+  if (!sid || !token || !from || process.env.NODE_ENV !== 'production') {
     console.log(`[SMS mock] to ${to}: ${body}`)
     return true
   }
@@ -60,7 +61,10 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
       },
       body: new URLSearchParams({ To: to, From: from, Body: body }),
     })
-    if (!res.ok) console.error('[SMS] Twilio error', res.status, await res.text())
+    if (!res.ok) {
+      const errText = await res.text()
+      console.error('[SMS] Twilio error', res.status, errText)
+    }
     return res.ok
   } catch (e) {
     console.error('[SMS] failed', e)

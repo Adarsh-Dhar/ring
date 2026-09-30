@@ -10,27 +10,77 @@ export default function SimPage() {
   const [clips, setClips] = useState<string[]>([])
   const [timeout, setTimeoutSec] = useState(30)
   const [msg, setMsg] = useState('')
+  const [pinInput, setPinInput] = useState('')
+  const [needPin, setNeedPin] = useState(false)
 
   const load = useCallback(async () => {
-    const d = await fetch('/api/sim').then((r) => r.json())
+    const pin = sessionStorage.getItem('setupPin') || ''
+    const r = await fetch('/api/sim', { headers: { 'x-setup-pin': pin } })
+    if (r.status === 401) {
+      setNeedPin(true)
+      setMsg('')
+      return
+    }
+    setNeedPin(false)
+    if (!r.ok) {
+      setMsg('Simulator is off. Set ENABLE_SIM=1 (development only).')
+      setClips([])
+      return
+    }
+    const d = await r.json()
     setClips(d.clips)
     setTimeoutSec(d.timeoutSec)
+    setMsg('')
   }, [])
-  useEffect(() => { load() }, [load])
 
   const post = async (body: object, note?: string) => {
-    await fetch('/api/sim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const r = await fetch('/api/sim', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-setup-pin': sessionStorage.getItem('setupPin') || '' }, body: JSON.stringify(body) })
+    if (r.status === 401) {
+      setNeedPin(true)
+      setMsg('PIN required')
+      return
+    }
     if (note) setMsg(note)
     refresh()
+  }
+
+  const submitPin = async () => {
+    if (!pinInput.trim()) {
+      setMsg('Please enter a PIN')
+      return
+    }
+    sessionStorage.setItem('setupPin', pinInput)
+    setPinInput('')
+    await load()
+  }
+
+  if (needPin) {
+    return (
+      <main className="mx-auto max-w-sm p-6 text-white">
+        <h1 className="mb-4 text-xl font-bold">Guardian PIN</h1>
+        <input
+          type="password"
+          value={pinInput}
+          onChange={(e) => setPinInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submitPin()}
+          placeholder="Enter PIN"
+          className="w-full mb-3 rounded-lg bg-slate-700 p-2 text-white"
+          autoFocus
+        />
+        <button onClick={submitPin} className="w-full rounded-lg bg-cyan-500 py-3 font-bold text-black cursor-pointer hover:bg-cyan-400">
+          Unlock
+        </button>
+      </main>
+    )
   }
 
   return (
     <main className="min-h-screen bg-slate-900 text-white p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold mb-1">Ring simulator</h1>
       <p className="text-slate-400 mb-6 text-sm">
-        No Ring needed. Each button sends a Ring-shaped <code>person_detected</code> webhook through the real pipeline.
+        No Ring needed. Each button sends a Ring-shaped <code>button_press</code> webhook through the real pipeline.
         Open <a className="text-cyan-400 underline" href="/resident" target="_blank">/resident</a> and{' '}
-        <a className="text-cyan-400 underline" href="/helper?as=h1" target="_blank">/helper?as=h1</a> in other tabs.
+        <a className="text-cyan-400 underline" href="/helper" target="_blank">/helper</a> in other tabs (sign in with a link from Setup first). Needs ENABLE_SIM=1 and a non-production build.
       </p>
 
       <section className="mb-6">
@@ -39,7 +89,7 @@ export default function SimPage() {
           {clips.map((f) => (
             <button
               key={f}
-              onClick={() => post({ action: 'trigger', clip: f, eventType: 'person_detected' }, `Sent event with clip ${f}`)}
+              onClick={() => post({ action: 'trigger', clip: f, eventType: 'button_press' }, `Sent event with clip ${f}`)}
               className="px-3 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-left text-sm"
             >
               <span className="block text-slate-400 text-xs">{f.match(/level-(\d+)/)?.[0] ?? ''}</span>
@@ -47,7 +97,7 @@ export default function SimPage() {
             </button>
           ))}
           <button
-            onClick={() => post({ action: 'trigger', clip: null, eventType: 'doorbell_pressed' }, 'Sent doorbell press with no clip')}
+            onClick={() => post({ action: 'trigger', clip: null, eventType: 'button_press' }, 'Sent doorbell press with no clip')}
             className="px-3 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-left text-sm"
           >
             <span className="block text-slate-400 text-xs">no clip</span>doorbell pressed

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { DoorCase } from '@/lib/doorbell/store'
-import type { Helper } from '@/lib/doorbell/config'
+import type { PublicHelper } from '@/lib/doorbell/config'
 
 const label = (c: DoorCase) =>
   c.status === 'waiting'
@@ -17,12 +17,14 @@ const label = (c: DoorCase) =>
           : '📞 Will call'
 
 export default function HistoryPage() {
-  const [data, setData] = useState<{ helpers: Helper[]; cases: DoorCase[] } | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [data, setData] = useState<{ helpers: PublicHelper[]; cases: DoorCase[] } | null>(null)
 
   useEffect(() => {
-    fetch('/api/doorbell/history', { cache: 'no-store' }).then((r) => r.json()).then(setData)
+    fetch('/api/doorbell/history', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : Promise.reject())).then(setData).catch(() => setFailed(true))
   }, [])
 
+  if (failed) return <main className="p-6 text-amber-300">You are not signed in. Open your personal link again.</main>
   if (!data) return <main className="p-6 text-slate-400">Loading…</main>
 
   return (

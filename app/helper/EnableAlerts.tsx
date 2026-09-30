@@ -10,14 +10,14 @@ const b64ToU8 = (s: string) => {
 
 type St = 'unknown' | 'off' | 'on' | 'blocked' | 'unsupported'
 
-export default function EnableAlerts({ helperId }: { helperId: string }) {
+export default function EnableAlerts() {
   const [st, setSt] = useState<St>('unknown')
 
   const send = (sub: PushSubscription) =>
     fetch('/api/push/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ helperId, subscription: sub.toJSON() }),
+      body: JSON.stringify({ subscription: sub.toJSON() }),
     })
 
   useEffect(() => {
@@ -37,7 +37,7 @@ export default function EnableAlerts({ helperId }: { helperId: string }) {
       } else setSt('off')
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [helperId])
+  }, [])
 
   const enable = async () => {
     if ((await Notification.requestPermission()) !== 'granted') return setSt('blocked')

@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { authorize, fail, parse } from '@/lib/guard'
+import { caseDevice, isCaseOpenFor, logView } from '@/lib/doorbell/store'
+import { startWhep, stopWhep, ringConfigured } from '@/lib/ring/client'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+/**
+ * Live view through OUR server so the Ring access token never reaches a browser.
+ * The browser sends its WebRTC SDP offer here; we forward it to Ring (WHEP) and return the SDP answer.
+ * Video itself then flows directly between Ring and the helper's browser.
+ * Ring limits a session to 30 s (battery) or 60 s (wired), video only, with a Ring watermark.
+ */
+export async function POST(req: NextRequest) {
+  const a = authorize(req, 'helper')
+  if (!a.ok) return a.res
+  const helperId = (a.session as { helperId: string }).helperId
+  const caseId = req.nextUrl.searchParams.get('caseId') || ''
+  if (!ringConfigured()) return fail('Ring is not connected', 503)
+  if (!isCaseOpenFor(caseId, helperId)) return fail('not allowed', 403)
+  const device = caseDevice(caseId)
+  if (!device || device.startsWith('sim-')) return fail('No Ring device for this case', 404)
+  const offer = await req.text()
+  if (!offer.startsWith('v=0') || offer.length > 20_000) return fail('bad offer')
+  try {
+    const { answer, sessionId } = await startWhep(device, offer)
+    logView(caseId, helperId, 'opened live video')
+    return new Response(answer, { status: 201, headers: { 'Content-Type': 'application/sdp', 'X-Session-Id': sessionId } })
+  } catch (e) {
+    console.error('[RING] live view failed', e)
+    return fail('Could not start live video', 502)
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  const a = authorize(req, 'helper')
+  if (!a.ok) return a.res
+  const p = await parse(req, z.object({ caseId: z.string().max(80), sessionId: z.string().max(200) }))
+  if (!p.ok) return p.res
+  const helperId = (a.session as { helperId: string }).helperId
+  if (!isCaseOpenFor(p.data.caseId, helperId)) return fail('not allowed', 403)
+  const device = caseDevice(p.data.caseId)
+  if (device) await stopWhep(device, p.data.sessionId)
+  return NextResponse.json({ ok: true })
+}

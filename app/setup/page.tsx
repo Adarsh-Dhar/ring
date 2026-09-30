@@ -10,6 +10,8 @@ interface Setup {
   helpers: Helper[]
   quiet: Quiet
   timeoutSec: number
+  ready: boolean
+  timeZone: string
 }
 
 const BADGE: Record<Helper['consent'], string> = {
@@ -26,7 +28,7 @@ export default function SetupPage() {
   const [needPin, setNeedPin] = useState(false)
   const [data, setData] = useState<Setup | null>(null)
   const [err, setErr] = useState('')
-  const [origin, setOrigin] = useState('')
+  const [note, setNote] = useState('')
   const [form, setForm] = useState({ name: '', phone: '', emoji: '🙂' })
   const [secs, setSecs] = useState(30)
   const [quiet, setQuietForm] = useState<Quiet>({ enabled: false, startHour: 22, endHour: 6 })
@@ -42,7 +44,6 @@ export default function SetupPage() {
   }, [pin])
 
   useEffect(() => {
-    setOrigin(window.location.origin)
     load()
   }, [load])
 
@@ -53,16 +54,44 @@ export default function SetupPage() {
       headers: { 'Content-Type': 'application/json', 'x-setup-pin': pin },
       body: JSON.stringify(body),
     })
-    if (!r.ok) setErr((await r.json()).error || 'Something went wrong')
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) setErr(j.error || 'Something went wrong')
     load()
+    return j
+  }
+
+  const copyLink = async (target: string, who: string) => {
+    const j = await act({ action: 'link', target })
+    if (j?.url) {
+      await navigator.clipboard.writeText(j.url)
+      setNote(`Sign-in link for ${who} copied. Send it only to ${who}. Anyone with the link can act as ${who}.`)
+    }
+  }
+  const revoke = async (target: string, who: string) => {
+    if (!confirm(`Sign ${who} out everywhere? Their old link stops working.`)) return
+    await act({ action: 'revoke', target })
+    setNote(`${who} is signed out. Copy a new link when you are ready.`)
   }
 
   if (needPin) {
     return (
       <main className="mx-auto max-w-sm p-6 text-white">
         <h1 className="mb-4 text-xl font-bold">Guardian PIN</h1>
-        <input type="password" value={pinInput} onChange={(e) => setPinInput(e.target.value)} className={`${input} mb-3 w-full`} />
-        <button onClick={() => setPin(pinInput)} className="w-full rounded-lg bg-cyan-500 py-3 font-bold text-black">Unlock</button>
+        <input
+          type="password"
+          value={pinInput}
+          onChange={(e) => setPinInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && (setPin(pinInput), load())}
+          placeholder="Enter PIN"
+          className={`${input} mb-3 w-full`}
+          autoFocus
+        />
+        <button
+          onClick={() => { setPin(pinInput); load() }}
+          className="w-full rounded-lg bg-cyan-500 py-3 font-bold text-black cursor-pointer hover:bg-cyan-400"
+        >
+          Unlock
+        </button>
       </main>
     )
   }
@@ -75,6 +104,13 @@ export default function SetupPage() {
         <Link href="/" className="text-sm text-cyan-400">Home</Link>
       </header>
       {err && <p className="mb-3 rounded-lg bg-red-900 p-3 text-sm">{err}</p>}
+      {note && <p className="mb-3 rounded-lg bg-emerald-900 p-3 text-sm">{note}</p>}
+      {!data.ready && (
+        <p className="mb-3 rounded-lg bg-amber-700 p-3 text-sm font-semibold">
+          Not ready: no approved helper with a real phone number. Nobody will be alerted. Add a helper and approve them.
+        </p>
+      )}
+      <p className="mb-4 text-sm text-slate-400">Times use the time zone {data.timeZone}.</p>
 
       <h2 className="mb-1 text-sm uppercase tracking-wide text-slate-400">Helpers</h2>
       <p className="mb-2 text-sm text-slate-400">Asked in this order, top first. Only approved helpers are asked.</p>
@@ -93,12 +129,20 @@ export default function SetupPage() {
               {h.consent !== 'approved' && (
                 <Link href={`/consent?id=${h.id}`} className="rounded-lg bg-amber-600 px-3 py-1">Ask for consent</Link>
               )}
-              <button className={btn} onClick={() => navigator.clipboard.writeText(`${origin}/helper?as=${h.id}`)}>Copy helper link</button>
+              {h.consent === 'approved' && <button className={btn} onClick={() => copyLink(h.id, h.name)}>Copy sign-in link</button>}
+              <button className={btn} onClick={() => revoke(h.id, h.name)}>Sign out</button>
               <button className={`${btn} text-red-300`} onClick={() => act({ action: 'remove', id: h.id })}>Remove</button>
             </div>
           </li>
         ))}
       </ul>
+
+      <h2 className="mb-1 text-sm uppercase tracking-wide text-slate-400">Resident's screen</h2>
+      <div className="mb-6 flex flex-wrap gap-2 rounded-2xl bg-slate-800 p-4 text-sm">
+        <button className={btn} onClick={() => copyLink('resident', 'the resident device')}>Copy resident screen link</button>
+        <button className={btn} onClick={() => revoke('resident', 'the resident device')}>Sign out</button>
+        <p className="w-full text-slate-400">Open the link once on the resident's phone or tablet. It stays signed in.</p>
+      </div>
 
       <h2 className="mb-2 text-sm uppercase tracking-wide text-slate-400">Add a helper</h2>
       <div className="mb-6 flex flex-wrap gap-2">
