@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getAuthMode } from '@/lib/auth'
+import { isDemoMode } from '@/lib/demo'
 
 export async function GET() {
+  if (isDemoMode()) return NextResponse.json({ mode: 'access_token', demo: true })
   const mode = getAuthMode()
 
   if (mode === null && process.env.RING_ACCESS_TOKEN && process.env.RING_REFRESH_TOKEN) {

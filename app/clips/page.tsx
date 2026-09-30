@@ -5,6 +5,19 @@ import Link from 'next/link'
 import { discoverRingDevice } from '@/lib/ring/camera'
 import { useRecordedClips, RingClip } from '@/app/hooks/useRecordedClips'
 
+function getSeverityColor(severity: number | undefined): string {
+  if (severity === undefined) return 'bg-slate-600'
+  if (severity <= 3) return 'bg-green-600'
+  if (severity <= 6) return 'bg-yellow-600'
+  if (severity <= 8) return 'bg-orange-600'
+  return 'bg-red-600'
+}
+
+function getSeverityLabel(severity: number | undefined): string {
+  if (severity === undefined) return '?'
+  return severity.toString()
+}
+
 export default function ClipsPage() {
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [goTo, setGoTo] = useState('1')
@@ -94,6 +107,7 @@ export default function ClipsPage() {
         <div className="text-xs text-slate-400 space-y-1">
           <p><strong className="text-white">All event types are now downloadable:</strong> motion, ding, doorbell_motion, doorbell_motion_detected, on_demand</p>
           <p className="text-slate-500">Using alternative Ring API VOD method for on_demand recordings.</p>
+          <p className="text-slate-500"><strong className="text-white">Severity badges:</strong> Green (0-3), Yellow (4-6), Orange (7-8), Red (9-10). Name files as level-XX-name.mp4 to set severity.</p>
         </div>
       </div>
 
@@ -202,6 +216,7 @@ export default function ClipsPage() {
               const n = c.labels[clip.id]
               const isCurrent = c.current?.clip.id === clip.id
               const isDownloadable = clip.downloadable !== false
+              const severity = (clip as any).severity
               return (
                 <li
                   key={clip.id}
@@ -217,6 +232,14 @@ export default function ClipsPage() {
                     onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
                     className={`w-14 px-1 py-1 rounded bg-dash-dark text-white text-center ${dupes[n] > 1 ? 'ring-2 ring-red-500' : ''}`}
                   />
+                  {severity !== undefined && (
+                    <span
+                      className={`px-2 py-0.5 rounded text-xs font-bold text-white ${getSeverityColor(severity)}`}
+                      title={`Severity level: ${severity}`}
+                    >
+                      {getSeverityLabel(severity)}
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate">{clip.eventType}</p>
                     <p className="text-xs text-slate-400">{new Date(clip.startMs).toLocaleString()}</p>

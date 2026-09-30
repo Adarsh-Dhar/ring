@@ -1,11 +1,17 @@
 import { NextResponse } from 'next/server'
 import { getAccessToken } from '@/lib/auth'
+import { isDemoMode, DEMO_DEVICE_ID } from '@/lib/demo'
 
 const DEVICE_ID = process.env.NEXT_PUBLIC_RING_DEVICE_ID
 const DEVICE_NAME = process.env.NEXT_PUBLIC_RING_DEVICE_NAME || 'Camera'
 const API_BASE = 'https://api.amazonvision.com'
 
 export async function GET() {
+  if (isDemoMode()) {
+    return NextResponse.json({
+      devices: [{ id: DEMO_DEVICE_ID, name: 'Demo Camera', online: true, capabilities: { motionDetection: true } }],
+    })
+  }
   try {
     const token = await getAccessToken()
 

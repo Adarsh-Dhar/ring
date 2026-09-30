@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccessToken } from '@/lib/auth'
+import { isDemoMode, listDemoClips } from '@/lib/demo'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,19 @@ function toMs(v: unknown): number | null {
  * is what /api/ring/clip uses to download the matching MP4.
  */
 export async function GET(request: NextRequest) {
+  if (isDemoMode()) {
+    const clips = listDemoClips().map((c) => ({
+      id: `demo.${c.file}`,
+      eventId: `demo.${c.file}`,
+      eventType: 'motion',
+      startMs: c.startMs,
+      endMs: c.endMs,
+      downloadable: true,
+      file: c.file,
+      severity: c.severity,
+    }))
+    return NextResponse.json({ clips, total: clips.length, debugFirst: null, demo: true })
+  }
   try {
     const deviceId =
       request.nextUrl.searchParams.get('deviceId') || process.env.NEXT_PUBLIC_RING_DEVICE_ID
