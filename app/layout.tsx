@@ -1,16 +1,14 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'Live Detection Dashboard',
-  description: 'Real-time AI-powered camera detection demo',
+  title: 'Doorbell Helper',
+  description: 'Simple doorbell alerts for the resident, decisions for the helper',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
-      <body className="min-h-screen bg-dash-dark text-slate-200">
-        {children}
-      </body>
+    <html lang="en">
+      <body className="min-h-screen bg-slate-900 text-slate-200">{children}</body>
     </html>
   )
 }

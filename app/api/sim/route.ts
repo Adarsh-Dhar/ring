@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { broadcastEvent } from '@/lib/sse-broadcast'
 import { listDemoClips } from '@/lib/demo'
 import { ingestEvent, setOffline, setTimeoutSec, resetAll, getState } from '@/lib/doorbell/store'
 
@@ -46,7 +45,6 @@ export async function POST(req: NextRequest) {
         metadata: { simulated: true, request_id: payload.meta.request_id },
         raw: payload,
       }
-      broadcastEvent(event)
       const c = ingestEvent(event)
       return NextResponse.json({ ok: true, case: c })
     }
