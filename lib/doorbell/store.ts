@@ -1,3 +1,4 @@
+import { pickClip } from '../demo'
 import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, RESIDENT_TZ, EMERGENCY_NUMBER, isPlaceholderPhone, type Helper, type PublicHelper, type Consent } from './config'
 import { zonedHour, zonedDayKey, zonedHourOnSameDay } from '../time'
 import { fetchDeviceOnline, listDeviceIds, ringConfigured } from '../ring/client'
@@ -232,7 +233,7 @@ function openCase(kind: CaseKind, eventType: string, clip: string | null, note: 
     id: id(),
     kind,
     eventType,
-    clip,
+    clip: clip ?? pickClip(), // no clip given -> random file from videos/ (when LOCAL_VIDEO is on)
     createdAt: now,
     helperIndex: 0,
     deadlineAt: now + state.timeoutSec * 1000,

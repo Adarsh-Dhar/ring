@@ -97,10 +97,10 @@ export default function SimPage() {
             </button>
           ))}
           <button
-            onClick={() => post({ action: 'trigger', clip: null, eventType: 'button_press' }, 'Sent doorbell press with no clip')}
+            onClick={() => post({ action: 'trigger', clip: null, eventType: 'button_press' }, 'Sent doorbell press (random video from videos/)')}
             className="px-3 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-left text-sm"
           >
-            <span className="block text-slate-400 text-xs">no clip</span>doorbell pressed
+            <span className="block text-slate-400 text-xs">random</span>doorbell pressed (random video)
           </button>
         </div>
       </section>

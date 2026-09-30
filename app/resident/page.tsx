@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
+import CameraFeed from '../helper/CameraFeed'
+import LiveView from '../helper/LiveView'
 
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean }
 
@@ -9,6 +11,7 @@ export default function ResidentPage() {
   const { snap, error, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
   const [, force] = useState(0)
   const [sound, setSound] = useState(false) // read aloud + beeps. Turning it on is also the tap browsers need for audio.
+  const [showVideo, setShowVideo] = useState(false) // toggle to show/hide video feed
   const audio = useRef<AudioContext | null>(null)
 
   useEffect(() => {
@@ -126,9 +129,14 @@ export default function ResidentPage() {
     <main className={`min-h-screen ${screen.bg} text-white flex flex-col items-center justify-between p-6 transition-colors duration-700`}>
       <div className="w-full max-w-md flex justify-between text-sm">
         <span>Resident screen</span>
-        <button onClick={() => setSound((s) => !s)} className="px-3 py-1 rounded-full bg-black/30" aria-label="Sound and read aloud">
-          {sound ? '🔊 On' : '🔈 Off'}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowVideo((s) => !s)} className="px-3 py-1 rounded-full bg-black/30" aria-label="Toggle video feed">
+            {showVideo ? '📹 On' : '📹 Off'}
+          </button>
+          <button onClick={() => setSound((s) => !s)} className="px-3 py-1 rounded-full bg-black/30" aria-label="Sound and read aloud">
+            {sound ? '🔊 On' : '🔈 Off'}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col items-center text-center gap-4" role="status" aria-live="assertive">
@@ -138,6 +146,15 @@ export default function ResidentPage() {
         {showBar && (
           <div className="w-64 h-3 bg-black/30 rounded-full overflow-hidden mt-2">
             <div className="h-full bg-white/90 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        {showVideo && c && (
+          <div className="w-full max-w-md mt-4">
+            {c.clip ? (
+              <CameraFeed caseId={c.id} file={c.clip} />
+            ) : c.kind === 'visitor' && c.deviceId && !c.deviceId.startsWith('sim-') ? (
+              <LiveView caseId={c.id} />
+            ) : null}
           </div>
         )}
       </div>

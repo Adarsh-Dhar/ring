@@ -7,6 +7,7 @@ import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
 import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
 import LiveView from './LiveView'
+import CameraFeed from './CameraFeed'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -151,7 +152,7 @@ export default function HelperPage() {
           </div>
 
           {c.clip ? (
-            <video key={c.id} src={`/api/doorbell/clip?file=${encodeURIComponent(c.clip)}`} autoPlay loop muted playsInline controls className="w-full rounded-xl bg-black aspect-video" />
+            <CameraFeed caseId={c.id} file={c.clip} />
           ) : c.kind === 'visitor' && c.deviceId && !c.deviceId.startsWith('sim-') ? (
             <LiveView caseId={c.id} />
           ) : c.kind === 'visitor' ? (

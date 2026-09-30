@@ -13,6 +13,11 @@ out/
 # Data directory
 data/
 
+# Local video files (door camera)
+videos/*.mp4
+videos/*.mov
+videos/*.webm
+
 # Debug logs
 npm-debug.log*
 yarn-debug.log*
