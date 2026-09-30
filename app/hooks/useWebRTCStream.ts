@@ -27,22 +27,6 @@ export function useWebRTCStream({ videoRef, deviceId }: UseWebRTCStreamOptions):
   const startStream = useCallback(async () => {
     setStreamError(null)
     try {
-      // Demo mode: loop the newest sample video instead of opening a WebRTC session
-      const cfg = await fetch('/api/ring/config').then((r) => r.json()).catch(() => ({}))
-      if (cfg.demo) {
-        const list = await fetch('/api/ring/clips').then((r) => r.json())
-        const first = list.clips?.[0]
-        if (!first) throw new Error('No sample videos found. Add .mp4 files to public/samples/')
-        const v = videoRef.current
-        if (!v) return
-        v.srcObject = null
-        v.src = `/samples/${encodeURIComponent(first.file)}`
-        v.loop = true
-        v.muted = true
-        await v.play().catch(() => {})
-        setStreamActive(true)
-        return
-      }
       const pc = new RTCPeerConnection({
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
@@ -109,12 +93,7 @@ export function useWebRTCStream({ videoRef, deviceId }: UseWebRTCStreamOptions):
       }).catch(() => {})
       sessionUrlRef.current = null
     }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-      videoRef.current.pause()
-      videoRef.current.removeAttribute('src')
-      videoRef.current.load()
-    }
+    if (videoRef.current) videoRef.current.srcObject = null
     setStreamActive(false)
     setStreamError(null)
   }, [videoRef])

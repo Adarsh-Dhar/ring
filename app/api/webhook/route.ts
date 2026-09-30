@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { broadcastEvent, eventStore, addClient, removeClient } from '@/lib/sse-broadcast'
 import { parseRingWebhook } from '@/lib/schemas/webhook'
+import { ingestEvent } from '@/lib/doorbell/store'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest) {
     }
 
     broadcastEvent(event)
+    ingestEvent(event) // wake the helper flow
     return NextResponse.json({ status: 'processed', event_id: event.event_id })
   } catch (error) {
     console.error('[WEBHOOK] Error:', error)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { broadcastEvent } from '@/lib/sse-broadcast'
+import { ingestEvent } from '@/lib/doorbell/store'
 
 /**
  * Test endpoint to simulate Ring webhook events for local development.
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
   }
 
   broadcastEvent(event)
+  ingestEvent(event)
 
   return NextResponse.json({ 
     status: 'simulated', 

@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccessToken } from '@/lib/auth'
-import fs from 'fs'
-import { Readable } from 'stream'
-import { isDemoMode, resolveDemoFile } from '@/lib/demo'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,16 +17,6 @@ const RING_API_BASE = 'https://api.ring.com'
 export async function POST(request: NextRequest) {
   try {
     const { deviceId, timestamp, duration, audio, eventId, eventType } = await request.json()
-    // Demo mode: stream a local sample file instead of calling Ring
-    if (isDemoMode()) {
-      const name = typeof eventId === 'string' && eventId.startsWith('demo.') ? eventId.slice(5) : ''
-      const file = name ? resolveDemoFile(name) : null
-      if (!file) return NextResponse.json({ error: 'Demo clip not found in public/samples' }, { status: 404 })
-      const size = fs.statSync(file.full).size
-      return new Response(Readable.toWeb(fs.createReadStream(file.full)) as ReadableStream, {
-        headers: { 'Content-Type': file.mime, 'Content-Length': String(size) },
-      })
-    }
     const id = deviceId || process.env.NEXT_PUBLIC_RING_DEVICE_ID
     if (!id || !timestamp || !duration) {
       return NextResponse.json({ error: 'deviceId, timestamp and duration required' }, { status: 400 })
