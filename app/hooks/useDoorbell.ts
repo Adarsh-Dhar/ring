@@ -14,6 +14,7 @@ export interface DoorbellSnapshot {
   expected: ExpectedVisit[]
   expectedNow: ExpectedVisit[]
   checkin: { doneToday: boolean; dueHour: number }
+  quietNow: boolean
 }
 
 export function useDoorbell(intervalMs = 1000) {

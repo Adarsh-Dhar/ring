@@ -28,7 +28,7 @@ export const RingWebhookAttributesSchema = z.object({
 /** Ring webhook data schema */
 export const RingWebhookDataSchema = z.object({
   id: z.string(),
-  type: z.enum(['motion_detected', 'device_added', 'device_removed', 'person_detected']),
+  type: z.string(),
   attributes: RingWebhookAttributesSchema,
   relationships: z.object({
     devices: z.object({

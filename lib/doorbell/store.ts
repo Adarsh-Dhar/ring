@@ -1,4 +1,4 @@
-import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, type Helper } from './config'
+import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, type Helper, type Consent } from './config'
 import { pushToSubs, sendSms, type PushSub } from './notify'
 import { loadState, saveSoon } from './persist'
 
@@ -6,6 +6,8 @@ export type CaseStatus = 'waiting' | 'answered' | 'no_response'
 export type Answer = 'safe' | 'not_safe' | 'call_me'
 export type CaseKind = 'visitor' | 'sos'
 export type Visitor = 'known' | 'delivery' | 'unknown'
+
+export interface Quiet { enabled: boolean; startHour: number; endHour: number }
 
 export interface ExpectedVisit {
   id: string
@@ -42,16 +44,20 @@ interface DoorbellState {
   expected: ExpectedVisit[]
   checkinAt: number | null
   missedAlertDay: string | null
+  helpers: Helper[]
+  quiet: Quiet
 }
 
 function restore(): Partial<DoorbellState> {
   const s = loadState<DoorbellState>()
+  const known = (s.helpers ?? HELPERS).filter((h) => h.consent === 'approved').map((h) => h.id)
   for (const c of s.cases ?? []) {
     if (c.status === 'waiting') {
       c.status = 'no_response'
       c.resolvedAt = Date.now()
       c.log.push({ t: Date.now(), msg: 'Server restarted while this case was open. Closed without alerts.' })
     }
+    c.chain ||= known
   }
   return s
 }
@@ -65,15 +71,21 @@ const state: DoorbellState = (g.__doorbell ||= {
   expected: [],
   checkinAt: null,
   missedAlertDay: null,
+  helpers: HELPERS.map((h) => ({ ...h })),
+  quiet: { enabled: false, startHour: 22, endHour: 6 },
   ...restore(),
 })
 state.subs ||= {}
 state.expected ||= []
 state.checkinAt ??= null
 state.missedAlertDay ??= null
+state.helpers ||= HELPERS.map((h) => ({ ...h }))
+state.quiet ||= { enabled: false, startHour: 22, endHour: 6 }
 const persist = () => saveSoon(() => state)
 
-const TRIGGER_EVENTS = new Set(['person_detected', 'doorbell_pressed', 'ding'])
+const TRIGGER_EVENTS = new Set(
+  (process.env.RING_TRIGGER_EVENTS || 'person_detected,doorbell_pressed,ding').split(',').map((s) => s.trim()).filter(Boolean)
+)
 
 const id = () => `case_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 
@@ -94,7 +106,18 @@ function notifyHelper(h: Helper, title: string, body: string, caseId: string) {
     .catch((e) => console.error('[PUSH]', e))
 }
 function notifyAll(title: string, body: string, caseId: string) {
-  HELPERS.forEach((h) => notifyHelper(h, title, body, caseId))
+  approvedHelpers().forEach((h) => notifyHelper(h, title, body, caseId))
+}
+
+const approvedHelpers = () => state.helpers.filter((h) => h.consent === 'approved')
+const findHelper = (id: string) => state.helpers.find((h) => h.id === id)
+export const getHelper = (id: string) => findHelper(id)
+
+function isQuiet(now: number): boolean {
+  const q = state.quiet
+  if (!q.enabled || q.startHour === q.endHour) return false
+  const h = new Date(now).getHours()
+  return q.startHour < q.endHour ? h >= q.startHour && h < q.endHour : h >= q.startHour || h < q.endHour
 }
 
 const RESIDENT = process.env.RESIDENT_NAME || 'the resident'
@@ -119,7 +142,7 @@ function checkMissedCheckin(now: number) {
 }
 
 function smsAll(body: string) {
-  HELPERS.forEach((h) => {
+  approvedHelpers().forEach((h) => {
     void sendSms(h.phone, body)
   })
 }
@@ -140,7 +163,7 @@ export function tick(now = Date.now()) {
     if (c.status !== 'waiting') continue
     while (c.status === 'waiting' && now >= c.deadlineAt) {
       const fromId = c.chain[c.helperIndex]
-      const from = HELPERS.find((h) => h.id === fromId)
+      const from = findHelper(fromId)
       c.helperIndex += 1
       if (c.helperIndex >= c.chain.length) {
         c.status = 'no_response'
@@ -150,7 +173,7 @@ export function tick(now = Date.now()) {
         addLog(c, 'SMS sent to all helpers.')
       } else {
         const toId = c.chain[c.helperIndex]
-        const to = HELPERS.find((h) => h.id === toId)
+        const to = findHelper(toId)
         c.deadlineAt += state.timeoutSec * 1000
         addLog(c, `${from?.name ?? 'Someone'} did not answer in ${state.timeoutSec}s. Escalated to ${to?.name ?? 'next helper'}.`)
         if (to) notifyHelper(to, `🚪 ${from?.name ?? 'Someone'} did not answer`, 'It is your turn. Open the app.', c.id)
@@ -187,7 +210,7 @@ function openCase(kind: CaseKind, eventType: string, clip: string | null, note: 
   addLog(c, note)
   const exp = state.expected.find((e) => e.startsAt <= now && now < e.endsAt)
   if (exp) addLog(c, `Expected now: ${exp.label}.`)
-  const approved = HELPERS.filter((h) => h.consent === 'approved')
+  const approved = approvedHelpers()
   addLog(c, `Asked ${approved[0]?.name ?? 'a helper'}. ${state.timeoutSec}s to answer.`)
   if (kind === 'visitor' && approved[0]) notifyHelper(approved[0], '🚪 Someone is at the door', `Open the app. You have ${state.timeoutSec}s.`, c.id)
   state.cases.unshift(c)
@@ -244,7 +267,7 @@ export function answerCase(caseId: string, helperId: string, answer: Answer, vis
   const c = state.cases.find((x) => x.id === caseId)
   if (!c) return null
   if (c.status === 'answered') return c
-  const helper = HELPERS.find((h) => h.id === helperId)
+  const helper = findHelper(helperId)
   c.status = 'answered'
   c.answer = answer
   c.visitor = visitor
@@ -258,6 +281,12 @@ export function answerCase(caseId: string, helperId: string, answer: Answer, vis
 export function confirmCase(caseId: string, ok: boolean): DoorCase | null {
   const c = state.cases.find((x) => x.id === caseId)
   if (!c || c.status !== 'answered' || c.answer !== 'safe') return null
+  if (ok && isQuiet(Date.now())) {
+    c.declinedAt = Date.now()
+    c.resolvedAt = Date.now()
+    addLog(c, 'Night lock is on. The door stays closed.')
+    return c
+  }
   if (ok) c.confirmedAt = Date.now()
   else c.declinedAt = Date.now()
   c.resolvedAt = Date.now()
@@ -268,23 +297,60 @@ export function confirmCase(caseId: string, ok: boolean): DoorCase | null {
 export function getState() {
   tick()
   const now = Date.now()
-  const approved = HELPERS.filter((h) => h.consent === 'approved')
   return {
     now,
     timeoutSec: state.timeoutSec,
     offline: state.offline,
-    helpers: approved,
+    helpers: approvedHelpers(),
     current: activeCase(now),
     history: state.cases.slice(0, 10),
     expected: state.expected.filter((e) => e.endsAt > now),
     expectedNow: state.expected.filter((e) => e.startsAt <= now && now < e.endsAt),
     checkin: { doneToday: checkedInToday(now), dueHour: CHECKIN_HOUR },
+    quietNow: isQuiet(now),
   }
 }
 
 export function getHistory() {
   tick()
-  return { helpers: HELPERS.filter((h) => h.consent === 'approved'), cases: state.cases }
+  return { helpers: state.helpers, cases: state.cases }
+}
+
+export const getSetup = () => ({ helpers: state.helpers, quiet: state.quiet, timeoutSec: state.timeoutSec })
+
+export function addHelper(name: string, phone: string, emoji: string): Helper {
+  const h: Helper = { id: `h_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name, phone, emoji, consent: 'pending' }
+  state.helpers.push(h)
+  persist()
+  return h
+}
+export function removeHelper(id: string): boolean {
+  const h = findHelper(id)
+  if (!h) return false
+  if (h.consent === 'approved' && approvedHelpers().length <= 1) return false
+  state.helpers = state.helpers.filter((x) => x.id !== id)
+  delete state.subs[id]
+  persist()
+  return true
+}
+export function setConsent(id: string, consent: Consent): boolean {
+  const h = findHelper(id)
+  if (!h) return false
+  if (h.consent === 'approved' && consent !== 'approved' && approvedHelpers().length <= 1) return false
+  h.consent = consent
+  h.consentAt = Date.now()
+  persist()
+  return true
+}
+export function moveHelper(id: string, dir: -1 | 1) {
+  const i = state.helpers.findIndex((h) => h.id === id), j = i + dir
+  if (i < 0 || j < 0 || j >= state.helpers.length) return
+  ;[state.helpers[i], state.helpers[j]] = [state.helpers[j], state.helpers[i]]
+  persist()
+}
+export function setQuiet(q: Quiet) {
+  state.quiet = { enabled: !!q.enabled, startHour: q.startHour, endHour: q.endHour }
+  persist()
 }
 
 export function setOffline(v: boolean) {

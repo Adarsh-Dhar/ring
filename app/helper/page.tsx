@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useDoorbell } from '../hooks/useDoorbell'
 import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
+import type { Helper } from '@/lib/doorbell/config'
 import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
 
@@ -24,11 +26,10 @@ export default function HelperPage() {
 
   if (!snap) return <main className="p-6 text-slate-400">Loading…</main>
 
-  const idx = snap.helpers.findIndex((h) => h.id === me)
-  const helper = snap.helpers[idx]
+  const helper = snap.helpers.find((h) => h.id === me)
   const c = snap.current
-  const visible = !!c && (c.kind === 'sos' || c.helperIndex >= idx || c.status !== 'waiting')
-  const myTurn = !!c && c.status === 'waiting' && (c.kind === 'sos' || c.helperIndex === idx)
+  const visible = !!c && (c.kind === 'sos' || c.helperIndex >= snap.helpers.findIndex((h) => h.id === me) || c.status !== 'waiting')
+  const myTurn = !!c && c.status === 'waiting' && (c.kind === 'sos' || c.chain[c.helperIndex] === me)
 
   const answer = async (a: Answer) => {
     if (!c) return
@@ -79,7 +80,10 @@ export default function HelperPage() {
           ))}
         </div>
       </header>
-      <EnableAlerts helperId={me} />
+      <div className="flex items-center justify-between mb-4">
+        <EnableAlerts helperId={me} />
+        <Link href="/setup" className="text-sm text-cyan-400">⚙️ Setup</Link>
+      </div>
       <a href="/helper/history" className="mb-4 inline-block text-sm text-cyan-400">📋 History</a>
 
       {!c || !visible ? (

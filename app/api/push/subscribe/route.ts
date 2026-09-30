@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { addSub, removeSub } from '@/lib/doorbell/store'
-import { HELPERS } from '@/lib/doorbell/config'
+import { addSub, removeSub, getHelper } from '@/lib/doorbell/store'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
   const { helperId, subscription } = await req.json()
-  if (!HELPERS.some((h) => h.id === helperId) || !subscription?.endpoint || !subscription?.keys) {
+  if (!getHelper(helperId) || !subscription?.endpoint || !subscription?.keys) {
     return NextResponse.json({ error: 'bad request' }, { status: 400 })
   }
   addSub(helperId, subscription)

@@ -12,7 +12,7 @@ function normalizeRingEvent(body: any) {
   const { meta, data } = body
   return {
     event_id: data.id,
-    event_type: data.type,
+    event_type: data?.type,
     timestamp:
       typeof data.attributes.timestamp === 'number'
         ? new Date(data.attributes.timestamp).toISOString()
@@ -41,6 +41,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
 
+    if (process.env.LOG_WEBHOOK_BODY === '1') {
+      console.log('[WEBHOOK] body', JSON.stringify(body, null, 2))
+    }
+
     const requestId = body?.meta?.request_id
     if (requestId) {
       if (processedRequests.has(requestId)) {
@@ -53,6 +57,7 @@ export async function POST(request: NextRequest) {
     }
 
     const event = parseRingWebhook(body).success ? normalizeRingEvent(body) : normalizeGenericEvent(body)
+    console.log('[WEBHOOK] type', event.event_type)
     const c = ingestEvent(event)
     return NextResponse.json({ status: 'processed', event_id: event.event_id, case_id: c?.id ?? null })
   } catch (error) {

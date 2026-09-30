@@ -4,6 +4,7 @@ const links = [
   { href: '/sim', icon: '🧪', title: 'Simulator', sub: 'Ring the doorbell, break things' },
   { href: '/resident', icon: '🏠', title: 'Resident screen', sub: 'What the resident sees' },
   { href: '/helper?as=h1', icon: '🧑‍🤝‍🧑', title: 'Helper screen', sub: 'What the helper sees' },
+  { href: '/setup', icon: '⚙️', title: 'Setup', sub: 'Manage helpers, quiet hours, and more' },
 ]
 
 export default function Home() {

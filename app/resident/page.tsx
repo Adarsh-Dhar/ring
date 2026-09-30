@@ -18,7 +18,7 @@ export default function ResidentPage() {
 
   const helpers = snap?.helpers ?? []
   const c = snap?.current ?? null
-  const currentHelper = (c ? helpers.find((h) => h.id === c.chain[c.helperIndex]) : undefined) ?? helpers[0]
+  const currentHelper = c ? helpers.find((h) => h.id === c.chain[c.helperIndex]) : undefined
   const answeredBy = c?.answeredBy ? helpers.find((h) => h.id === c.answeredBy) : undefined
   const callTarget = answeredBy ?? helpers[0]
 
@@ -27,9 +27,7 @@ export default function ResidentPage() {
     screen = { icon: '⚠️', title: 'Keep the door closed', sub: `Call ${helpers[0]?.name ?? 'your helper'}`, bg: 'bg-amber-600' }
   } else if (snap?.offline) {
     screen = { icon: '⚠️', title: "Don't open the door", sub: `Call ${helpers[0]?.name}`, bg: 'bg-amber-600' }
-  } else if (!c) {
-    screen = { icon: '🏠', title: 'All quiet', sub: 'Nobody at the door', bg: 'bg-emerald-700' }
-  } else if (!c && snap?.expectedNow && snap.expectedNow.length > 0) {
+  } else if (!c && snap?.expectedNow?.length) {
     const e = snap.expectedNow[0]
     screen = {
       icon: e.icon,
@@ -37,11 +35,15 @@ export default function ResidentPage() {
       sub: `Until ${new Date(e.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Wait for the bell.`,
       bg: 'bg-sky-700',
     }
+  } else if (!c) {
+    screen = { icon: '🏠', title: 'All quiet', sub: 'Nobody at the door', bg: 'bg-emerald-700' }
+  } else if (snap?.quietNow && c.kind === 'visitor' && (c.status === 'waiting' || (c.status === 'answered' && c.answer === 'safe'))) {
+    screen = { icon: '🌙', title: 'Night lock is on', sub: 'Do not open the door', bg: 'bg-indigo-900' }
   } else if (c.status === 'waiting') {
     screen =
       c.kind === 'sos'
-        ? { icon: '🆘', title: 'Help is coming', sub: `We told ${currentHelper?.name}. Stay here.`, bg: 'bg-rose-700' }
-        : { icon: '🚪', title: 'Someone is at the door', sub: `Wait. Do not open yet. Asking ${currentHelper?.name}`, bg: 'bg-sky-700' }
+        ? { icon: '🆘', title: 'Help is coming', sub: `We told ${currentHelper?.name ?? 'a helper'}. Stay here.`, bg: 'bg-rose-700' }
+        : { icon: '🚪', title: 'Someone is at the door', sub: `Wait. Do not open yet. Asking ${currentHelper?.name ?? 'a helper'}`, bg: 'bg-sky-700' }
   } else if (c.status === 'no_response') {
     screen = { icon: '⚠️', title: "Don't open the door", sub: `Nobody answered. Call ${helpers[0]?.name}`, bg: 'bg-amber-600' }
   } else if (c.answer === 'safe') {
@@ -80,7 +82,7 @@ export default function ResidentPage() {
     refresh()
   }
 
-  const awaitingConfirm = c?.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt
+  const awaitingConfirm = c?.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt && !snap?.quietNow
   const confirm = async (ok: boolean) => {
     await fetch('/api/doorbell/confirm', {
       method: 'POST',
