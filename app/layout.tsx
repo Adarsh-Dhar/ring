@@ -3,6 +3,7 @@ import './globals.css'
 export const metadata = {
   title: 'Doorbell Helper',
   description: 'Simple doorbell alerts for the resident, decisions for the helper',
+  manifest: '/manifest.webmanifest',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

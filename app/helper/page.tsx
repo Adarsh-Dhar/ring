@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
-import type { Answer } from '@/lib/doorbell/store'
+import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
+import EnableAlerts from './EnableAlerts'
+import ExpectedForm from './ExpectedForm'
 
 export default function HelperPage() {
   const { snap, refresh, secondsLeft } = useDoorbell()
   const [me, setMe] = useState('h1')
+  const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [, force] = useState(0)
 
   useEffect(() => {
@@ -15,6 +18,9 @@ export default function HelperPage() {
     const t = setInterval(() => force((n) => n + 1), 1000)
     return () => clearInterval(t)
   }, [])
+
+  const caseId = snap?.current?.id
+  useEffect(() => setVisitor(null), [caseId])
 
   if (!snap) return <main className="p-6 text-slate-400">Loading…</main>
 
@@ -29,10 +35,33 @@ export default function HelperPage() {
     await fetch('/api/doorbell/answer', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ caseId: c.id, helperId: me, answer: a }),
+      body: JSON.stringify({ caseId: c.id, helperId: me, answer: a, visitor: visitor ?? undefined }),
     })
     refresh()
   }
+
+  const canSafe = visitor === 'known' || visitor === 'delivery'
+  const Buttons = (
+    <div className="mt-4">
+      <p className="mb-2 text-sm text-slate-300">Who is it?</p>
+      <div className="mb-4 grid grid-cols-3 gap-2">
+        {([['known', '👤 Known'], ['delivery', '📦 Delivery'], ['unknown', '❓ Unknown']] as const).map(([v, t]) => (
+          <button
+            key={v}
+            onClick={() => setVisitor(v)}
+            className={`rounded-xl py-3 font-semibold ${visitor === v ? 'bg-cyan-500 text-black' : 'bg-slate-700'}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <button disabled={!canSafe} onClick={() => answer('safe')} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold disabled:opacity-30">✅ Safe</button>
+        <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Not safe</button>
+        <button onClick={() => answer('call_me')} className="rounded-2xl bg-indigo-600 py-5 text-lg font-bold">📞 I'll call</button>
+      </div>
+    </div>
+  )
 
   return (
     <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto">
@@ -50,6 +79,8 @@ export default function HelperPage() {
           ))}
         </div>
       </header>
+      <EnableAlerts helperId={me} />
+      <a href="/helper/history" className="mb-4 inline-block text-sm text-cyan-400">📋 History</a>
 
       {!c || !visible ? (
         <div className="rounded-2xl bg-slate-800 p-10 text-center">
@@ -89,13 +120,11 @@ export default function HelperPage() {
             </div>
           ) : null}
 
-          {c.status === 'waiting' && myTurn && (
-            <div className="grid grid-cols-3 gap-3 mt-4">
-              <button onClick={() => answer('safe')} className="py-5 rounded-2xl bg-emerald-600 text-lg font-bold">✅ Safe</button>
-              <button onClick={() => answer('not_safe')} className="py-5 rounded-2xl bg-red-600 text-lg font-bold">⛔ Not safe</button>
-              <button onClick={() => answer('call_me')} className="py-5 rounded-2xl bg-indigo-600 text-lg font-bold">📞 I'll call</button>
-            </div>
+          {snap.expectedNow.length > 0 && (
+            <p className="mb-2 text-sm text-amber-300">Expected now: {snap.expectedNow.map((e: ExpectedVisit) => `${e.icon} ${e.label}`).join(', ')}</p>
           )}
+
+          {c.status === 'waiting' && myTurn && Buttons}
           {c.status === 'answered' && (
             <p className="mt-4 text-emerald-300">
               Answered: {c.answer === 'safe' ? 'Safe' : c.answer === 'not_safe' ? 'Not safe' : 'Will call'} by{' '}
@@ -105,15 +134,13 @@ export default function HelperPage() {
           {c.status === 'no_response' && (
             <div className="mt-4">
               <p className="text-amber-300 mb-3">Nobody answered. Resident was told to keep the door closed. You can still answer:</p>
-              <div className="grid grid-cols-3 gap-3">
-                <button onClick={() => answer('safe')} className="py-4 rounded-2xl bg-emerald-600 font-bold">✅ Safe</button>
-                <button onClick={() => answer('not_safe')} className="py-4 rounded-2xl bg-red-600 font-bold">⛔ Not safe</button>
-                <button onClick={() => answer('call_me')} className="py-4 rounded-2xl bg-indigo-600 font-bold">📞 I'll call</button>
-              </div>
+              {Buttons}
             </div>
           )}
         </div>
       )}
+
+      <ExpectedForm items={snap.expected} onChange={refresh} />
 
       <section className="mt-6">
         <h3 className="text-sm uppercase tracking-wide text-slate-400 mb-2">Latest case timeline</h3>

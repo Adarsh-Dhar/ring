@@ -1,8 +1,19 @@
-import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS } from './config'
+import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, type Helper } from './config'
+import { pushToSubs, sendSms, type PushSub } from './notify'
+import { loadState, saveSoon } from './persist'
 
 export type CaseStatus = 'waiting' | 'answered' | 'no_response'
 export type Answer = 'safe' | 'not_safe' | 'call_me'
 export type CaseKind = 'visitor' | 'sos'
+export type Visitor = 'known' | 'delivery' | 'unknown'
+
+export interface ExpectedVisit {
+  id: string
+  icon: string
+  label: string
+  startsAt: number
+  endsAt: number
+}
 
 export interface DoorCase {
   id: string
@@ -17,12 +28,32 @@ export interface DoorCase {
   answeredBy?: string
   resolvedAt?: number
   log: { t: number; msg: string }[]
+  visitor?: Visitor
+  confirmedAt?: number
+  declinedAt?: number
+  chain: string[]
 }
 
 interface DoorbellState {
   cases: DoorCase[]
   offline: boolean
   timeoutSec: number
+  subs: Record<string, PushSub[]>
+  expected: ExpectedVisit[]
+  checkinAt: number | null
+  missedAlertDay: string | null
+}
+
+function restore(): Partial<DoorbellState> {
+  const s = loadState<DoorbellState>()
+  for (const c of s.cases ?? []) {
+    if (c.status === 'waiting') {
+      c.status = 'no_response'
+      c.resolvedAt = Date.now()
+      c.log.push({ t: Date.now(), msg: 'Server restarted while this case was open. Closed without alerts.' })
+    }
+  }
+  return s
 }
 
 const g = globalThis as unknown as { __doorbell?: DoorbellState }
@@ -30,38 +61,112 @@ const state: DoorbellState = (g.__doorbell ||= {
   cases: [],
   offline: false,
   timeoutSec: DEFAULT_ESCALATION_SECONDS,
+  subs: {},
+  expected: [],
+  checkinAt: null,
+  missedAlertDay: null,
+  ...restore(),
 })
+state.subs ||= {}
+state.expected ||= []
+state.checkinAt ??= null
+state.missedAlertDay ??= null
+const persist = () => saveSoon(() => state)
 
 const TRIGGER_EVENTS = new Set(['person_detected', 'doorbell_pressed', 'ding'])
 
 const id = () => `case_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-const addLog = (c: DoorCase, msg: string) => c.log.push({ t: Date.now(), msg })
+
+export function addSub(helperId: string, sub: PushSub) {
+  const list = (state.subs[helperId] ||= [])
+  if (!list.some((s) => s.endpoint === sub.endpoint)) list.push(sub)
+  persist()
+}
+export function removeSub(helperId: string, endpoint: string) {
+  state.subs[helperId] = (state.subs[helperId] || []).filter((s) => s.endpoint !== endpoint)
+  persist()
+}
+
+function notifyHelper(h: Helper, title: string, body: string, caseId: string) {
+  const subs = state.subs[h.id] || []
+  void pushToSubs(subs, { title, body, tag: caseId, url: `/helper?as=${h.id}` })
+    .then((dead) => dead.forEach((e) => removeSub(h.id, e)))
+    .catch((e) => console.error('[PUSH]', e))
+}
+function notifyAll(title: string, body: string, caseId: string) {
+  HELPERS.forEach((h) => notifyHelper(h, title, body, caseId))
+}
+
+const RESIDENT = process.env.RESIDENT_NAME || 'the resident'
+
+const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`
+const dueAt = (now: number) => {
+  const d = new Date(now)
+  d.setHours(CHECKIN_HOUR, 0, 0, 0)
+  return d.getTime()
+}
+const checkedInToday = (now: number) =>
+  state.checkinAt !== null && dayKey(new Date(state.checkinAt)) === dayKey(new Date(now))
+
+function checkMissedCheckin(now: number) {
+  const key = dayKey(new Date(now))
+  const late = now >= dueAt(now) + CHECKIN_GRACE_MIN * 60_000
+  if (!late || checkedInToday(now) || state.missedAlertDay === key) return
+  state.missedAlertDay = key
+  notifyAll('⚠️ No check-in today', `${RESIDENT} has not pressed "I'm OK" yet. Please call.`, `checkin-${key}`)
+  smsAll(`${RESIDENT} has not checked in today. Please call.`)
+  persist()
+}
+
+function smsAll(body: string) {
+  HELPERS.forEach((h) => {
+    void sendSms(h.phone, body)
+  })
+}
+
+function alertSos(c: DoorCase) {
+  notifyAll('🆘 Resident needs help', 'Open the app now.', c.id)
+  smsAll(`${RESIDENT} pressed "I need help". Please call now.`)
+  addLog(c, 'Push and SMS sent to all helpers.')
+}
+
+const addLog = (c: DoorCase, msg: string) => {
+  c.log.push({ t: Date.now(), msg })
+  persist()
+}
 
 export function tick(now = Date.now()) {
   for (const c of state.cases) {
     if (c.status !== 'waiting') continue
     while (c.status === 'waiting' && now >= c.deadlineAt) {
-      const from = HELPERS[c.helperIndex]
+      const fromId = c.chain[c.helperIndex]
+      const from = HELPERS.find((h) => h.id === fromId)
       c.helperIndex += 1
-      if (c.helperIndex >= HELPERS.length) {
+      if (c.helperIndex >= c.chain.length) {
         c.status = 'no_response'
         c.resolvedAt = c.deadlineAt
-        addLog(c, `${from.name} did not answer. Nobody left to ask. Resident told to keep door closed.`)
+        addLog(c, `${from?.name ?? 'Someone'} did not answer. Nobody left to ask. Resident told to keep door closed.`)
+        smsAll(`Doorbell: nobody answered for ${RESIDENT}. Please call them now.`)
+        addLog(c, 'SMS sent to all helpers.')
       } else {
-        const to = HELPERS[c.helperIndex]
+        const toId = c.chain[c.helperIndex]
+        const to = HELPERS.find((h) => h.id === toId)
         c.deadlineAt += state.timeoutSec * 1000
-        addLog(c, `${from.name} did not answer in ${state.timeoutSec}s. Escalated to ${to.name}.`)
+        addLog(c, `${from?.name ?? 'Someone'} did not answer in ${state.timeoutSec}s. Escalated to ${to?.name ?? 'next helper'}.`)
+        if (to) notifyHelper(to, `🚪 ${from?.name ?? 'Someone'} did not answer`, 'It is your turn. Open the app.', c.id)
       }
     }
   }
+  checkMissedCheckin(now)
 }
 
 function activeCase(now = Date.now()): DoorCase | null {
   const c = state.cases[0]
   if (!c) return null
   if (c.status === 'waiting') return c
+  const awaitingConfirm = c.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt
   const age = now - (c.resolvedAt ?? c.createdAt)
-  const ttl = c.status === 'no_response' ? NO_RESPONSE_TTL_MS : RESULT_TTL_MS
+  const ttl = c.status === 'no_response' || awaitingConfirm ? NO_RESPONSE_TTL_MS : RESULT_TTL_MS
   return age < ttl ? c : null
 }
 
@@ -77,11 +182,16 @@ function openCase(kind: CaseKind, eventType: string, clip: string | null, note: 
     deadlineAt: now + state.timeoutSec * 1000,
     status: 'waiting',
     log: [],
+    chain: HELPERS.filter((h) => h.consent === 'approved').map((h) => h.id),
   }
   addLog(c, note)
-  addLog(c, `Asked ${HELPERS[0].name}. ${state.timeoutSec}s to answer.`)
+  const exp = state.expected.find((e) => e.startsAt <= now && now < e.endsAt)
+  if (exp) addLog(c, `Expected now: ${exp.label}.`)
+  const approved = HELPERS.filter((h) => h.consent === 'approved')
+  addLog(c, `Asked ${approved[0]?.name ?? 'a helper'}. ${state.timeoutSec}s to answer.`)
+  if (kind === 'visitor' && approved[0]) notifyHelper(approved[0], '🚪 Someone is at the door', `Open the app. You have ${state.timeoutSec}s.`, c.id)
   state.cases.unshift(c)
-  if (state.cases.length > 30) state.cases.pop()
+  if (state.cases.length > 200) state.cases.pop()
   return c
 }
 
@@ -102,14 +212,34 @@ export function raiseSos(): DoorCase {
   tick()
   const existing = activeCase()
   if (existing && existing.status === 'waiting') {
+    if (existing.kind === 'sos') return existing
     existing.kind = 'sos'
     addLog(existing, 'Resident pressed "I need help".')
+    alertSos(existing)
     return existing
   }
-  return openCase('sos', 'sos', null, 'Resident pressed "I need help".')
+  const c = openCase('sos', 'sos', null, 'Resident pressed "I need help".')
+  alertSos(c)
+  return c
 }
 
-export function answerCase(caseId: string, helperId: string, answer: Answer): DoorCase | null {
+export function addExpected(icon: string, label: string, startsAt: number, endsAt: number): ExpectedVisit {
+  const e = { id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, icon, label, startsAt, endsAt }
+  state.expected.push(e)
+  persist()
+  return e
+}
+export function removeExpected(id: string) {
+  state.expected = state.expected.filter((e) => e.id !== id)
+  persist()
+}
+
+export function checkIn() {
+  state.checkinAt = Date.now()
+  persist()
+}
+
+export function answerCase(caseId: string, helperId: string, answer: Answer, visitor?: Visitor): DoorCase | null {
   tick()
   const c = state.cases.find((x) => x.id === caseId)
   if (!c) return null
@@ -117,6 +247,7 @@ export function answerCase(caseId: string, helperId: string, answer: Answer): Do
   const helper = HELPERS.find((h) => h.id === helperId)
   c.status = 'answered'
   c.answer = answer
+  c.visitor = visitor
   c.answeredBy = helperId
   c.resolvedAt = Date.now()
   const label = answer === 'safe' ? 'SAFE' : answer === 'not_safe' ? 'NOT SAFE' : 'will CALL the resident'
@@ -124,26 +255,55 @@ export function answerCase(caseId: string, helperId: string, answer: Answer): Do
   return c
 }
 
+export function confirmCase(caseId: string, ok: boolean): DoorCase | null {
+  const c = state.cases.find((x) => x.id === caseId)
+  if (!c || c.status !== 'answered' || c.answer !== 'safe') return null
+  if (ok) c.confirmedAt = Date.now()
+  else c.declinedAt = Date.now()
+  c.resolvedAt = Date.now()
+  addLog(c, ok ? 'Resident confirmed: opening the door.' : 'Resident chose to keep the door closed.')
+  return c
+}
+
 export function getState() {
   tick()
   const now = Date.now()
+  const approved = HELPERS.filter((h) => h.consent === 'approved')
   return {
     now,
     timeoutSec: state.timeoutSec,
     offline: state.offline,
-    helpers: HELPERS,
+    helpers: approved,
     current: activeCase(now),
     history: state.cases.slice(0, 10),
+    expected: state.expected.filter((e) => e.endsAt > now),
+    expectedNow: state.expected.filter((e) => e.startsAt <= now && now < e.endsAt),
+    checkin: { doneToday: checkedInToday(now), dueHour: CHECKIN_HOUR },
   }
+}
+
+export function getHistory() {
+  tick()
+  return { helpers: HELPERS.filter((h) => h.consent === 'approved'), cases: state.cases }
 }
 
 export function setOffline(v: boolean) {
   state.offline = v
+  persist()
 }
 export function setTimeoutSec(n: number) {
   state.timeoutSec = Math.max(3, Math.min(600, Math.floor(n)))
+  persist()
 }
 export function resetAll() {
   state.cases.length = 0
   state.offline = false
+  persist()
+}
+
+// Server-side timer for escalation without a tab open
+const gt = globalThis as unknown as { __doorbellTimer?: ReturnType<typeof setInterval> }
+if (!gt.__doorbellTimer) {
+  gt.__doorbellTimer = setInterval(() => tick(), 1000)
+  gt.__doorbellTimer.unref?.()
 }

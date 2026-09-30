@@ -20,10 +20,10 @@ export function listDemoClips(): DemoClip[] {
 }
 
 export function resolveDemoFile(name: string): { full: string; mime: string } | null {
-  if (!name) return null
+  if (!name || name !== path.basename(name)) return null
   const full = path.join(DEMO_DIR, name)
   if (!fs.existsSync(full)) return null
   const ext = path.extname(name).toLowerCase()
-  const mime = ext === '.mp4' ? 'video/mp4' : ext === '.webm' ? 'video/webm' : 'video/mp4'
+  const mime = ext === '.webm' ? 'video/webm' : 'video/mp4'
   return { full, mime }
 }

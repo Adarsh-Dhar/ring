@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
+import type { ExpectedVisit } from '@/lib/doorbell/store'
 
 type Screen = { icon: string; title: string; sub?: string; bg: string }
 
@@ -17,7 +18,7 @@ export default function ResidentPage() {
 
   const helpers = snap?.helpers ?? []
   const c = snap?.current ?? null
-  const currentHelper = c ? helpers[Math.min(c.helperIndex, helpers.length - 1)] : helpers[0]
+  const currentHelper = (c ? helpers.find((h) => h.id === c.chain[c.helperIndex]) : undefined) ?? helpers[0]
   const answeredBy = c?.answeredBy ? helpers.find((h) => h.id === c.answeredBy) : undefined
   const callTarget = answeredBy ?? helpers[0]
 
@@ -28,6 +29,14 @@ export default function ResidentPage() {
     screen = { icon: '⚠️', title: "Don't open the door", sub: `Call ${helpers[0]?.name}`, bg: 'bg-amber-600' }
   } else if (!c) {
     screen = { icon: '🏠', title: 'All quiet', sub: 'Nobody at the door', bg: 'bg-emerald-700' }
+  } else if (!c && snap?.expectedNow && snap.expectedNow.length > 0) {
+    const e = snap.expectedNow[0]
+    screen = {
+      icon: e.icon,
+      title: `${e.label} expected`,
+      sub: `Until ${new Date(e.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Wait for the bell.`,
+      bg: 'bg-sky-700',
+    }
   } else if (c.status === 'waiting') {
     screen =
       c.kind === 'sos'
@@ -36,7 +45,18 @@ export default function ResidentPage() {
   } else if (c.status === 'no_response') {
     screen = { icon: '⚠️', title: "Don't open the door", sub: `Nobody answered. Call ${helpers[0]?.name}`, bg: 'bg-amber-600' }
   } else if (c.answer === 'safe') {
-    screen = { icon: '✅', title: 'OK to open the door', sub: `${answeredBy?.name} says it is safe`, bg: 'bg-emerald-700' }
+    if (c.declinedAt) {
+      screen = { icon: '🚪', title: 'Door stays closed', sub: 'You chose not to open', bg: 'bg-slate-700' }
+    } else if (!c.confirmedAt) {
+      screen = {
+        icon: '🙋',
+        title: `${answeredBy?.name} says it is OK`,
+        sub: c.visitor === 'delivery' ? '📦 A delivery. Open the door?' : '👤 Someone you know. Open the door?',
+        bg: 'bg-teal-700',
+      }
+    } else {
+      screen = { icon: '✅', title: 'OK to open the door', sub: `${answeredBy?.name} says it is safe`, bg: 'bg-emerald-700' }
+    }
   } else if (c.answer === 'not_safe') {
     screen = { icon: '⛔', title: "Don't open the door", sub: `${answeredBy?.name} says stay inside`, bg: 'bg-red-700' }
   } else {
@@ -52,6 +72,21 @@ export default function ResidentPage() {
 
   const sos = async () => {
     await fetch('/api/doorbell/sos', { method: 'POST' })
+    refresh()
+  }
+
+  const checkin = async () => {
+    await fetch('/api/doorbell/checkin', { method: 'POST' })
+    refresh()
+  }
+
+  const awaitingConfirm = c?.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt
+  const confirm = async (ok: boolean) => {
+    await fetch('/api/doorbell/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId: c!.id, ok }),
+    })
     refresh()
   }
 
@@ -79,6 +114,17 @@ export default function ResidentPage() {
       </div>
 
       <div className="w-full max-w-md flex flex-col gap-4">
+        {awaitingConfirm && (
+          <div className="grid grid-cols-2 gap-4">
+            <button onClick={() => confirm(true)} className="rounded-3xl bg-white py-6 text-2xl font-bold text-emerald-800">✅ Yes, open</button>
+            <button onClick={() => confirm(false)} className="rounded-3xl border-4 border-white/70 bg-black/35 py-6 text-2xl font-bold">✋ No</button>
+          </div>
+        )}
+        {snap && !snap.checkin.doneToday && c?.status !== 'waiting' && (
+          <button onClick={checkin} className="w-full rounded-3xl bg-emerald-500 py-6 text-center text-3xl font-bold text-white shadow-lg">
+            👍 I'm OK today
+          </button>
+        )}
         {callTarget && (
           <a
             href={`tel:${callTarget.phone}`}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { DoorCase } from '@/lib/doorbell/store'
+import type { DoorCase, ExpectedVisit } from '@/lib/doorbell/store'
 import type { Helper } from '@/lib/doorbell/config'
 
 export interface DoorbellSnapshot {
@@ -11,6 +11,9 @@ export interface DoorbellSnapshot {
   helpers: Helper[]
   current: DoorCase | null
   history: DoorCase[]
+  expected: ExpectedVisit[]
+  expectedNow: ExpectedVisit[]
+  checkin: { doneToday: boolean; dueHour: number }
 }
 
 export function useDoorbell(intervalMs = 1000) {

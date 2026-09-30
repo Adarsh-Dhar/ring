@@ -5,7 +5,10 @@ import { ingestEvent, setOffline, setTimeoutSec, resetAll, getState } from '@/li
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
+const simDisabled = () => process.env.ENABLE_SIM === '0'
+
 export async function GET() {
+  if (simDisabled()) return NextResponse.json({ error: 'disabled' }, { status: 404 })
   const s = getState()
   return NextResponse.json({
     clips: listDemoClips().map((c) => c.file).sort(),
@@ -15,6 +18,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  if (simDisabled()) return NextResponse.json({ error: 'disabled' }, { status: 404 })
   const body = await req.json()
   switch (body.action) {
     case 'trigger': {
