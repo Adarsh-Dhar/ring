@@ -1,0 +1,38 @@
+services:
+  postgres_db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: doorbell
+      POSTGRES_USER: doorbell
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"     # host-only; remove entirely on a server
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doorbell -d doorbell"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+
+  server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    env_file:
+      - .env.prod
+    environment:
+      DATABASE_URL: postgresql://doorbell:${POSTGRES_PASSWORD}@postgres_db:5432/doorbell
+      DATA_DIR: /data
+    volumes:
+      - app_data:/data                     # state.json (cases, settings) still lives here
+      - ./videos:/usr/src/app/videos:ro    # door camera mp4s
+
+volumes:
+  pg_data:
+  app_data:

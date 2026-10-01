@@ -60,7 +60,7 @@ export default function HelperPage() {
   const visible = !!c && idx >= 0 && (c.kind === 'sos' || c.helperIndex >= idx || c.status !== 'waiting')
   const myTurn = !!c && c.status === 'waiting' && idx >= 0 && (c.kind === 'sos' || c.helperIndex === idx)
 
-  const answer = async (a: Answer) => {
+  const answer = async (a: Answer, who?: Visitor) => {
     if (!c) return
     setErr('')
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -68,7 +68,7 @@ export default function HelperPage() {
     const r = await fetch('/api/doorbell/answer', {
       method: 'POST',
       headers,
-      body: JSON.stringify({ caseId: c.id, answer: a, visitor: visitor ?? undefined }),
+      body: JSON.stringify({ caseId: c.id, answer: a, visitor: who ?? visitor ?? undefined }),
     })
     if (!r.ok) setErr((await r.json().catch(() => ({}))).error || 'Could not send your answer. Try again or call the resident.')
     refresh()
@@ -101,6 +101,16 @@ export default function HelperPage() {
         <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Not safe</button>
         <button onClick={() => answer('call_me')} className="rounded-2xl bg-indigo-600 py-5 text-lg font-bold">📞 I'll call</button>
       </div>
+    </div>
+  )
+  const ExpectedButtons = (
+    <div className="mt-4">
+      <div className="grid grid-cols-3 gap-3">
+        <button onClick={() => { setVisitor('known'); void answer('safe', 'known') }} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold">✅ It's them</button>
+        <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Not them</button>
+        <button onClick={() => answer('call_me')} className="rounded-2xl bg-indigo-600 py-5 text-lg font-bold">📞 I'll call</button>
+      </div>
+      <p className="mt-2 text-xs text-slate-400">If you do nothing, it becomes a normal visitor alert after a short wait.</p>
     </div>
   )
 
@@ -141,36 +151,44 @@ export default function HelperPage() {
           )}
         </div>
       ) : (
-        <div className={`rounded-2xl p-4 ${c.kind === 'sos' ? 'bg-rose-900' : 'bg-slate-800'}`}>
+        <div className={`rounded-2xl p-4 ${c.kind === 'sos' ? 'bg-rose-900' : c.lane === 'expected' ? 'bg-sky-900' : 'bg-slate-800'}`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold">
-              {c.kind === 'sos' ? '🆘 Resident pressed "I need help"' : '🚪 Someone is at the door'}
+              {c.kind === 'sos' ? '🆘 Resident pressed "I need help"'
+                : c.lane === 'expected' ? `${c.visitIcon} ${c.visitLabel} may be at the door`
+                : '🚪 Someone is at the door'}
             </h2>
             {c.status === 'waiting' && (
               <span className="px-3 py-1 rounded-full bg-black/30 text-sm">{secondsLeft(c.deadlineAt)}s left</span>
             )}
           </div>
 
-          {c.clip ? (
-            <CameraFeed caseId={c.id} file={c.clip} />
-          ) : c.kind === 'visitor' && c.deviceId && !c.deviceId.startsWith('sim-') ? (
-            <LiveView caseId={c.id} />
-          ) : c.kind === 'visitor' ? (
-            <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
-              No video for this case. Open the Ring app to look.
+          {c.kind === 'sos' ? (
+            c.clip ? (
+              <CameraFeed caseId={c.id} file={c.clip} />
+            ) : c.deviceId && !c.deviceId.startsWith('sim-') ? (
+              <LiveView caseId={c.id} />
+            ) : (
+              <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
+                No video for this case.
+              </div>
+            )
+          ) : (
+            <div className="rounded-xl bg-slate-700 aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
+              Video is only shown when resident needs help (SOS)
             </div>
-          ) : null}
+          )}
 
           {c.kind === 'sos' && c.status === 'waiting' && !c.ackedAt && (
             <button onClick={ack} className="mt-3 w-full rounded-2xl bg-white py-4 text-lg font-bold text-rose-900">👀 I have seen this. I am on it.</button>
           )}
           {c.ackedAt && <p className="mt-3 text-sm text-emerald-300">Seen by {snap.helpers.find((h) => h.id === c.ackedBy)?.name}.</p>}
 
-          {snap.expectedNow.length > 0 && (
-            <p className="mb-2 text-sm text-amber-300">Expected now: {snap.expectedNow.map((e: ExpectedVisit) => `${e.icon} ${e.label}`).join(', ')}</p>
+          {(snap.expectedNow.length > 0 || snap.recurringNow.length > 0) && (
+            <p className="mb-2 text-sm text-amber-300">Expected now: {[...snap.expectedNow, ...snap.recurringNow].map((e) => `${e.icon} ${e.label}`).join(', ')}</p>
           )}
 
-          {c.status === 'waiting' && myTurn && Buttons}
+          {c.status === 'waiting' && myTurn && (c.lane === 'expected' ? ExpectedButtons : Buttons)}
           {c.status === 'answered' && (
             <p className="mt-4 text-emerald-300">
               Answered: {c.answer === 'safe' ? 'Safe' : c.answer === 'not_safe' ? 'Not safe' : 'Will call'} by{' '}

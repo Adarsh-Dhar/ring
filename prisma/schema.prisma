@@ -1,0 +1,19 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Helper {
+  id         String   @id
+  name       String
+  phone      String
+  emoji      String   @default("🙂")
+  consent    String   @default("pending")
+  consentAt  DateTime?
+  tokenEpoch Int      @default(1)
+  position   Int
+}

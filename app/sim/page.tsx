@@ -8,6 +8,7 @@ const nice = (f: string) => f.replace(/^level-\d+-/, '').replace(/\.\w+$/, '').r
 export default function SimPage() {
   const { snap, refresh } = useDoorbell()
   const [clips, setClips] = useState<string[]>([])
+  const [recurring, setRecurring] = useState<any[]>([])
   const [timeout, setTimeoutSec] = useState(30)
   const [msg, setMsg] = useState('')
   const [pinInput, setPinInput] = useState('')
@@ -25,10 +26,12 @@ export default function SimPage() {
     if (!r.ok) {
       setMsg('Simulator is off. Set ENABLE_SIM=1 (development only).')
       setClips([])
+      setRecurring([])
       return
     }
     const d = await r.json()
     setClips(d.clips)
+    setRecurring(d.recurring ?? [])
     setTimeoutSec(d.timeoutSec)
     setMsg('')
   }, [])
@@ -42,6 +45,7 @@ export default function SimPage() {
     }
     if (note) setMsg(note)
     refresh()
+    load()
   }
 
   const submitPin = async () => {
@@ -84,7 +88,21 @@ export default function SimPage() {
       </p>
 
       <section className="mb-6">
-        <h2 className="font-semibold mb-2">1. Ring a visitor</h2>
+        <h2 className="font-semibold mb-2">Ring as a regular visit</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {(recurring ?? []).map((v) => (
+            <button key={v.id}
+              onClick={() => post({ action: 'trigger', clip: null, eventType: 'button_press', recurringId: v.id }, `Sent bell as ${v.label}`)}
+              className="px-3 py-3 rounded-xl bg-sky-800 hover:bg-sky-700 text-left text-sm">
+              {v.icon} {v.label}
+            </button>
+          ))}
+          {recurring.length === 0 && <p className="text-slate-500 text-sm col-span-full">No regular visits configured. Add them on the helper page.</p>}
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <h2 className="font-semibold mb-2">Ring a visitor</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {clips.map((f) => (
             <button

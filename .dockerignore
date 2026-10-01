@@ -1,0 +1,8 @@
+node_modules
+.next
+.env
+.env.prod
+data
+videos/*.mp4
+docs
+*.tsbuildinfo

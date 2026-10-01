@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { addRecurring, setRecurringPaused, removeRecurring } from '@/lib/doorbell/store'
+import { authorize, parse } from '@/lib/guard'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+const Add = z.object({
+  icon: z.string().max(8),
+  label: z.string().min(1).max(40),
+  days: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+  everyNWeeks: z.number().int().min(1).max(8).default(1),
+  startMin: z.number().int().min(0).max(1439),
+  endMin: z.number().int().min(1).max(1440),
+  alertIfMissed: z.boolean().default(false),
+  startNextWeek: z.boolean().default(false),
+}).refine((v) => v.endMin > v.startMin, { message: 'End must be after start' })
+
+export async function POST(req: NextRequest) {
+  const a = authorize(req, 'helper', 'admin')
+  if (!a.ok) return a.res
+  const p = await parse(req, Add)
+  if (!p.ok) return p.res
+  return NextResponse.json({ ok: true, recurring: addRecurring(p.data) })
+}
+
+export async function PATCH(req: NextRequest) {
+  const a = authorize(req, 'helper', 'admin')
+  if (!a.ok) return a.res
+  const p = await parse(req, z.object({ id: z.string().max(80), paused: z.boolean() }))
+  if (!p.ok) return p.res
+  setRecurringPaused(p.data.id, p.data.paused)
+  return NextResponse.json({ ok: true })
+}
+
+export async function DELETE(req: NextRequest) {
+  const a = authorize(req, 'helper', 'admin')
+  if (!a.ok) return a.res
+  const p = await parse(req, z.object({ id: z.string().max(80) }))
+  if (!p.ok) return p.res
+  removeRecurring(p.data.id)
+  return NextResponse.json({ ok: true })
+}

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import {
   getSetup, addHelper, removeHelper, moveHelper, setConsent, setQuiet, setTimeoutSec,
-  rotateHelper, rotateResident, getHelperEpoch, getResidentEpoch, getHelper,
+  rotateHelper, rotateResident, getHelperEpoch, getResidentEpoch, getHelper, flushHelpers,
 } from '@/lib/doorbell/store'
 import { authorize, fail, parse } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
@@ -30,6 +30,9 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(getSetup())
 }
 
+const saved = async (res: NextResponse) =>
+  (await flushHelpers()) ? res : fail('Could not save to the database. Try again.', 503)
+
 export async function POST(req: NextRequest) {
   const a = authorize(req, 'admin')
   if (!a.ok) return a.res
@@ -37,15 +40,17 @@ export async function POST(req: NextRequest) {
   if (!p.ok) return p.res
   const b = p.data
   switch (b.action) {
-    case 'add':
-      return NextResponse.json({ ok: true, helper: addHelper(b.name, b.phone, b.emoji) })
+    case 'add': {
+      const helper = addHelper(b.name, b.phone, b.emoji)
+      return saved(NextResponse.json({ ok: true, helper }))
+    }
     case 'remove':
-      return removeHelper(b.id) ? NextResponse.json({ ok: true }) : fail('Keep at least one approved helper')
+      return removeHelper(b.id) ? saved(NextResponse.json({ ok: true })) : fail('Keep at least one approved helper')
     case 'move':
       moveHelper(b.id, b.dir)
-      return NextResponse.json({ ok: true })
+      return saved(NextResponse.json({ ok: true }))
     case 'consent':
-      return setConsent(b.id, b.consent) ? NextResponse.json({ ok: true }) : fail('Not found, or it would leave no approved helper')
+      return setConsent(b.id, b.consent) ? saved(NextResponse.json({ ok: true })) : fail('Not found, or it would leave no approved helper')
     case 'quiet':
       setQuiet({ enabled: b.enabled, startHour: b.startHour, endHour: b.endHour })
       return NextResponse.json({ ok: true })
@@ -62,6 +67,6 @@ export async function POST(req: NextRequest) {
     }
     case 'revoke':
       if (b.target === 'resident') { rotateResident(); return NextResponse.json({ ok: true }) }
-      return rotateHelper(b.target) ? NextResponse.json({ ok: true }) : fail('unknown helper', 404)
+      return rotateHelper(b.target) ? saved(NextResponse.json({ ok: true })) : fail('unknown helper', 404)
   }
 }

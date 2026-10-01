@@ -51,8 +51,8 @@ export default function ResidentPage() {
     screen = { icon: '🛠️', title: 'Not ready yet', sub: 'Nobody can be alerted. Keep the door closed and call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap?.offline) {
     screen = { icon: '⚠️', title: "Doorbell may not work", sub: `Do not open the door. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
-  } else if (!c && snap?.expectedNow?.length) {
-    const e = snap.expectedNow[0]
+  } else if (!c && (snap?.expectedNow?.length || snap?.recurringNow?.length)) {
+    const e = snap!.recurringNow[0] ?? snap!.expectedNow[0]
     screen = { icon: e.icon, title: `${e.label} expected`, sub: `Until ${new Date(e.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Wait for the bell.`, bg: 'bg-sky-800' }
   } else if (!c) {
     screen = { icon: '🏠', title: 'All quiet', sub: 'Nobody at the door', bg: 'bg-emerald-800' }
@@ -75,6 +75,8 @@ export default function ResidentPage() {
     }
   } else if (snap?.quietNow && (c.status === 'waiting' || (c.status === 'answered' && c.answer === 'safe'))) {
     screen = { icon: '🌙', title: 'Night lock is on', sub: 'Do not open the door', bg: 'bg-indigo-900' }
+  } else if (c.lane === 'expected' && c.status === 'waiting') {
+    screen = { icon: c.visitIcon ?? '👤', title: `${c.visitLabel ?? 'A visitor'} may be here`, sub: `Wait. ${currentHelper?.name ?? 'Your helper'} is checking.`, bg: 'bg-sky-800' }
   } else if (c.status === 'waiting') {
     screen = { icon: '🚪', title: 'Someone is at the door', sub: `Wait. Do not open yet. Asking ${currentHelper?.name ?? 'a helper'}`, bg: 'bg-sky-800', alarm: true }
   } else if (c.status === 'no_response') {
@@ -82,7 +84,7 @@ export default function ResidentPage() {
   } else if (c.answer === 'safe') {
     if (c.declinedAt) screen = { icon: '🚪', title: 'Door stays closed', sub: 'You chose not to open', bg: 'bg-slate-700' }
     else if (!c.confirmedAt) {
-      screen = { icon: '🙋', title: `${answeredBy?.name ?? 'Your helper'} says it is OK`, sub: c.visitor === 'delivery' ? '📦 A delivery. Open the door?' : '👤 Someone you know. Open the door?', bg: 'bg-teal-800' }
+      screen = { icon: '🙋', title: `${answeredBy?.name ?? 'Your helper'} says it is OK`, sub: c.lane === 'expected' && c.visitLabel ? `${c.visitIcon} ${c.visitLabel}. Open the door?` : c.visitor === 'delivery' ? '📦 A delivery. Open the door?' : '👤 Someone you know. Open the door?', bg: 'bg-teal-800' }
     } else screen = { icon: '✅', title: 'OK to open the door', sub: `${answeredBy?.name ?? 'Your helper'} says it is safe`, bg: 'bg-emerald-800' }
   } else if (c.answer === 'not_safe') {
     screen = { icon: '⛔', title: "Don't open the door", sub: `${answeredBy?.name ?? 'Your helper'} says stay inside`, bg: 'bg-red-800' }

@@ -15,7 +15,7 @@ export const runtime = 'nodejs'
 const simDisabled = () => process.env.ENABLE_SIM !== '1' || IS_PROD
 
 const Body = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('trigger'), eventType: z.string().max(40).default('button_press'), clip: z.string().max(200).nullable().optional() }),
+  z.object({ action: z.literal('trigger'), eventType: z.string().max(40).default('button_press'), clip: z.string().max(200).nullable().optional(), recurringId: z.string().max(80).nullable().optional() }),
   z.object({ action: z.literal('offline'), value: z.boolean() }),
   z.object({ action: z.literal('timeout'), value: z.number().finite() }),
   z.object({ action: z.literal('reset') }),
@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
   const a = authorize(req, 'admin')
   if (!a.ok) return a.res
   const s = getState()
-  return NextResponse.json({ clips: listDemoClips().map((c) => c.file).sort(), offline: s.offline, timeoutSec: s.timeoutSec })
+  return NextResponse.json({ clips: listDemoClips().map((c) => c.file).sort(), offline: s.offline, timeoutSec: s.timeoutSec, recurring: s.recurring })
 }
 
 export async function POST(req: NextRequest) {
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
         event_id: id,
         event_type: body.eventType,
         device_id: 'sim-front-door',
-        raw: { meta: { version: '1.1', request_id: `sim_${ts}` }, data: { id, type: body.eventType, attributes: { source: 'sim-front-door', source_type: 'devices', timestamp: ts, demo_clip: body.clip ?? null } } },
+        raw: { meta: { version: '1.1', request_id: `sim_${ts}` }, data: { id, type: body.eventType, attributes: { source: 'sim-front-door', source_type: 'devices', timestamp: ts, demo_clip: body.clip ?? null, demo_recurring_id: body.recurringId ?? null } } },
       })
       return NextResponse.json({ ok: true, caseId: c?.id ?? null })
     }

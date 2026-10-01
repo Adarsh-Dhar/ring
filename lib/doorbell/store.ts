@@ -1,9 +1,9 @@
-import { pickClip } from '../demo'
-import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, RESIDENT_TZ, EMERGENCY_NUMBER, isPlaceholderPhone, type Helper, type PublicHelper, type Consent } from './config'
-import { zonedHour, zonedDayKey, zonedHourOnSameDay } from '../time'
+import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, RESIDENT_TZ, EMERGENCY_NUMBER, isPlaceholderPhone, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, type Helper, type PublicHelper, type Consent } from './config'
+import { zonedHour, zonedDayKey, zonedHourOnSameDay, zonedWeekday, zonedDayNumber, zonedMinuteOnSameDay } from '../time'
 import { fetchDeviceOnline, listDeviceIds, ringConfigured } from '../ring/client'
 import { pushToSubs, sendSms, type PushSub } from './notify'
 import { loadState, saveSoon } from './persist'
+import { dbEnabled, loadHelpers, saveHelpers } from '../db/helpers'
 
 export type CaseStatus = 'waiting' | 'answered' | 'no_response'
 export type Answer = 'safe' | 'not_safe' | 'call_me'
@@ -19,6 +19,24 @@ export interface ExpectedVisit {
   startsAt: number
   endsAt: number
 }
+
+export interface RecurringVisit {
+  id: string
+  icon: string
+  label: string
+  days: number[]        // 0 = Sun ... 6 = Sat
+  everyNWeeks: number   // 1 = every week, 2 = every other week ...
+  anchorWeek: number    // day number of the Sunday that starts week 0 (for every-N-weeks)
+  startMin: number      // minutes after local midnight, resident time zone
+  endMin: number
+  alertIfMissed: boolean
+  paused: boolean
+  lastArrived?: string  // occurrence key `${id}:${dayNumber}`
+  lastMissedAlert?: string
+}
+
+/** What a screen needs; the resident never gets the full schedule. */
+export interface RecurringNow { id: string; icon: string; label: string; endsAt: number }
 
 export interface DoorCase {
   id: string
@@ -42,6 +60,12 @@ export interface DoorCase {
   /** A helper has actually SEEN the alert (not just "the push was sent"). */
   ackedBy?: string
   ackedAt?: number
+  /** 'expected' = matched a recurring visit: quiet alert, helper confirms in one tap. */
+  lane?: 'normal' | 'expected'
+  recurringId?: string
+  /** Copied at match time so history survives deleting the schedule. */
+  visitIcon?: string
+  visitLabel?: string
 }
 
 export interface DeviceInfo { online: boolean; since: number; alertedAt?: number }
@@ -52,6 +76,7 @@ interface DoorbellState {
   timeoutSec: number
   subs: Record<string, PushSub[]>
   expected: ExpectedVisit[]
+  recurring: RecurringVisit[]
   checkinAt: number | null
   missedAlertDay: string | null
   helpers: Helper[]
@@ -65,9 +90,11 @@ const realertIds: string[] = []
 
 function restore(): Partial<DoorbellState> {
   const s = loadState<DoorbellState>()
+  const legacyHelpers = s.helpers
+  ;(globalThis as any).__legacyHelpers ??= legacyHelpers
   // Always use config helpers if seeding is enabled, to avoid stale data
   const useConfigHelpers = process.env.SEED_DEMO_HELPERS === '1' && process.env.NODE_ENV !== 'production'
-  const helpers = useConfigHelpers ? HELPERS : (s.helpers ?? HELPERS)
+  const helpers = dbEnabled ? [] : (useConfigHelpers ? HELPERS : (s.helpers ?? HELPERS))
   const known = helpers.filter((h) => h.consent === 'approved').map((h) => h.id)
   const timeout = s.timeoutSec ?? DEFAULT_ESCALATION_SECONDS
   for (const c of s.cases ?? []) {
@@ -89,6 +116,7 @@ const state: DoorbellState = (g.__doorbell ||= {
   timeoutSec: DEFAULT_ESCALATION_SECONDS,
   subs: {},
   expected: [],
+  recurring: [],
   checkinAt: null,
   missedAlertDay: null,
   helpers: HELPERS.map((h) => ({ ...h })),
@@ -100,6 +128,7 @@ const state: DoorbellState = (g.__doorbell ||= {
 })
 state.subs ||= {}
 state.expected ||= []
+state.recurring ||= []
 state.checkinAt ??= null
 state.missedAlertDay ??= null
 state.helpers ||= HELPERS.map((h) => ({ ...h }))
@@ -107,7 +136,69 @@ state.quiet ||= { enabled: false, startHour: 22, endHour: 6 }
 state.residentEpoch ||= 1
 state.devices ||= {}
 state.lastTickAt ||= 0
-const persist = () => saveSoon(() => state)
+
+const gl = globalThis as unknown as { __doorbellReady?: Promise<void>; __legacyHelpers?: Helper[] }
+let helpersLoaded = !dbEnabled
+let dbLoadFailed = false
+const SEED_DEMO = process.env.SEED_DEMO_HELPERS === '1' && process.env.NODE_ENV !== 'production'
+
+const approvedHelpers = () => state.helpers.filter((h) => h.consent === 'approved')
+const findHelper = (id: string) => state.helpers.find((h) => h.id === id)
+export const getHelper = (id: string) => findHelper(id)
+
+let helperSave: Promise<void> = Promise.resolve()
+let helperSaveErr: unknown = null
+
+function persistHelpers() {
+  if (!dbEnabled) return
+  const snapshot = state.helpers.map((h) => ({ ...h }))
+  helperSave = helperSave
+    .then(() => saveHelpers(snapshot))
+    .then(() => { helperSaveErr = null }, (e) => { helperSaveErr = e; console.error('[DB] saving helpers failed', e) })
+}
+
+/** Resolves true when the latest change is safely in Postgres. */
+export async function flushHelpers(): Promise<boolean> {
+  await helperSave
+  return helperSaveErr === null
+}
+
+const persist = () => saveSoon(() =>
+  helpersLoaded && dbEnabled ? { ...state, helpers: [] }
+  : dbEnabled ? { ...state, helpers: gl.__legacyHelpers ?? [] }   // not loaded yet: do not wipe the old copy
+  : state)
+
+// Start hydration on first import if DB is enabled
+if (dbEnabled) {
+  console.log('[DB] Database enabled, starting hydration...')
+  void (async () => {
+    try {
+      let rows = await loadHelpers()
+      if (rows.length === 0) {
+        const seed = gl.__legacyHelpers?.length ? gl.__legacyHelpers : (SEED_DEMO ? HELPERS : [])
+        if (seed.length) {
+          await saveHelpers(seed)
+          rows = seed.map((h) => ({ ...h }))
+          console.log(`[DB] imported ${seed.length} helper(s)`)
+        }
+      }
+      state.helpers = rows
+      const known = approvedHelpers().map((h) => h.id)
+      for (const c of state.cases) c.chain ||= known
+      helpersLoaded = true
+      dbLoadFailed = false
+      console.log('[DB] Hydration complete, helpers loaded:', rows.length)
+      persist()
+    } catch (e) {
+      dbLoadFailed = true
+      console.error('[DB] could not load helpers, retrying in 5s', e)
+      await new Promise((r) => setTimeout(r, 5000))
+      // Will retry on next tick
+    }
+  })()
+} else {
+  console.log('[DB] Database not enabled (DATABASE_URL not set)')
+}
 
 const TRIGGER_EVENTS = new Set(
   (process.env.RING_TRIGGER_EVENTS || 'button_press').split(',').map((s) => s.trim()).filter(Boolean)
@@ -140,15 +231,56 @@ function smsHelper(h: Helper | undefined, body: string) {
   if (h) void sendSms(h.phone, body)
 }
 
-const approvedHelpers = () => state.helpers.filter((h) => h.consent === 'approved')
-const findHelper = (id: string) => state.helpers.find((h) => h.id === id)
-export const getHelper = (id: string) => findHelper(id)
-
 function isQuiet(now: number): boolean {
   const q = state.quiet
   if (!q.enabled || q.startHour === q.endHour) return false
   const h = zonedHour(now, RESIDENT_TZ)
   return q.startHour < q.endHour ? h >= q.startHour && h < q.endHour : h >= q.startHour || h < q.endHour
+}
+
+const GRACE_MS = RECURRING_GRACE_MIN * 60_000
+
+/** Today's window for a visit (resident time zone), or null if it is not due today. */
+function windowToday(v: RecurringVisit, now: number) {
+  if (v.paused) return null
+  if (!v.days.includes(zonedWeekday(now, RESIDENT_TZ))) return null
+  const day = zonedDayNumber(now, RESIDENT_TZ)
+  const week = Math.floor((day - v.anchorWeek) / 7)
+  if (week < 0 || week % v.everyNWeeks !== 0) return null
+  return {
+    start: zonedMinuteOnSameDay(now, RESIDENT_TZ, v.startMin),
+    end: zonedMinuteOnSameDay(now, RESIDENT_TZ, v.endMin),
+    key: `${v.id}:${day}`,
+  }
+}
+
+function matchRecurring(now: number, forceId?: string | null) {
+  for (const v of state.recurring) {
+    if (forceId) { if (v.id === forceId) return { visit: v, key: `${v.id}:forced:${now}` }; continue }
+    const w = windowToday(v, now)
+    if (w && now >= w.start - GRACE_MS && now < w.end + GRACE_MS) return { visit: v, key: w.key }
+  }
+  return null
+}
+
+function nextOccurrence(v: RecurringVisit, now: number): number | null {
+  for (let i = 0; i <= 7 * v.everyNWeeks; i++) {
+    const w = windowToday(v, now + i * 86_400_000) // fine for zones without DST (Asia/Kolkata); revisit for DST zones
+    if (w && w.end > now) return w.start
+  }
+  return null
+}
+
+function checkMissedVisits(now: number) {
+  for (const v of state.recurring) {
+    if (!v.alertIfMissed) continue
+    const w = windowToday(v, now)
+    if (!w || now < w.end + GRACE_MS) continue
+    if (v.lastArrived === w.key || v.lastMissedAlert === w.key) continue
+    v.lastMissedAlert = w.key
+    notifyAll(`${v.icon} ${v.label} did not come`, `Expected today and nobody rang. Maybe call ${RESIDENT}.`, `missed-${w.key}`)
+    persist()
+  }
 }
 
 const RESIDENT = process.env.RESIDENT_NAME || 'the resident'
@@ -193,6 +325,18 @@ export function tick(now = Date.now()) {
   for (const c of state.cases) {
     if (c.status !== 'waiting') continue
     while (c.status === 'waiting' && now >= c.deadlineAt) {
+      if (c.lane === 'expected') {
+        // Nobody confirmed in time: treat as an unknown visitor. Never less safe than a normal case.
+        c.lane = 'normal'
+        c.deadlineAt += state.timeoutSec * 1000
+        addLog(c, `Nobody confirmed the expected visit in ${EXPECTED_TIMEOUT_SECONDS}s. Treated as an unknown visitor: normal alert and SMS.`)
+        const first = findHelper(c.chain[c.helperIndex])
+        if (first) {
+          notifyHelper(first, '🚪 Someone is at the door', `Nobody confirmed the expected visit. Open the app. You have ${state.timeoutSec}s.`, c.id)
+          smsHelper(first, `Someone is at ${RESIDENT}'s door. Open the helper app now. You have ${state.timeoutSec}s.`)
+        }
+        continue
+      }
       const fromId = c.chain[c.helperIndex]
       const from = findHelper(fromId)
       c.helperIndex += 1
@@ -215,6 +359,7 @@ export function tick(now = Date.now()) {
     }
   }
   checkMissedCheckin(now)
+  checkMissedVisits(now)
 }
 
 function activeCase(now = Date.now()): DoorCase | null {
@@ -227,31 +372,46 @@ function activeCase(now = Date.now()): DoorCase | null {
   return age < ttl ? c : null
 }
 
-function openCase(kind: CaseKind, eventType: string, clip: string | null, note: string, deviceId: string | null = null): DoorCase {
+function openCase(kind: CaseKind, eventType: string, clip: string | null, note: string, deviceId: string | null = null, forceRecurringId: string | null = null): DoorCase {
   const now = Date.now()
+  const m = kind === 'visitor' ? matchRecurring(now, forceRecurringId) : null
+  const secs = m ? EXPECTED_TIMEOUT_SECONDS : state.timeoutSec
   const c: DoorCase = {
     id: id(),
     kind,
     eventType,
-    clip: clip ?? pickClip(), // no clip given -> random file from videos/ (when LOCAL_VIDEO is on)
+    clip: clip,
     createdAt: now,
     helperIndex: 0,
-    deadlineAt: now + state.timeoutSec * 1000,
+    deadlineAt: now + secs * 1000,
     status: 'waiting',
     log: [],
     chain: approvedHelpers().map((h) => h.id),
     deviceId,
+    lane: m ? 'expected' : 'normal',
+    recurringId: m?.visit.id,
+    visitIcon: m?.visit.icon,
+    visitLabel: m?.visit.label,
   }
   addLog(c, note)
+  if (m) {
+    m.visit.lastArrived = m.key
+    addLog(c, `Matches recurring visit: ${m.visit.icon} ${m.visit.label}. Quiet alert, helper confirms.`)
+  }
   const exp = state.expected.find((e) => e.startsAt <= now && now < e.endsAt)
   if (exp) addLog(c, `Expected now: ${exp.label}.`)
   const approved = approvedHelpers()
   if (!approved.length) addLog(c, 'NO APPROVED HELPERS. Nobody can be alerted. Finish setup.')
-  addLog(c, `Asked ${approved[0]?.name ?? 'a helper'}. ${state.timeoutSec}s to answer.`)
+  addLog(c, `Asked ${approved[0]?.name ?? 'a helper'}. ${secs}s to answer.`)
   if (kind === 'visitor' && approved[0]) {
-    notifyHelper(approved[0], '🚪 Someone is at the door', `Open the app. You have ${state.timeoutSec}s.`, c.id)
-    // Web push alone is unreliable (especially on iOS). SMS goes out at the FIRST step too.
-    smsHelper(approved[0], `Someone is at ${RESIDENT}'s door. Open the helper app now. You have ${state.timeoutSec}s.`)
+    if (m) {
+      notifyHelper(approved[0], `${m.visit.icon} ${m.visit.label} may be at the door`, 'Open the app and confirm. One tap.', c.id)
+      // no SMS on purpose: expected visits stay quiet
+    } else {
+      notifyHelper(approved[0], '🚪 Someone is at the door', `Open the app. You have ${state.timeoutSec}s.`, c.id)
+      // Web push alone is unreliable (especially on iOS). SMS goes out at the FIRST step too.
+      smsHelper(approved[0], `Someone is at ${RESIDENT}'s door. Open the helper app now. You have ${state.timeoutSec}s.`)
+    }
   }
   state.cases.unshift(c)
   if (state.cases.length > 200) state.cases.pop()
@@ -269,7 +429,9 @@ export function ingestEvent(event: { event_type: string; event_id?: string; devi
     return existing
   }
   const clip = event.raw?.data?.attributes?.demo_clip ?? event.raw?.demo_clip ?? null
-  return openCase('visitor', event.event_type, clip, `Ring sent ${event.event_type}.`, event.device_id ?? null)
+  const simOk = process.env.ENABLE_SIM === '1' && process.env.NODE_ENV !== 'production'
+  const forceId = simOk ? (event.raw?.data?.attributes?.demo_recurring_id ?? null) : null
+  return openCase('visitor', event.event_type, clip, `Ring sent ${event.event_type}.`, event.device_id ?? null, forceId)
 }
 
 export function raiseSos(): DoorCase {
@@ -367,6 +529,33 @@ export function removeExpected(id: string) {
   persist()
 }
 
+export function addRecurring(
+  v: { icon: string; label: string; days: number[]; everyNWeeks: number; startMin: number; endMin: number; alertIfMissed: boolean; startNextWeek: boolean }
+): RecurringVisit {
+  const now = Date.now()
+  const thisWeek = zonedDayNumber(now, RESIDENT_TZ) - zonedWeekday(now, RESIDENT_TZ)
+  const r: RecurringVisit = {
+    id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    icon: v.icon, label: v.label,
+    days: [...new Set(v.days)].sort(),
+    everyNWeeks: v.everyNWeeks,
+    anchorWeek: thisWeek + (v.startNextWeek ? 7 : 0),
+    startMin: v.startMin, endMin: v.endMin,
+    alertIfMissed: v.alertIfMissed, paused: false,
+  }
+  state.recurring.push(r)
+  persist()
+  return r
+}
+export function setRecurringPaused(id: string, paused: boolean) {
+  const v = state.recurring.find((x) => x.id === id)
+  if (v) { v.paused = paused; persist() }
+}
+export function removeRecurring(id: string) {
+  state.recurring = state.recurring.filter((x) => x.id !== id)
+  persist()
+}
+
 export function checkIn() {
   state.checkinAt = Date.now()
   persist()
@@ -440,6 +629,14 @@ export function getState(view: View = 'helper', helperId?: string) {
     history: resident ? [] : state.cases.slice(0, 10),
     expected: state.expected.filter((e) => e.endsAt > now),
     expectedNow: state.expected.filter((e) => e.startsAt <= now && now < e.endsAt),
+    timeZone: RESIDENT_TZ,
+    recurring: resident ? [] : state.recurring.map((v) => ({ ...v, next: nextOccurrence(v, now) })),
+    recurringNow: state.recurring.flatMap((v): RecurringNow[] => {
+      const w = windowToday(v, now)
+      return w && now >= w.start - GRACE_MS && now < w.end + GRACE_MS
+        ? [{ id: v.id, icon: v.icon, label: v.label, endsAt: w.end }]
+        : []
+    }),
     checkin: { doneToday: checkedInToday(now), dueHour: CHECKIN_HOUR },
     quietNow: isQuiet(now),
   }
@@ -456,6 +653,7 @@ export const getSetup = () => ({
   timeoutSec: state.timeoutSec,
   ready: systemReady(),
   timeZone: RESIDENT_TZ,
+  recurring: state.recurring,
 })
 
 /** Health for an external uptime monitor. `tickAgeMs` large => escalation timer is NOT running (e.g. serverless). */
@@ -466,6 +664,7 @@ export function getHealth() {
     ready: systemReady(),
     anyDeviceOffline: anyDeviceOffline(),
     openCases: state.cases.filter((c) => c.status === 'waiting').length,
+    db: dbEnabled ? { loaded: helpersLoaded, failing: dbLoadFailed || helperSaveErr !== null } : null,
   }
 }
 
@@ -479,6 +678,7 @@ export function rotateHelper(id: string): boolean {
   h.tokenEpoch = (h.tokenEpoch ?? 1) + 1
   delete state.subs[id] // old phones stop receiving alerts too
   persist()
+  persistHelpers()
   return true
 }
 
@@ -486,6 +686,7 @@ export function addHelper(name: string, phone: string, emoji: string): Helper {
   const h: Helper = { id: `h_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name, phone, emoji, consent: 'pending', tokenEpoch: 1 }
   state.helpers.push(h)
   persist()
+  persistHelpers()
   return h
 }
 export function removeHelper(id: string): boolean {
@@ -495,6 +696,7 @@ export function removeHelper(id: string): boolean {
   state.helpers = state.helpers.filter((x) => x.id !== id)
   delete state.subs[id]
   persist()
+  persistHelpers()
   return true
 }
 export function setConsent(id: string, consent: Consent): boolean {
@@ -504,6 +706,7 @@ export function setConsent(id: string, consent: Consent): boolean {
   h.consent = consent
   h.consentAt = Date.now()
   persist()
+  persistHelpers()
   return true
 }
 export function moveHelper(id: string, dir: -1 | 1) {
@@ -511,6 +714,7 @@ export function moveHelper(id: string, dir: -1 | 1) {
   if (i < 0 || j < 0 || j >= state.helpers.length) return
   ;[state.helpers[i], state.helpers[j]] = [state.helpers[j], state.helpers[i]]
   persist()
+  persistHelpers()
 }
 export function setQuiet(q: Quiet) {
   state.quiet = { enabled: !!q.enabled, startHour: q.startHour, endHour: q.endHour }
@@ -529,6 +733,7 @@ export function resetAll() {
   state.cases.length = 0
   state.offline = false
   state.devices = {}
+  state.recurring = []
   persist()
 }
 
@@ -539,18 +744,21 @@ if (!gt.__doorbellTimer) {
   gt.__doorbellTimer = setInterval(() => tick(), 1000)
   gt.__doorbellTimer.unref?.()
   // Re-alert for cases that were open when the process last stopped.
-  for (const cid of realertIds.splice(0)) {
-    const c = state.cases.find((x) => x.id === cid)
-    if (!c || c.status !== 'waiting') continue
-    if (c.kind === 'sos') alertSos(c)
-    else {
-      const h = findHelper(c.chain[c.helperIndex])
-      if (h) {
-        notifyHelper(h, '🚪 Someone is at the door', 'The system restarted. Open the app now.', c.id)
-        smsHelper(h, `Someone is at ${RESIDENT}'s door (system restarted). Open the helper app now.`)
+  // Wait a bit for helpers to load from DB before re-alerting
+  setTimeout(() => {
+    for (const cid of realertIds.splice(0)) {
+      const c = state.cases.find((x) => x.id === cid)
+      if (!c || c.status !== 'waiting') continue
+      if (c.kind === 'sos') alertSos(c)
+      else {
+        const h = findHelper(c.chain[c.helperIndex])
+        if (h) {
+          notifyHelper(h, '🚪 Someone is at the door', 'The system restarted. Open the app now.', c.id)
+          smsHelper(h, `Someone is at ${RESIDENT}'s door (system restarted). Open the helper app now.`)
+        }
       }
     }
-  }
+  }, 2000)
 }
 if (!gt.__doorbellPoll && ringConfigured()) {
   void pollDevices()

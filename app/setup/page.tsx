@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { Helper } from '@/lib/doorbell/config'
-import type { Quiet } from '@/lib/doorbell/store'
+import type { Quiet, RecurringVisit } from '@/lib/doorbell/store'
 import { usePin } from '../hooks/usePin'
+import RecurringVisits from '../helper/RecurringVisits'
 
 interface Setup {
   helpers: Helper[]
@@ -12,6 +13,7 @@ interface Setup {
   timeoutSec: number
   ready: boolean
   timeZone: string
+  recurring: RecurringVisit[]
 }
 
 const BADGE: Record<Helper['consent'], string> = {
@@ -61,10 +63,20 @@ export default function SetupPage() {
   }
 
   const copyLink = async (target: string, who: string) => {
-    const j = await act({ action: 'link', target })
-    if (j?.url) {
-      await navigator.clipboard.writeText(j.url)
-      setNote(`Sign-in link for ${who} copied. Send it only to ${who}. Anyone with the link can act as ${who}.`)
+    try {
+      const j = await act({ action: 'link', target })
+      if (j?.url) {
+        try {
+          await navigator.clipboard.writeText(j.url)
+          setNote(`Sign-in link for ${who} copied. Send it only to ${who}. Anyone with the link can act as ${who}.`)
+        } catch (clipboardErr) {
+          setErr(`Could not copy to clipboard. Please allow clipboard access or copy manually: ${j.url}`)
+        }
+      } else {
+        setErr('Failed to generate sign-in link. Please try again.')
+      }
+    } catch (e) {
+      setErr('Failed to generate sign-in link. Please check your connection and try again.')
     }
   }
   const revoke = async (target: string, who: string) => {
@@ -181,6 +193,8 @@ export default function SetupPage() {
         <span>o'clock</span>
         <button onClick={() => act({ action: 'quiet', ...quiet })} className={btn}>Save</button>
       </div>
+
+      <RecurringVisits items={data.recurring} timeZone={data.timeZone} onChange={load} adminPin={pin} />
     </main>
   )
 }

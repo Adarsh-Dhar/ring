@@ -6,5 +6,5 @@ export function verifyRingSignature(signingKey: string, rawBody: string, header:
   const received = header.startsWith('sha256=') ? header.slice(7) : header
   const expected = crypto.createHmac('sha256', signingKey).update(rawBody, 'utf8').digest()
   if (!/^[0-9a-fA-F]+$/.test(received) || received.length !== expected.length * 2) return false
-  return crypto.timingSafeEqual(Buffer.from(received, 'hex'), expected)
+  return crypto.timingSafeEqual(Buffer.from(received, 'hex') as unknown as Uint8Array, expected as unknown as Uint8Array)
 }

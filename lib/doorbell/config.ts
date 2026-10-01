@@ -42,3 +42,8 @@ export const EMERGENCY_NUMBER = process.env.EMERGENCY_NUMBER || '112'
 
 /** A phone that is obviously a placeholder (+910000000001 etc.) must never count as "a helper who can be reached". */
 export const isPlaceholderPhone = (p: string) => /0{6,}/.test(p.replace(/^\+\d{1,3}/, ''))
+
+/** How long the helper has to confirm an expected visit before it is treated as an unknown visitor. */
+export const EXPECTED_TIMEOUT_SECONDS = Number(process.env.EXPECTED_TIMEOUT_SECONDS || 60)
+/** A visit may arrive this many minutes before the window starts or after it ends. */
+export const RECURRING_GRACE_MIN = Number(process.env.RECURRING_GRACE_MIN || 15)

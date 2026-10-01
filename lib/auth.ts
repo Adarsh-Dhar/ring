@@ -33,7 +33,7 @@ export function verifyToken(token: string | null | undefined): TokenClaims | nul
   if (!payload || !sig) return null
   const want = mac(payload, key)
   const got = Buffer.from(sig, 'base64url')
-  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null
+  if (got.length !== want.length || !crypto.timingSafeEqual(got as unknown as Uint8Array, want as unknown as Uint8Array)) return null
   const [role, id, epoch] = Buffer.from(payload, 'base64url').toString().split(':')
   if ((role !== 'helper' && role !== 'resident') || !id || !Number.isInteger(Number(epoch))) return null
   return { role, id, epoch: Number(epoch) }
@@ -42,7 +42,7 @@ export function verifyToken(token: string | null | undefined): TokenClaims | nul
 /** Constant-time string compare. */
 export function safeEqual(a: string, b: string): boolean {
   const x = Buffer.from(a), y = Buffer.from(b)
-  return x.length === y.length && crypto.timingSafeEqual(x, y)
+  return x.length === y.length && crypto.timingSafeEqual(x as unknown as Uint8Array, y as unknown as Uint8Array)
 }
 
 /** Guardian/admin PIN. In production an unset PIN means nobody is admin. */

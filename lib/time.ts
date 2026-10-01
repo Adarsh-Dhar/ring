@@ -42,3 +42,21 @@ export function zonedHourOnSameDay(ms: number, tz: string, hour: number) {
 export function isValidTimeZone(tz: string) {
   try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true } catch { return false }
 }
+
+/** 0 = Sunday ... 6 = Saturday, for the local day containing `ms`. */
+export function zonedWeekday(ms: number, tz: string) {
+  const p = zonedParts(ms, tz)
+  return new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay()
+}
+
+/** Whole days since 1970-01-01 for the local calendar day containing `ms`. */
+export function zonedDayNumber(ms: number, tz: string) {
+  const p = zonedParts(ms, tz)
+  return Math.floor(Date.UTC(p.year, p.month - 1, p.day) / 86_400_000)
+}
+
+/** The instant at which it is `minutes` after local midnight, on the local day containing `ms`. */
+export function zonedMinuteOnSameDay(ms: number, tz: string, minutes: number) {
+  const p = zonedParts(ms, tz)
+  return Date.UTC(p.year, p.month - 1, p.day, 0, minutes, 0) - offsetMs(ms, tz)
+}
