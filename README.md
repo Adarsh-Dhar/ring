@@ -1,359 +1,286 @@
-# Ring API Hello World
+# Doorbell Helper
 
-Get started with the [Ring Partner API](https://developer.amazon.com/docs/ring/api-documentation.html) — explore device APIs from your terminal and stream live video in your browser.
+A Next.js application for a vulnerable resident. Helpers receive doorbell alerts and make safety decisions, with support for regular/recurring visitors, escalation chains, and SMS/web push notifications.
 
-![Next.js](https://img.shields.io/badge/Next.js-14-black)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
-![Python](https://img.shields.io/badge/Python-3.8+-blue)
+## Overview
 
-## What's Inside
+The resident's phone or tablet shows a simple screen when the doorbell rings. Helpers receive alerts and can view a camera feed, confirm it's safe to open, or escalate to the next helper in the chain.
 
-| Path | What it does | You need |
-|------|-------------|----------|
-| `scripts/` | Python scripts to call Ring APIs from your terminal | Python 3.8+ and a token |
-| `app/` | Next.js web app with live video streaming and real-time event dashboard | Node.js 18+ and a token |
+## Safety Model
 
----
-
-> 🚀 **Coming from the [Ring Developer Playground](https://developer.amazon.com/ring/console/playground)?**
->
-> You already have a token — jump straight to:
-> - **[Explore APIs from your terminal →](#step-2-explore-apis-python-scripts)** (Python, no web app needed)
-> - **[Live stream in your browser →](#step-3-live-video-stream-web-app)** (Node.js, one command)
-
----
-
-## Step 1: Get Your Token
-
-1. Go to the [Ring Developer Playground](https://developer.amazon.com/ring/console/playground)
-2. Click **Generate Token**
-3. Copy the access token
-
-The Playground gives you a short-lived access token (~30 minutes) that works with all Ring APIs. No app registration, OAuth setup, or client credentials needed — just the token.
-
-> **Note:** When the token expires, return to the Playground and generate a fresh one.
-
----
-
-## Step 2: Explore APIs (Python Scripts)
-
-Call any Ring API directly from your terminal. Each script is a self-contained code snippet you can copy into your own project.
-
-### Setup
-
-```bash
-cd scripts
-pip install -r requirements.txt
-```
-
-### Usage
-
-Run the interactive explorer:
-
-```bash
-python explore_apis.py --token "eyJ..."
-```
-
-This shows a menu where you pick which API to call:
-
-```
-=== Ring API Explorer ===
-Use your token to call any Ring API.
-
-1. List Devices
-2. Device Status
-3. Device Capabilities
-4. Device Location
-5. Device Configurations
-6. Event History
-7. User Profile
-8. Run All
-0. Exit
-
-Select an API to call:
-```
-
-Or run individual scripts directly:
-
-```bash
-# List all your devices
-python list_devices.py --token "eyJ..."
-
-# Check if a device is online
-python device_status.py --token "eyJ..." --device-id "ava1.ring.device.XXX"
-
-# Get device capabilities (video codecs, motion detection, etc.)
-python device_capabilities.py --token "eyJ..." --device-id "ava1.ring.device.XXX"
-
-# Get device location (country/state)
-python device_location.py --token "eyJ..." --device-id "ava1.ring.device.XXX"
-
-# Get device configurations (motion zones, privacy zones)
-python device_configurations.py --token "eyJ..." --device-id "ava1.ring.device.XXX"
-
-# Get event history (motion events, doorbell presses, live views)
-python event_history.py --token "eyJ..." --device-id "ava1.ring.device.XXX"
-
-# Get your user profile
-python user_profile.py --token "eyJ..."
-```
-
-> **Tip:** If you don't pass `--device-id`, scripts that need one will auto-discover your first device.
-
-Each script prints the equivalent `curl` command so you can copy it into Postman, your own code, or any HTTP client:
-
-```
-→ GET https://api.amazonvision.com/v1/devices
-  curl -X GET "https://api.amazonvision.com/v1/devices" \
-    -H "Authorization: Bearer $TOKEN"
-```
-
-### Available Scripts
-
-| Script | API Endpoint | Description |
-|--------|-------------|-------------|
-| `list_devices.py` | `GET /v1/devices` | List all accessible devices |
-| `device_status.py` | `GET /v1/devices/{id}/status` | Check if device is online/offline |
-| `device_capabilities.py` | `GET /v1/devices/{id}/capabilities` | Video codecs, motion detection, image enhancements |
-| `device_location.py` | `GET /v1/devices/{id}/location` | Country and state (for compliance) |
-| `device_configurations.py` | `GET /v1/devices/{id}/configurations` | Motion zones, privacy zones, image settings |
-| `event_history.py` | `GET /v1/history/devices/{id}/events` | Past motion, doorbell, and live view events |
-| `user_profile.py` | `GET /v1/users/me` | Your Ring account ID, name, and email |
-| `explore_apis.py` | All of the above | Interactive menu to call any API |
-
----
-
-## Step 3: Live Video Stream (Web App)
-
-Stream live video from a Ring device directly in your browser using WebRTC.
-
-### Setup
-
-```bash
-# Install dependencies
-npm install
-
-# Create your environment file
-cp .env.example .env.local
-```
-
-Edit `.env.local` and paste your token from Step 1:
-
-```env
-RING_ACCESS_TOKEN=eyJ...paste_your_token_here
-```
-
-### Run
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-The app will:
-1. Auto-discover devices associated with your token
-2. Show a **Start Live Stream** button
-3. Click it to begin a WebRTC live video stream from your Ring device
-
-When the token expires, paste a fresh one from the Playground into `.env.local` and restart the server.
-
----
-
-## Advanced: Full Dashboard (Refresh Token Mode)
-
-For production integrations with long-lived sessions, the app supports OAuth refresh tokens with auto-renewal. This mode shows the full dashboard including webhook events, video processors, and canvas overlays.
-
-### Setup
-
-```env
-RING_REFRESH_TOKEN=your_refresh_token_here
-RING_CLIENT_ID=your_client_id_here
-RING_CLIENT_SECRET=your_client_secret_here
-```
-
-All three variables are required. The app automatically refreshes the access token when it expires.
-
-See [Authentication](https://developer.amazon.com/docs/ring/authentication.html) for how to obtain refresh tokens through the OAuth account linking flow, and [Configure Your Ring Application](https://developer.amazon.com/docs/ring/app-registration.html) for how to get your client credentials.
-
-### Device ID (Optional)
-
-```env
-NEXT_PUBLIC_RING_DEVICE_ID=your_device_id_here
-```
-
-If set, the app uses this device directly instead of auto-discovering.
-
-### Important
-
-Do not set both `RING_ACCESS_TOKEN` and `RING_REFRESH_TOKEN` — the app will show a configuration error. Use one or the other.
-
----
-
-## Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `RING_ACCESS_TOKEN` | Access token from the [Playground](https://developer.amazon.com/ring/console/playground) | Yes (if not using refresh token) |
-| `RING_REFRESH_TOKEN` | OAuth refresh token from [account linking](https://developer.amazon.com/docs/ring/authentication.html) | Yes (if not using access token) |
-| `RING_CLIENT_ID` | OAuth client ID from [app registration](https://developer.amazon.com/docs/ring/app-registration.html) | Yes (only with refresh token) |
-| `RING_CLIENT_SECRET` | OAuth client secret from [app registration](https://developer.amazon.com/docs/ring/app-registration.html) | Yes (only with refresh token) |
-| `NEXT_PUBLIC_RING_DEVICE_ID` | Device ID (skips auto-discovery) | No |
-| `NEXT_PUBLIC_RING_DEVICE_NAME` | Display name for the device | No |
-| `RING_WEBHOOK_SECRET` | Bearer token for [webhook auth](https://developer.amazon.com/docs/ring/notifications.html) | No |
-
----
+Regular/recurring visitors are handled on a separate, lighter track but **never auto-approve**. The resident or a helper must always confirm before the screen says "safe to open."
 
 ## Features
 
-### Access Token Mode (Playground)
-- **Live Video Streaming** — WebRTC-based low-latency video from Ring devices
-- **Auto Device Discovery** — Automatically finds devices linked to your token
-- **Simplified UI** — Full-screen live view, no distractions
+- **Escalation chain**: Ask helpers in order, one at a time, with configurable timeout
+- **Expected/recurring visits**: Scheduled visits (doctor, cleaner, physio) get quieter notifications and longer timeouts
+- **Night lock**: The resident screen always says "do not open" during quiet hours
+- **SMS and web push**: Helpers are notified via SMS and/or browser push notifications
+- **Helper management**: Add, approve, reorder, and revoke helpers from a setup page
+- **Recurring visit management**: Schedule regular visits with flexible repeat patterns
+- **Database persistence**: Helpers stored in PostgreSQL (optional, falls back to state file)
+- **Ring integration**: Optional Ring device integration for real doorbell events and live video
 
-### Refresh Token Mode (Production)
-- Everything above, plus:
-- **Webhook Events** — Real-time SSE for Ring camera webhooks (motion, doorbell, etc.)
-- **Video Processors** — Plugin system for real-time video analysis
-- **Hand Tracking Game** — Catch-the-box game using MediaPipe hand detection
-- **Canvas Overlays** — Bounding boxes, heatmaps, and visual effects
+## Development Setup
 
----
+### Prerequisites
+
+- Node.js 20+
+- pnpm 8+
+- PostgreSQL 17 (optional, for helper persistence)
+- Docker (optional, for PostgreSQL)
+
+### Installation
+
+```bash
+pnpm install
+```
+
+### Environment Variables
+
+Copy `.env.example` to `.env.local` and configure:
+
+```bash
+cp .env.example .env.local
+```
+
+Required variables:
+
+```env
+AUTH_SECRET=some-random-secret-at-least-32-chars
+ADMIN_PIN=12345678
+RESIDENT_NAME=ResidentName
+RESIDENT_TZ=Asia/Kolkata
+APP_URL=http://localhost:3000
+```
+
+Optional variables:
+
+```env
+# PostgreSQL for helper persistence
+DATABASE_URL=postgresql://doorbell:devpassword@localhost:5433/doorbell
+
+# Ring integration (optional)
+RING_HMAC_KEY=your-webhook-signing-key
+RING_ACCESS_TOKEN=your-access-token
+RING_REFRESH_TOKEN=your-refresh-token
+RING_CLIENT_ID=your-client-id
+RING_CLIENT_SECRET=your-client-secret
+RING_API_BASE=https://api.amazonvision.com
+RING_TOKEN_URL=https://oauth.ring.com/oauth/token
+
+# Twilio for SMS (optional)
+TWILIO_ACCOUNT_SID=your-account-sid
+TWILIO_AUTH_TOKEN=your-auth-token
+TWILIO_PHONE_NUMBER=+15551234567
+
+# VAPID for web push (optional, run npm run gen:vapid to generate)
+VAPID_PUBLIC_KEY=your-vapid-public-key
+VAPID_PRIVATE_KEY=your-vapid-private-key
+```
+
+### PostgreSQL (Optional)
+
+Start PostgreSQL with Docker:
+
+```bash
+docker-compose -f docker-compose.postgres.yml up -d
+```
+
+Run database migrations:
+
+```bash
+pnpm exec prisma generate
+pnpm exec prisma db push
+```
+
+### Running the App
+
+Development mode:
+
+```bash
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000)
+
+Production build:
+
+```bash
+pnpm build
+pnpm start
+```
+
+## Ring Simulator
+
+The app includes a Ring simulator for development without a physical Ring device. The simulator exercises the real webhook, authentication, escalation, device-health, Ring API, live-view, and notification paths as closely as possible.
+
+### Simulator Truth Table
+
+| Part | Status |
+|------|--------|
+| Event delivery, signatures, retries, duplicates | Simulated, through the real webhook code |
+| Ring API: token refresh, device list, status | Simulated; shapes unverified until step 7 |
+| Live video | Simulated: local mp4 with Ring's session limit and watermark. Real WebRTC/WHEP code exists (`LiveView.tsx`, `/api/ring/live`) but has never run against Ring |
+| Web push | Real once VAPID keys are set |
+| SMS | Real only with `SMS_LIVE=1` and an allow-listed number |
+| Escalation, check-in, quiet hours, recurring visits | Real code, driven by the simulated clock |
+
+### Known Gaps
+
+- The fake WHEP endpoint is not a real WebRTC server
+- The real WebRTC path is untested against an actual Ring device
+- `ring-sandbox` is not used
+- `/sim` and `CameraFeed` were type-checked but not thoroughly browser-tested
+- Simulated time does not affect webhook idempotency or fake-server token expiry
+- The fake Ring response shapes are copied from what the existing `client.ts` expects and remain unverified against official Ring docs or a real device
+- Real Twilio, real web push, and the fake server retry loop against a failing app were not fully tested
+
+### Running the Simulator
+
+1. Enable simulation in `.env.local`:
+
+```env
+ENABLE_SIM=1
+ALLOW_UNSIGNED_WEBHOOK=1
+ALLOW_DEV_AUTH=1
+LOCAL_VIDEO=1
+VIDEOS_DIR=./videos
+```
+
+2. Start the fake Ring server (optional, for fake API responses):
+
+```bash
+pnpm run sim:ring
+```
+
+3. Start the app with simulation enabled:
+
+```bash
+pnpm run dev:sim
+```
+
+4. Open the simulator UI at [http://localhost:3000/sim](http://localhost:3000)
+
+### Simulator Features
+
+- **Signed webhooks**: Simulates Ring webhook delivery with HMAC signatures
+- **Device offline**: Simulates device offline state through webhook events
+- **Simulated clock**: Advance time to trigger escalation and recurring-visit behavior
+- **Fake Ring API**: Mock endpoints for device list, status, and token refresh
+- **Simulated live view**: Local MP4 clips with Ring-like session limits
+- **Notification outbox**: Capture simulated push/SMS deliveries for inspection
+
+### Simulator Scripts
+
+```bash
+# Run fake Ring server
+pnpm run sim:ring
+
+# Record real Ring responses (for documenting API shapes)
+pnpm run record:ring
+
+# Generate VAPID keys for web push
+pnpm run gen:vapid
+
+# Run app with simulation enabled
+pnpm run dev:sim
+```
+
+## Testing
+
+```bash
+# Run all tests
+pnpm test
+
+# Type checking
+pnpm typecheck
+
+# Build
+pnpm build
+```
+
+## API Endpoints
+
+### `/api/setup` (admin only)
+
+GET/POST for helper management, quiet hours, timeout configuration, and sign-in link generation.
+
+### `/api/doorbell/state`
+
+GET the current doorbell state (cases, helpers, device status, recurring visits).
+
+### `/api/doorbell/ack`
+
+POST to acknowledge that a helper is responding to a case.
+
+### `/api/doorbell/answer`
+
+POST to answer a case (safe to open / do not open).
+
+### `/api/doorbell/confirm`
+
+POST to confirm an expected visitor.
+
+### `/api/doorbell/sos`
+
+POST to trigger an SOS from the resident screen.
+
+### `/api/doorbell/checkin`
+
+POST for helper check-in (periodic "I'm alive" signal).
+
+### `/api/doorbell/recurring`
+
+GET/POST/PATCH/DELETE for recurring visit management.
+
+### `/api/webhook`
+
+POST for Ring webhook events (motion detection, doorbell press, device offline, etc.).
+
+### `/api/sim`
+
+POST for simulator controls (trigger events, advance time, reset state).
+
+### `/api/health`
+
+GET for health/readiness status (includes database loading state).
+
+## Pages
+
+### `/setup`
+
+Admin setup page for managing helpers, quiet hours, timeout, and recurring visits. Requires ADMIN_PIN.
+
+### `/helper`
+
+Helper dashboard showing current cases, camera feed, and action buttons.
+
+### `/resident`
+
+Resident screen for doorbell events and SOS.
+
+### `/sim`
+
+Simulator UI for development and testing.
 
 ## Architecture
 
-```
-scripts/
-├── explore_apis.py            # Interactive API explorer
-├── list_devices.py            # GET /v1/devices
-├── device_status.py           # GET /v1/devices/{id}/status
-├── device_capabilities.py     # GET /v1/devices/{id}/capabilities
-├── device_location.py         # GET /v1/devices/{id}/location
-├── device_configurations.py   # GET /v1/devices/{id}/configurations
-├── event_history.py           # GET /v1/history/devices/{id}/events
-├── user_profile.py            # GET /v1/users/me
-└── requirements.txt           # Python dependencies
+- **State management**: Synchronous in-memory store (`lib/doorbell/store.ts`) with persistence to PostgreSQL (helpers) and state file (cases, recurring visits, settings)
+- **Time handling**: Resident time zone (`RESIDENT_TZ`) for recurring visit scheduling
+- **Escalation**: Timeout-based escalation through helper chain with configurable timeout
+- **Notifications**: SMS via Twilio, web push via VAPID
+- **Authentication**: HMAC token-based auth for helpers and resident
+- **Ring integration**: Webhook signature verification, Ring API client, WHEP live streaming
 
-app/
-├── page.tsx                   # Main dashboard
-├── components/                # UI components
-├── hooks/
-│   ├── useWebRTCStream.ts     # WebRTC connection management
-│   ├── useEventStream.ts      # SSE with auto-reconnect
-│   └── useCanvasOverlay.ts    # Optimized render loop
-└── api/
-    ├── webhook/               # Webhook receiver + SSE endpoint
-    └── ring/                  # Ring API integration
-        ├── config/            # Auth mode detection
-        ├── devices/           # Device discovery + status
-        ├── stream/            # WebRTC WHEP live streaming
-        ├── events/            # Event history
-        └── token/             # Token info
+## Security Notes
 
-lib/
-├── auth.ts                    # Token management (access token / refresh token)
-├── video-processors/          # Plugin system for video analysis
-├── schemas/                   # Zod validation schemas
-└── sse-broadcast.ts           # SSE client management
-```
-
----
-
-## Video Processors
-
-Built-in processors (available in refresh token mode):
-
-| Processor | Description |
-|-----------|-------------|
-| 🎯 Catch the Logo | Hand-tracking game with fire effects |
-| 🌡️ Motion Heatmap | Visualizes motion as color overlay |
-| 💡 Brightness Analyzer | Analyzes frame brightness levels |
-
-### Creating Custom Processors
-
-```typescript
-import {VideoProcessor, ProcessorResult} from './types';
-import {processorRegistry} from './registry';
-
-class MyProcessor implements VideoProcessor {
-  id = 'my-processor';
-  name = 'My Processor';
-  description = 'Does something cool';
-  enabled = false;
-
-  async process(
-    frame: ImageData,
-    canvas: HTMLCanvasElement,
-    video: HTMLVideoElement,
-  ): Promise<ProcessorResult | null> {
-    return {
-      id: `my-${Date.now()}`,
-      processorId: this.id,
-      timestamp: Date.now(),
-      data: {},
-      boundingBoxes: [{x: 0, y: 0, width: 100, height: 100, label: 'Detected'}],
-    };
-  }
-}
-
-processorRegistry.register(new MyProcessor());
-```
-
-See [docs/video-processors.md](docs/video-processors.md) for the complete guide.
-
----
-
-## Webhook Integration
-
-Available in refresh token mode. The dashboard receives webhook events via POST and broadcasts them to connected clients via SSE.
-
-```bash
-# Send a test event
-curl -X POST http://localhost:3000/api/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"event_type": "motion_detected", "device_id": "camera-1"}'
-```
-
-Configure your Ring webhook to POST to `/api/webhook`. Set `RING_WEBHOOK_SECRET` in `.env.local` for authentication.
-
----
-
-## API Reference
-
-For full API documentation:
-- [Ring Partner API Documentation](https://developer.amazon.com/docs/ring/api-documentation.html)
-- [Live Video Streaming (WHEP)](https://developer.amazon.com/docs/ring/live-video.html)
-- [Device Discovery](https://developer.amazon.com/docs/ring/device-discovery.html)
-- [Authentication Guide](https://developer.amazon.com/docs/ring/authentication.html)
-
----
-
-## Tech Stack
-
-- **Scripts**: Python 3.8+ with `requests`
-- **Web App**: Next.js 14 (App Router), TypeScript, Tailwind CSS
-- **Video**: WebRTC (WHEP protocol), MediaPipe Hands
-- **Validation**: Zod
-- **Events**: Server-Sent Events (SSE)
-
----
-
-## Development
-
-```bash
-# Run web app with hot reload
-npm run dev
-
-# Type checking
-npx tsc --noEmit
-
-# Build for production
-npm run build
-```
-
----
+- The `.env.local` file contains sensitive credentials and should never be committed
+- Exposed credentials (Ring, Twilio, VAPID, auth) should be rotated
+- Helper sign-in links are single-use tokens tied to helper epochs
+- Webhook signatures are verified using `RING_HMAC_KEY`
+- Night lock prevents opening during quiet hours regardless of helper approval
 
 ## License
 
-[MIT](LICENSE)
-# ring
+MIT

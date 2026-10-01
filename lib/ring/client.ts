@@ -37,14 +37,17 @@ async function accessToken(): Promise<string | null> {
   return process.env.RING_ACCESS_TOKEN || null
 }
 
-export async function ringFetch(path: string, init: RequestInit = {}): Promise<Response> {
+export async function ringFetch(path: string, init: RequestInit = {}, retried = false): Promise<Response> {
   const t = await accessToken()
   if (!t) throw new Error('Ring is not configured')
-  return fetch(`${API}${path}`, {
+  const res = await fetch(`${API}${path}`, {
     ...init,
     headers: { ...(init.headers as Record<string, string>), Authorization: `Bearer ${t}` },
     signal: AbortSignal.timeout(8000),
   })
+  // Token expired earlier than we expected: drop the cached one and try once with a fresh token.
+  if (res.status === 401 && !retried && refreshToken) { cached = null; return ringFetch(path, init, true) }
+  return res
 }
 
 /** GET /v1/devices/{id}/status  ->  data.attributes.online */

@@ -4,6 +4,7 @@ import { fetchDeviceOnline, listDeviceIds, ringConfigured } from '../ring/client
 import { pushToSubs, sendSms, type PushSub } from './notify'
 import { loadState, saveSoon } from './persist'
 import { dbEnabled, loadHelpers, saveHelpers } from '../db/helpers'
+import { now as clockNow, resetClock } from '../clock'
 
 export type CaseStatus = 'waiting' | 'answered' | 'no_response'
 export type Answer = 'safe' | 'not_safe' | 'call_me'
@@ -100,8 +101,8 @@ function restore(): Partial<DoorbellState> {
   for (const c of s.cases ?? []) {
     if (c.status === 'waiting') {
       // A live visitor must never be dropped because the server restarted: re-arm the timer and re-alert.
-      c.deadlineAt = Date.now() + timeout * 1000
-      c.log.push({ t: Date.now(), msg: 'Server restarted while this case was open. Timer restarted and helper alerted again.' })
+      c.deadlineAt = clockNow() + timeout * 1000
+      c.log.push({ t: clockNow(), msg: 'Server restarted while this case was open. Timer restarted and helper alerted again.' })
       realertIds.push(c.id)
     }
     c.chain ||= known
@@ -204,7 +205,7 @@ const TRIGGER_EVENTS = new Set(
   (process.env.RING_TRIGGER_EVENTS || 'button_press').split(',').map((s) => s.trim()).filter(Boolean)
 )
 
-const id = () => `case_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+const id = () => `case_${clockNow()}_${Math.random().toString(36).slice(2, 6)}`
 
 export function addSub(helperId: string, sub: PushSub) {
   const list = (state.subs[helperId] ||= [])
@@ -313,14 +314,14 @@ function alertSos(c: DoorCase) {
 }
 
 const addLog = (c: DoorCase, msg: string) => {
-  c.log.push({ t: Date.now(), msg })
+  c.log.push({ t: clockNow(), msg })
   persist()
 }
 
 /** True only if at least one approved helper has a real (non-placeholder) phone number. */
 export const systemReady = () => approvedHelpers().some((h) => !isPlaceholderPhone(h.phone))
 
-export function tick(now = Date.now()) {
+export function tick(now = clockNow()) {
   state.lastTickAt = now
   for (const c of state.cases) {
     if (c.status !== 'waiting') continue
@@ -362,7 +363,7 @@ export function tick(now = Date.now()) {
   checkMissedVisits(now)
 }
 
-function activeCase(now = Date.now()): DoorCase | null {
+function activeCase(now = clockNow()): DoorCase | null {
   const c = state.cases[0]
   if (!c) return null
   if (c.status === 'waiting') return c
@@ -373,7 +374,7 @@ function activeCase(now = Date.now()): DoorCase | null {
 }
 
 function openCase(kind: CaseKind, eventType: string, clip: string | null, note: string, deviceId: string | null = null, forceRecurringId: string | null = null): DoorCase {
-  const now = Date.now()
+  const now = clockNow()
   const m = kind === 'visitor' ? matchRecurring(now, forceRecurringId) : null
   const secs = m ? EXPECTED_TIMEOUT_SECONDS : state.timeoutSec
   const c: DoorCase = {
@@ -455,7 +456,7 @@ export function ackCase(caseId: string, helperId: string): { ok: true; case: Doo
   const h = findHelper(helperId)
   if (!h || h.consent !== 'approved' || !c.chain.includes(helperId)) return { ok: false, error: 'not allowed', status: 403 }
   if (!c.ackedAt) {
-    c.ackedAt = Date.now()
+    c.ackedAt = clockNow()
     c.ackedBy = helperId
     addLog(c, `${h.name} saw the alert.`)
   }
@@ -472,7 +473,7 @@ export const caseDevice = (caseId: string) => state.cases.find((x) => x.id === c
 export const isCaseOpenFor = (caseId: string, helperId: string) => {
   const c = state.cases.find((x) => x.id === caseId)
   const h = findHelper(helperId)
-  return !!c && !!h && h.consent === 'approved' && c.chain.includes(helperId) && Date.now() - c.createdAt < 30 * 60_000
+  return !!c && !!h && h.consent === 'approved' && c.chain.includes(helperId) && clockNow() - c.createdAt < 30 * 60_000
 }
 
 /* ---------- Ring device health: a dead doorbell must never look like "All quiet" ---------- */
@@ -480,7 +481,7 @@ export const isCaseOpenFor = (caseId: string, helperId: string) => {
 export function setDeviceOnline(deviceId: string, online: boolean, source: string) {
   const prev = state.devices[deviceId]
   if (prev && prev.online === online) return
-  const now = Date.now()
+  const now = clockNow()
   state.devices[deviceId] = { online, since: now, alertedAt: prev?.alertedAt }
   if (!online) {
     state.devices[deviceId].alertedAt = now
@@ -497,8 +498,6 @@ export const anyDeviceOffline = () => Object.values(state.devices).some((d) => !
 let polling = false
 let ringFailures = 0
 async function pollDevices() {
-  // Skip Ring polling when using simulator
-  if (process.env.ENABLE_SIM === '1' && process.env.NODE_ENV !== 'production') return
   if (polling || !ringConfigured()) return
   polling = true
   try {
@@ -519,7 +518,7 @@ async function pollDevices() {
 }
 
 export function addExpected(icon: string, label: string, startsAt: number, endsAt: number): ExpectedVisit {
-  const e = { id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, icon, label, startsAt, endsAt }
+  const e = { id: `exp_${clockNow()}_${Math.random().toString(36).slice(2, 6)}`, icon, label, startsAt, endsAt }
   state.expected.push(e)
   persist()
   return e
@@ -532,10 +531,10 @@ export function removeExpected(id: string) {
 export function addRecurring(
   v: { icon: string; label: string; days: number[]; everyNWeeks: number; startMin: number; endMin: number; alertIfMissed: boolean; startNextWeek: boolean }
 ): RecurringVisit {
-  const now = Date.now()
+  const now = clockNow()
   const thisWeek = zonedDayNumber(now, RESIDENT_TZ) - zonedWeekday(now, RESIDENT_TZ)
   const r: RecurringVisit = {
-    id: `rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    id: `rec_${clockNow()}_${Math.random().toString(36).slice(2, 6)}`,
     icon: v.icon, label: v.label,
     days: [...new Set(v.days)].sort(),
     everyNWeeks: v.everyNWeeks,
@@ -557,7 +556,7 @@ export function removeRecurring(id: string) {
 }
 
 export function checkIn() {
-  state.checkinAt = Date.now()
+  state.checkinAt = clockNow()
   persist()
 }
 
@@ -583,7 +582,7 @@ export function answerCase(
   c.answer = answer
   c.visitor = visitor
   c.answeredBy = helperId
-  c.resolvedAt = Date.now()
+  c.resolvedAt = clockNow()
   const label = answer === 'safe' ? 'SAFE' : answer === 'not_safe' ? 'NOT SAFE' : 'will CALL the resident'
   addLog(c, `${helper.name} answered: ${label}.`)
   return { ok: true, case: c }
@@ -592,15 +591,15 @@ export function answerCase(
 export function confirmCase(caseId: string, ok: boolean): DoorCase | null {
   const c = state.cases.find((x) => x.id === caseId)
   if (!c || c.status !== 'answered' || c.answer !== 'safe') return null
-  if (ok && isQuiet(Date.now())) {
-    c.declinedAt = Date.now()
-    c.resolvedAt = Date.now()
+  if (ok && isQuiet(clockNow())) {
+    c.declinedAt = clockNow()
+    c.resolvedAt = clockNow()
     addLog(c, 'Night lock is on. The door stays closed.')
     return c
   }
-  if (ok) c.confirmedAt = Date.now()
-  else c.declinedAt = Date.now()
-  c.resolvedAt = Date.now()
+  if (ok) c.confirmedAt = clockNow()
+  else c.declinedAt = clockNow()
+  c.resolvedAt = clockNow()
   addLog(c, ok ? 'Resident confirmed: opening the door.' : 'Resident chose to keep the door closed.')
   return c
 }
@@ -613,7 +612,7 @@ export type View = 'resident' | 'helper'
 
 export function getState(view: View = 'helper', helperId?: string) {
   tick()
-  const now = Date.now()
+  const now = clockNow()
   const resident = view === 'resident'
   const cur = activeCase(now)
   return {
@@ -653,12 +652,12 @@ export const getSetup = () => ({
   timeoutSec: state.timeoutSec,
   ready: systemReady(),
   timeZone: RESIDENT_TZ,
-  recurring: state.recurring,
+  recurring: state.recurring.map((v) => ({ ...v, next: nextOccurrence(v, clockNow()) })),
 })
 
 /** Health for an external uptime monitor. `tickAgeMs` large => escalation timer is NOT running (e.g. serverless). */
 export function getHealth() {
-  const now = Date.now()
+  const now = clockNow()
   return {
     tickAgeMs: state.lastTickAt ? now - state.lastTickAt : null,
     ready: systemReady(),
@@ -683,7 +682,7 @@ export function rotateHelper(id: string): boolean {
 }
 
 export function addHelper(name: string, phone: string, emoji: string): Helper {
-  const h: Helper = { id: `h_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name, phone, emoji, consent: 'pending', tokenEpoch: 1 }
+  const h: Helper = { id: `h_${clockNow().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name, phone, emoji, consent: 'pending', tokenEpoch: 1 }
   state.helpers.push(h)
   persist()
   persistHelpers()
@@ -704,7 +703,7 @@ export function setConsent(id: string, consent: Consent): boolean {
   if (!h) return false
   if (h.consent === 'approved' && consent !== 'approved' && approvedHelpers().length <= 1) return false
   h.consent = consent
-  h.consentAt = Date.now()
+  h.consentAt = clockNow()
   persist()
   persistHelpers()
   return true
@@ -734,6 +733,7 @@ export function resetAll() {
   state.offline = false
   state.devices = {}
   state.recurring = []
+  resetClock()
   persist()
 }
 

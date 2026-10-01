@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "dev:sim": "ENABLE_SIM=1 next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
@@ -11,7 +12,10 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "sim:ring": "tsx tools/fake-ring/server.ts",
+    "record:ring": "tsx tools/record-ring.ts",
+    "gen:vapid": "node scripts/gen-vapid.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -32,6 +36,7 @@
     "prisma": "^5.22.0",
     "tailwindcss": "3.4.0",
     "typescript": "5.6.3",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "tsx": "^4.19.2"
   }
 }

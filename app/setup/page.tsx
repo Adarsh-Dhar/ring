@@ -13,7 +13,7 @@ interface Setup {
   timeoutSec: number
   ready: boolean
   timeZone: string
-  recurring: RecurringVisit[]
+  recurring: (RecurringVisit & { next: number | null })[]
 }
 
 const BADGE: Record<Helper['consent'], string> = {

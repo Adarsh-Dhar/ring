@@ -45,7 +45,7 @@ export default function EnableAlerts() {
     if (!window.isSecureContext) {
       console.warn('Push notifications require HTTPS or localhost. Current context is not secure.')
       setSt('error')
-      setErrMsg('Push notifications require HTTPS. You are accessing via HTTP. Please use HTTPS or localhost.')
+      setErrMsg('Push needs a secure page. Open the https:// link of your tunnel (not the http:// one), or use localhost.')
       return
     }
     
@@ -95,7 +95,7 @@ export default function EnableAlerts() {
         console.log('Push subscription successful:', sub)
         await send(sub)
         setSt('on')
-      } catch (pushError) {
+      } catch (pushError: any) {
         console.error('Push subscription error:', pushError)
         const errorDetails = JSON.stringify({
           name: pushError.name,
@@ -108,16 +108,10 @@ export default function EnableAlerts() {
         })
         setDetailedErr(errorDetails)
         
-        // If this is a tunnel URL (pinggy, ngrok, etc.), it won't work for push
-        const isTunnel = window.location.hostname.includes('pinggy') || 
-                        window.location.hostname.includes('ngrok') ||
-                        window.location.hostname.includes('localtunnel')
-        
-        if (isTunnel) {
-          throw new Error('Push notifications do not work through tunnel URLs (Pinggy, ngrok, etc.). Please use http://localhost:3000 or a real HTTPS domain.')
-        }
-        
         // Provide more specific error messages
+        if (!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+          throw new Error('The VAPID public key is missing. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY in .env and restart the server.')
+        }
         if (pushError.name === 'InvalidStateError') {
           throw new Error('Service worker is not active. Please refresh the page and try again.')
         } else if (pushError.name === 'SecurityError') {
@@ -126,12 +120,12 @@ export default function EnableAlerts() {
           if (!window.isSecureContext) {
             throw new Error('Push notifications require HTTPS. Make sure you are accessing via https:// not http://')
           }
-          throw new Error('Push notifications are not available in this browser or context. SMS alerts will still work.')
+          throw new Error('The browser could not reach its push service. Use Chrome or Edge (in Brave, turn on "Use Google Services for Push Messaging"), and make sure the phone/computer is online. SMS alerts will still work.')
         } else {
           throw new Error(`Push service error: ${pushError.message || pushError.name}`)
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Push enable failed:', e)
       setSt('error')
       setErrMsg(e.message || 'Failed to enable notifications')

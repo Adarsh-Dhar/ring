@@ -26,8 +26,8 @@ export interface PublicHelper {
 export const HELPERS: Helper[] =
   process.env.SEED_DEMO_HELPERS === '1' && process.env.NODE_ENV !== 'production'
     ? [
-        { id: 'h1', name: 'Mom', phone: '+918926130730', emoji: '👩', consent: 'approved' },
-        { id: 'h2', name: 'Brother', phone: '+918926130730', emoji: '👨', consent: 'approved' },
+        { id: 'h1', name: 'Mom', phone: process.env.DEMO_HELPER_PHONE || '+910000000001', emoji: '👩', consent: 'approved' },
+        { id: 'h2', name: 'Brother', phone: process.env.DEMO_HELPER_PHONE_2 || process.env.DEMO_HELPER_PHONE || '+910000000002', emoji: '👨', consent: 'approved' },
       ]
     : []
 
