@@ -20,16 +20,9 @@ export interface PublicHelper {
 }
 
 /**
- * No fake helpers by default. A system with pretend helpers looks like it works while nobody is alerted.
- * For local demos only: SEED_DEMO_HELPERS=1 (ignored in production).
+ * No default helpers. Helpers must be added through the setup page.
  */
-export const HELPERS: Helper[] =
-  process.env.SEED_DEMO_HELPERS === '1' && process.env.NODE_ENV !== 'production'
-    ? [
-        { id: 'h1', name: 'Mom', phone: process.env.DEMO_HELPER_PHONE || '+910000000001', emoji: '👩', consent: 'approved' },
-        { id: 'h2', name: 'Brother', phone: process.env.DEMO_HELPER_PHONE_2 || process.env.DEMO_HELPER_PHONE || '+910000000002', emoji: '👨', consent: 'approved' },
-      ]
-    : []
+export const HELPERS: Helper[] = []
 
 export const RESIDENT_TZ = process.env.RESIDENT_TZ || 'Asia/Kolkata'
 export const DEFAULT_ESCALATION_SECONDS = Number(process.env.ESCALATION_SECONDS || 30)

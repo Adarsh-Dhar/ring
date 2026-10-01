@@ -53,11 +53,12 @@ export async function POST(request: NextRequest) {
   try {
     if (type === 'device_offline' && deviceId) setDeviceOnline(deviceId, false, 'Ring reported it offline')
     else if (type === 'device_online' && deviceId) setDeviceOnline(deviceId, true, 'Ring reported it online')
-    else {
+    else if (['motion_detected', 'button_press'].includes(type)) {
       const c = ingestEvent({ event_type: type, event_id: data.id, device_id: deviceId, raw: json })
-      return NextResponse.json({ status: 'processed', case_id: c?.id ?? null })
+      return NextResponse.json({ status: 'processed', case_id: c?.id })
     }
-    return NextResponse.json({ status: 'processed' })
+    // Unknown event types: acknowledge with 200 so Ring doesn't drop them
+    return NextResponse.json({ status: 'acknowledged' })
   } catch (e) {
     console.error('[WEBHOOK] error', e)
     return NextResponse.json({ error: 'Processing failed' }, { status: 500 }) // 5xx so Ring retries

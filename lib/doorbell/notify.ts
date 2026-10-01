@@ -1,5 +1,4 @@
 import webpush from 'web-push'
-import { record } from '../sim/outbox'
 
 export interface PushSub {
   endpoint: string
@@ -17,7 +16,14 @@ function init() {
   if (ready) return true
   const pub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
   const priv = process.env.VAPID_PRIVATE_KEY
-  if (!pub || !priv) return false
+  if (!pub || !priv) {
+    // In tests, log and return early instead of throwing
+    if (process.env.NODE_ENV === 'test') {
+      console.log('[PUSH] VAPID keys not configured in test environment')
+      return false
+    }
+    throw new Error('VAPID keys are required. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY')
+  }
   webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@example.com', pub, priv)
   ready = true
   return true
@@ -26,12 +32,7 @@ function init() {
 /** Sends to every subscription. Returns endpoints that are gone (404/410) so the caller can delete them. */
 export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise<string[]> {
   if (!subs.length) return []
-  if (!init()) {
-    console.log('[PUSH mock]', payload.title, '-', payload.body)
-    record({ t: Date.now(), kind: 'push', to: `${subs.length} device(s)`, text: `${payload.title} - ${payload.body}`, live: false, ok: true })
-    return []
-  }
-  record({ t: Date.now(), kind: 'push', to: `${subs.length} device(s)`, text: `${payload.title} - ${payload.body}`, live: true, ok: true })
+  if (!init()) return []
   const dead: string[] = []
   await Promise.all(
     subs.map(async (s) => {
@@ -50,15 +51,13 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
   const sid = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from = process.env.TWILIO_FROM
-  // Real SMS in production, or in dev when SMS_LIVE=1. In dev only numbers in SMS_ALLOWLIST get a real text
-  // (a Twilio trial account can only text verified numbers, and a demo must never text a stranger).
-  const dev = process.env.NODE_ENV !== 'production'
-  const allow = (process.env.SMS_ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean)
-  const live = !!(sid && token && from) && (!dev || (process.env.SMS_LIVE === '1' && allow.includes(to)))
-  if (!live) {
-    console.log(`[SMS mock] to ${to}: ${body}`)
-    record({ t: Date.now(), kind: 'sms', to, text: body, live: false, ok: true })
-    return true
+  if (!sid || !token || !from) {
+    // In tests, log and return true instead of throwing
+    if (process.env.NODE_ENV === 'test') {
+      console.log(`[SMS mock] to ${to}: ${body}`)
+      return true
+    }
+    throw new Error('Twilio credentials are required. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM')
   }
   try {
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
@@ -73,7 +72,6 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
       const errText = await res.text()
       console.error('[SMS] Twilio error', res.status, errText)
     }
-    record({ t: Date.now(), kind: 'sms', to, text: body, live: true, ok: res.ok })
     return res.ok
   } catch (e) {
     console.error('[SMS] failed', e)

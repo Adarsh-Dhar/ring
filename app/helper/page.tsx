@@ -7,17 +7,12 @@ import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
 import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
 import LiveView from './LiveView'
-import CameraFeed from './CameraFeed'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
   const [err, setErr] = useState('')
   const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [, force] = useState(0)
-  
-  // Dev-only: allow switching between helpers for testing
-  const isDev = process.env.NODE_ENV !== 'production'
-  const [devHelperId, setDevHelperId] = useState('')
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1000)
@@ -26,48 +21,25 @@ export default function HelperPage() {
 
   const caseId = snap?.current?.id
   useEffect(() => setVisitor(null), [caseId])
-  
-  // Initialize dev helper ID from sessionStorage on mount
-  useEffect(() => {
-    const me = snap?.me ?? ''
-    if (isDev) {
-      setDevHelperId(sessionStorage.getItem('devHelperId') || me)
-    } else {
-      setDevHelperId(me)
-    }
-  }, [isDev, snap?.me])
-  
-  // In dev mode, allow switching helpers by setting a dev-specific helper ID
-  const switchDevHelper = (helperId: string) => {
-    setDevHelperId(helperId)
-    // Store in sessionStorage for persistence during dev
-    sessionStorage.setItem('devHelperId', helperId)
-    refresh()
-  }
-  
-  // Use dev helper ID if set, otherwise use session ID
-  const me = snap?.me ?? ''
-  const effectiveMe = isDev && devHelperId ? devHelperId : me
 
   if (unauthorized) {
     return <main className="p-6 text-center text-amber-300">You are not signed in. Open your personal link again, or ask the guardian for a new one.</main>
   }
   if (!snap) return <main className="p-6 text-slate-400">Loading…</main>
 
-  const helper = snap.helpers.find((h) => h.id === effectiveMe)
+  const me = snap?.me ?? ''
+  const helper = snap.helpers.find((h) => h.id === me)
   const c = snap.current
-  const idx = c ? c.chain.indexOf(effectiveMe) : -1
+  const idx = c ? c.chain.indexOf(me) : -1
   const visible = !!c && idx >= 0 && (c.kind === 'sos' || c.helperIndex >= idx || c.status !== 'waiting')
   const myTurn = !!c && c.status === 'waiting' && idx >= 0 && (c.kind === 'sos' || c.helperIndex === idx)
 
   const answer = async (a: Answer, who?: Visitor) => {
     if (!c) return
     setErr('')
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (isDev && devHelperId) headers['x-dev-helper-id'] = devHelperId
     const r = await fetch('/api/doorbell/answer', {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ caseId: c.id, answer: a, visitor: who ?? visitor ?? undefined }),
     })
     if (!r.ok) setErr((await r.json().catch(() => ({}))).error || 'Could not send your answer. Try again or call the resident.')
@@ -75,9 +47,7 @@ export default function HelperPage() {
   }
   const ack = async () => {
     if (!c) return
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (isDev && devHelperId) headers['x-dev-helper-id'] = devHelperId
-    await fetch('/api/doorbell/ack', { method: 'POST', headers, body: JSON.stringify({ caseId: c.id }) })
+    await fetch('/api/doorbell/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ caseId: c.id }) })
     refresh()
   }
 
@@ -118,19 +88,6 @@ export default function HelperPage() {
     <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Helper: {helper?.emoji} {helper?.name ?? 'choose a helper'}</h1>
-        {isDev && (
-          <div className="flex gap-2">
-            {snap.helpers.map((h) => (
-              <button
-                key={h.id}
-                onClick={() => switchDevHelper(h.id)}
-                className={`px-3 py-1 rounded-full text-sm ${effectiveMe === h.id ? 'bg-cyan-500 text-black font-semibold' : 'bg-slate-700'}`}
-              >
-                {h.name}
-              </button>
-            ))}
-          </div>
-        )}
       </header>
       <div className="flex items-center justify-between mb-4">
         <EnableAlerts />
@@ -164,13 +121,11 @@ export default function HelperPage() {
           </div>
 
           {c.kind === 'sos' ? (
-            c.clip ? (
-              <CameraFeed caseId={c.id} file={c.clip} />
-            ) : c.deviceId && !c.deviceId.startsWith('sim-') ? (
+            c.deviceId ? (
               <LiveView caseId={c.id} />
             ) : (
               <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
-                No video for this case.
+                No Ring device connected for this case.
               </div>
             )
           ) : (

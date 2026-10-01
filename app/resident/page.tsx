@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
-import CameraFeed from '../helper/CameraFeed'
 import LiveView from '../helper/LiveView'
 
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean }
@@ -150,13 +149,9 @@ export default function ResidentPage() {
             <div className="h-full bg-white/90 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
           </div>
         )}
-        {showVideo && c && (
+        {showVideo && c && c.deviceId && (
           <div className="w-full max-w-md mt-4">
-            {c.clip ? (
-              <CameraFeed caseId={c.id} file={c.clip} />
-            ) : c.kind === 'visitor' && c.deviceId && !c.deviceId.startsWith('sim-') ? (
-              <LiveView caseId={c.id} />
-            ) : null}
+            <LiveView caseId={c.id} />
           </div>
         )}
       </div>

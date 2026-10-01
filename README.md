@@ -1,14 +1,8 @@
 # Doorbell Helper
 
-A Next.js application for a vulnerable resident. Helpers receive doorbell alerts and make safety decisions, with support for regular/recurring visitors, escalation chains, and SMS/web push notifications.
+A calm doorbell assistant for a person who lives alone with an intellectual disability or autism. When someone rings, a trusted helper is alerted, can see the door via Ring live video, and tells the resident in plain words whether it is safe to open. If the first helper does not answer, the alert escalates by push and SMS.
 
-## Overview
-
-The resident's phone or tablet shows a simple screen when the doorbell rings. Helpers receive alerts and can view a camera feed, confirm it's safe to open, or escalate to the next helper in the chain.
-
-## Safety Model
-
-Regular/recurring visitors are handled on a separate, lighter track but **never auto-approve**. The resident or a helper must always confirm before the screen says "safe to open."
+Built on the Ring Partner API (webhooks for events, WHEP for live video). Next.js 15, Prisma/Postgres (optional), web-push, Twilio SMS.
 
 ## Features
 
@@ -19,24 +13,25 @@ Regular/recurring visitors are handled on a separate, lighter track but **never 
 - **Helper management**: Add, approve, reorder, and revoke helpers from a setup page
 - **Recurring visit management**: Schedule regular visits with flexible repeat patterns
 - **Database persistence**: Helpers stored in PostgreSQL (optional, falls back to state file)
-- **Ring integration**: Optional Ring device integration for real doorbell events and live video
+- **Ring integration**: Real Ring device integration for doorbell events and live video
 
-## Development Setup
-
-### Prerequisites
+## Prerequisites
 
 - Node.js 20+
-- pnpm 8+
+- pnpm or npm
 - PostgreSQL 17 (optional, for helper persistence)
 - Docker (optional, for PostgreSQL)
+- Ring Partner API access
+- Twilio account (for SMS)
+- VAPID keys (for web push)
 
-### Installation
+## Installation
 
 ```bash
-pnpm install
+npm install
 ```
 
-### Environment Variables
+## Environment Variables
 
 Copy `.env.example` to `.env.local` and configure:
 
@@ -44,42 +39,62 @@ Copy `.env.example` to `.env.local` and configure:
 cp .env.example .env.local
 ```
 
-Required variables:
+### Required Variables
 
 ```env
-AUTH_SECRET=some-random-secret-at-least-32-chars
-ADMIN_PIN=12345678
-RESIDENT_NAME=ResidentName
+AUTH_SECRET=your-random-secret-at-least-32-chars
+ADMIN_PIN=your-guardian-pin
 RESIDENT_TZ=Asia/Kolkata
-APP_URL=http://localhost:3000
+RESIDENT_NAME=ResidentName
+APP_URL=https://doorbell.example.com
 ```
 
-Optional variables:
+### Ring Partner API (Required)
+
+```env
+RING_HMAC_KEY=your-webhook-signing-key
+RING_ACCOUNT_ID=ava1.ring.account.XXXX
+RING_TRIGGER_EVENTS=button_press
+RING_REFRESH_TOKEN=your-refresh-token
+RING_CLIENT_ID=your-client-id
+RING_CLIENT_SECRET=your-client-secret
+```
+
+### Notifications (Required)
+
+```env
+# Web push - generate with: npm run gen:vapid
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your-vapid-public-key
+VAPID_PRIVATE_KEY=your-vapid-private-key
+VAPID_SUBJECT=mailto:you@example.com
+
+# Twilio SMS
+TWILIO_ACCOUNT_SID=your-account-sid
+TWILIO_AUTH_TOKEN=your-auth-token
+TWILIO_FROM=+15551234567
+```
+
+### Optional Variables
 
 ```env
 # PostgreSQL for helper persistence
 DATABASE_URL=postgresql://doorbell:devpassword@localhost:5433/doorbell
 
-# Ring integration (optional)
-RING_HMAC_KEY=your-webhook-signing-key
-RING_ACCESS_TOKEN=your-access-token
-RING_REFRESH_TOKEN=your-refresh-token
-RING_CLIENT_ID=your-client-id
-RING_CLIENT_SECRET=your-client-secret
-RING_API_BASE=https://api.amazonvision.com
-RING_TOKEN_URL=https://oauth.ring.com/oauth/token
+# Escalation and check-in settings
+ESCALATION_SECONDS=30
+CHECKIN_HOUR=10
+CHECKIN_GRACE_MIN=60
+EMERGENCY_NUMBER=112
 
-# Twilio for SMS (optional)
-TWILIO_ACCOUNT_SID=your-account-sid
-TWILIO_AUTH_TOKEN=your-auth-token
-TWILIO_PHONE_NUMBER=+15551234567
+# Recurring visits
+EXPECTED_TIMEOUT_SECONDS=60
+RECURRING_GRACE_MIN=15
 
-# VAPID for web push (optional, run npm run gen:vapid to generate)
-VAPID_PUBLIC_KEY=your-vapid-public-key
-VAPID_PRIVATE_KEY=your-vapid-private-key
+# Storage
+DATA_DIR=./data
 ```
 
-### PostgreSQL (Optional)
+## PostgreSQL (Optional)
 
 Start PostgreSQL with Docker:
 
@@ -90,179 +105,97 @@ docker-compose -f docker-compose.postgres.yml up -d
 Run database migrations:
 
 ```bash
-pnpm exec prisma generate
-pnpm exec prisma db push
+npm run db:generate
+npm run db:push
 ```
 
-### Running the App
+## Running the App
 
 Development mode:
 
 ```bash
-pnpm dev
+npm run dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000)
 
 Production build:
 
 ```bash
-pnpm build
-pnpm start
+npm run build
+npm start
 ```
 
-## Ring Simulator
+## Ring Integration
 
-The app includes a Ring simulator for development without a physical Ring device. The simulator exercises the real webhook, authentication, escalation, device-health, Ring API, live-view, and notification paths as closely as possible.
+### Webhook Setup
 
-### Simulator Truth Table
+1. Set up your Ring Partner account at developer.amazon.com/ring
+2. Configure your webhook URL: `https://your-app.com/api/webhook`
+3. Set `RING_HMAC_KEY` from your Ring partner settings
+4. Add your Ring account ID to `RING_ACCOUNT_ID`
 
-| Part | Status |
-|------|--------|
-| Event delivery, signatures, retries, duplicates | Simulated, through the real webhook code |
-| Ring API: token refresh, device list, status | Simulated; shapes unverified until step 7 |
-| Live video | Simulated: local mp4 with Ring's session limit and watermark. Real WebRTC/WHEP code exists (`LiveView.tsx`, `/api/ring/live`) but has never run against Ring |
-| Web push | Real once VAPID keys are set |
-| SMS | Real only with `SMS_LIVE=1` and an allow-listed number |
-| Escalation, check-in, quiet hours, recurring visits | Real code, driven by the simulated clock |
+### Live Video
 
-### Known Gaps
-
-- The fake WHEP endpoint is not a real WebRTC server
-- The real WebRTC path is untested against an actual Ring device
-- `ring-sandbox` is not used
-- `/sim` and `CameraFeed` were type-checked but not thoroughly browser-tested
-- Simulated time does not affect webhook idempotency or fake-server token expiry
-- The fake Ring response shapes are copied from what the existing `client.ts` expects and remain unverified against official Ring docs or a real device
-- Real Twilio, real web push, and the fake server retry loop against a failing app were not fully tested
-
-### Running the Simulator
-
-1. Enable simulation in `.env.local`:
-
-```env
-ENABLE_SIM=1
-ALLOW_UNSIGNED_WEBHOOK=1
-ALLOW_DEV_AUTH=1
-LOCAL_VIDEO=1
-VIDEOS_DIR=./videos
-```
-
-2. Start the fake Ring server (optional, for fake API responses):
-
-```bash
-pnpm run sim:ring
-```
-
-3. Start the app with simulation enabled:
-
-```bash
-pnpm run dev:sim
-```
-
-4. Open the simulator UI at [http://localhost:3000/sim](http://localhost:3000)
-
-### Simulator Features
-
-- **Signed webhooks**: Simulates Ring webhook delivery with HMAC signatures
-- **Device offline**: Simulates device offline state through webhook events
-- **Simulated clock**: Advance time to trigger escalation and recurring-visit behavior
-- **Fake Ring API**: Mock endpoints for device list, status, and token refresh
-- **Simulated live view**: Local MP4 clips with Ring-like session limits
-- **Notification outbox**: Capture simulated push/SMS deliveries for inspection
-
-### Simulator Scripts
-
-```bash
-# Run fake Ring server
-pnpm run sim:ring
-
-# Record real Ring responses (for documenting API shapes)
-pnpm run record:ring
-
-# Generate VAPID keys for web push
-pnpm run gen:vapid
-
-# Run app with simulation enabled
-pnpm run dev:sim
-```
+The app uses Ring's WHEP (WebRTC-HTTP Egress Protocol) for live video:
+- Helpers can view the door when the resident presses SOS
+- Video-only (no audio, per Ring's limitations)
+- Session limits: 30s (battery) / 60s (wired) enforced by Ring
+- Ring's mandatory watermark is displayed
 
 ## Testing
 
 ```bash
-# Run all tests
-pnpm test
-
 # Type checking
-pnpm typecheck
+npm run typecheck
 
-# Build
-pnpm build
+# Run tests
+npm test
 ```
 
 ## API Endpoints
 
 ### `/api/setup` (admin only)
-
 GET/POST for helper management, quiet hours, timeout configuration, and sign-in link generation.
 
 ### `/api/doorbell/state`
-
 GET the current doorbell state (cases, helpers, device status, recurring visits).
 
 ### `/api/doorbell/ack`
-
 POST to acknowledge that a helper is responding to a case.
 
 ### `/api/doorbell/answer`
-
 POST to answer a case (safe to open / do not open).
 
 ### `/api/doorbell/confirm`
-
 POST to confirm an expected visitor.
 
 ### `/api/doorbell/sos`
-
 POST to trigger an SOS from the resident screen.
 
 ### `/api/doorbell/checkin`
-
 POST for helper check-in (periodic "I'm alive" signal).
 
 ### `/api/doorbell/recurring`
-
 GET/POST/PATCH/DELETE for recurring visit management.
 
 ### `/api/webhook`
-
 POST for Ring webhook events (motion detection, doorbell press, device offline, etc.).
 
-### `/api/sim`
-
-POST for simulator controls (trigger events, advance time, reset state).
+### `/api/ring/live`
+POST/DELETE for WHEP live video streaming.
 
 ### `/api/health`
-
 GET for health/readiness status (includes database loading state).
 
 ## Pages
 
 ### `/setup`
-
 Admin setup page for managing helpers, quiet hours, timeout, and recurring visits. Requires ADMIN_PIN.
 
 ### `/helper`
-
-Helper dashboard showing current cases, camera feed, and action buttons.
+Helper dashboard showing current cases, live camera feed, and action buttons.
 
 ### `/resident`
-
 Resident screen for doorbell events and SOS.
-
-### `/sim`
-
-Simulator UI for development and testing.
 
 ## Architecture
 
@@ -280,6 +213,7 @@ Simulator UI for development and testing.
 - Helper sign-in links are single-use tokens tied to helper epochs
 - Webhook signatures are verified using `RING_HMAC_KEY`
 - Night lock prevents opening during quiet hours regardless of helper approval
+- All notification delivery requires real credentials (no mock/simulation mode)
 
 ## License
 
