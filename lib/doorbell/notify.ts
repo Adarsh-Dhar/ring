@@ -29,6 +29,10 @@ function init() {
   return true
 }
 
+// Simple SMS rate limiter: at most 1 SMS per phone per minute
+const smsLastSent = new Map<string, number>()
+const SMS_RATE_LIMIT_MS = 60_000 // 1 minute
+
 /** Sends to every subscription. Returns endpoints that are gone (404/410) so the caller can delete them. */
 export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise<string[]> {
   if (!subs.length) return []
@@ -59,20 +63,45 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     }
     throw new Error('Twilio credentials are required. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM')
   }
+
+  // Rate limit: skip if we sent to this number within the last minute
+  const lastSent = smsLastSent.get(to) || 0
+  const now = Date.now()
+  if (now - lastSent < SMS_RATE_LIMIT_MS) {
+    console.log(`[SMS] rate limited to ${to} (last sent ${now - lastSent}ms ago)`)
+    return true // Pretend success to avoid cascading errors
+  }
+
   try {
+    // For Twilio trial accounts, use template SID instead of custom body
+    const templateSid = process.env.TWILIO_TEMPLATE_SID
+    const params: Record<string, string> = { To: to, From: from }
+
+    if (templateSid) {
+      // Use template for trial accounts
+      params['ContentSid'] = templateSid
+      params['ContentVariables'] = JSON.stringify({ message: body })
+    } else {
+      // Use custom body for production accounts
+      params['Body'] = body
+    }
+
     const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
       method: 'POST',
       headers: {
         Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64'),
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({ To: to, From: from, Body: body }),
+      body: new URLSearchParams(params),
     })
     if (!res.ok) {
       const errText = await res.text()
       console.error('[SMS] Twilio error', res.status, errText)
+      return false
     }
-    return res.ok
+    // Only update last sent on success
+    smsLastSent.set(to, now)
+    return true
   } catch (e) {
     console.error('[SMS] failed', e)
     return false

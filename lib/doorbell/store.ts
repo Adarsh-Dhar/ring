@@ -567,7 +567,10 @@ export function answerCase(
   if (!helper || helper.consent !== 'approved' || !c.chain.includes(helperId)) {
     return { ok: false, error: 'You are not allowed to answer this case', status: 403 }
   }
-  if (c.status === 'answered') return { ok: true, case: c }
+  if (c.status === 'answered') {
+    if (c.answeredBy === helperId) return { ok: true, case: c }
+    return { ok: false, error: 'This case was already answered', status: 409 }
+  }
   // Later helpers cannot jump the queue on a visitor case (SOS alerts everyone at once).
   if (c.status === 'waiting' && c.kind === 'visitor' && c.chain.indexOf(helperId) > c.helperIndex) {
     return { ok: false, error: 'It is not your turn yet', status: 409 }

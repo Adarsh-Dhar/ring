@@ -32,10 +32,15 @@ export function saveSoon(get: () => unknown) {
       fs.mkdirSync(DIR, { recursive: true, mode: 0o700 })
       const tmp = FILE + '.tmp'
       fs.writeFileSync(tmp, JSON.stringify(get()), { mode: 0o600 })
-      if (fs.existsSync(FILE)) fs.copyFileSync(FILE, FILE + '.bak')
+      if (fs.existsSync(FILE)) {
+        fs.copyFileSync(FILE, FILE + '.bak')
+      }
       fs.renameSync(tmp, FILE)
     } catch (e) {
-      console.error('[PERSIST]', e)
+      // Suppress ENOENT errors during build time (data directory may not exist yet)
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('[PERSIST]', e)
+      }
     }
   }, 300)
 }

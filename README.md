@@ -72,7 +72,19 @@ VAPID_SUBJECT=mailto:you@example.com
 TWILIO_ACCOUNT_SID=your-account-sid
 TWILIO_AUTH_TOKEN=your-auth-token
 TWILIO_FROM=+15551234567
+# For Twilio trial accounts: use a predefined template SID (required for trial)
+TWILIO_TEMPLATE_SID=your-template-sid
 ```
+
+**Twilio Template Setup (for trial accounts):**
+
+Twilio trial accounts require using predefined message templates instead of custom message bodies:
+
+1. Go to Twilio Console → Messaging → Content
+2. Create a new messaging template
+3. Add a content variable named `message` (this will be replaced with the actual alert text)
+4. Copy the template SID and set it as `TWILIO_TEMPLATE_SID`
+5. For production accounts, leave `TWILIO_TEMPLATE_SID` empty to use custom message bodies
 
 ### Optional Variables
 

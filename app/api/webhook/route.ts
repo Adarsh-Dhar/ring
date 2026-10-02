@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
   const unsignedOk = !IS_PROD && process.env.ALLOW_UNSIGNED_WEBHOOK === '1'
   if (key) {
     if (!verifyRingSignature(key, raw, request.headers.get('x-signature'))) {
+      console.error('[WEBHOOK] Signature verification failed. Key exists but verification returned false.')
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
   } else if (!unsignedOk) {
