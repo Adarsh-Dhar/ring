@@ -21,6 +21,7 @@ export interface DoorbellSnapshot {
   timeZone: string
   checkin: { doneToday: boolean; dueHour: number }
   quietNow: boolean
+  alerts: { degraded: boolean; recentSmsFailures: number; recentPushFailures: number; helpersWithoutPush: string[] } | null
 }
 
 /** If no successful response arrives for this long, the screen must stop trusting its last snapshot. */

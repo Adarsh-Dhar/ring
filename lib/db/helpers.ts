@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { Helper, Consent } from "../doorbell/config";
 
 export const dbEnabled = !!process.env.DATABASE_URL;
@@ -36,7 +37,7 @@ export async function loadHelpers(): Promise<Helper[]> {
 // The list is tiny (a handful of people), so replace it in one transaction.
 export async function saveHelpers(list: Helper[]): Promise<void> {
   const { getDb } = await import("./client");
-  await getDb().$transaction(async (tx) => {
+  await getDb().$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.helper.deleteMany({});
     if (list.length) await tx.helper.createMany({ data: list.map((h, i) => toRow(h, i)) });
   });

@@ -1,7 +1,7 @@
 import { HELPERS, DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, RESIDENT_TZ, EMERGENCY_NUMBER, isPlaceholderPhone, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, type Helper, type PublicHelper, type Consent } from './config'
 import { zonedHour, zonedDayKey, zonedHourOnSameDay, zonedWeekday, zonedDayNumber, zonedMinuteOnSameDay } from '../time'
-import { fetchDeviceOnline, listDeviceIds, ringConfigured } from '../ring/client'
-import { pushToSubs, sendSms, type PushSub } from './notify'
+import { fetchDeviceOnline, listDeviceIds, ringConfigured, forceRefresh } from '../ring/client'
+import { pushToSubs, sendSms, recentFailures, type PushSub } from './notify'
 import { loadState, saveSoon } from './persist'
 import { dbEnabled, loadHelpers, saveHelpers } from '../db/helpers'
 
@@ -226,8 +226,9 @@ function notifyAll(title: string, body: string, caseId: string) {
   approvedHelpers().forEach((h) => notifyHelper(h, title, body, caseId))
 }
 
-function smsHelper(h: Helper | undefined, body: string) {
-  if (h) void sendSms(h.phone, body)
+/** Alerts are urgent by default (they skip the per-number limiter). Only repeatable noise passes { urgent: false }. */
+function smsHelper(h: Helper | undefined, body: string, opts: { urgent?: boolean } = { urgent: true }) {
+  if (h) sendSms(h.phone, body, opts).catch((e) => console.error('[SMS] unexpected', e))
 }
 
 function isQuiet(now: number): boolean {
@@ -299,9 +300,9 @@ function checkMissedCheckin(now: number) {
   persist()
 }
 
-function smsAll(body: string) {
+function smsAll(body: string, opts: { urgent?: boolean } = { urgent: true }) {
   approvedHelpers().forEach((h) => {
-    void sendSms(h.phone, body)
+    sendSms(h.phone, body, opts).catch((e) => console.error('[SMS] unexpected', e))
   })
 }
 
@@ -319,8 +320,31 @@ const addLog = (c: DoorCase, msg: string) => {
 /** True only if at least one approved helper has a real (non-placeholder) phone number. */
 export const systemReady = () => approvedHelpers().some((h) => !isPlaceholderPhone(h.phone))
 
+/* ---------- Are alerts actually getting through? ---------- */
+
+const DEGRADED_FAILS = 3
+let lastDegradedPushAt = 0
+
+export function alertStatus(now = Date.now()) {
+  const f = recentFailures(now)
+  const withoutPush = approvedHelpers().filter((h) => !(state.subs[h.id]?.length)).map((h) => h.name)
+  const smsCounts = process.env.ALERTS_REQUIRE_SMS === '1' && f.sms >= DEGRADED_FAILS
+  const degraded = f.push >= DEGRADED_FAILS || smsCounts || withoutPush.length > 0
+  return { degraded, recentSmsFailures: f.sms, recentPushFailures: f.push, helpersWithoutPush: withoutPush }
+}
+
+function warnIfAlertsFailing(now: number) {
+  const a = alertStatus(now)
+  const failing = a.recentPushFailures >= DEGRADED_FAILS || (process.env.ALERTS_REQUIRE_SMS === '1' && a.recentSmsFailures >= DEGRADED_FAILS)
+  if (!failing || now - lastDegradedPushAt < 60 * 60_000) return
+  lastDegradedPushAt = now
+  notifyAll('⚠️ Alerts may not reach you', 'Some alerts failed to send. Check the helper app and call the resident if unsure.', 'alerts-degraded')
+}
+export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
+
 export function tick(now = Date.now()) {
   state.lastTickAt = now
+  warnIfAlertsFailing(now)
   for (const c of state.cases) {
     if (c.status !== 'waiting') continue
     while (c.status === 'waiting' && now >= c.deadlineAt) {
@@ -480,7 +504,7 @@ export function setDeviceOnline(deviceId: string, online: boolean, source: strin
   if (!online) {
     state.devices[deviceId].alertedAt = now
     notifyAll('⚠️ Doorbell offline', `The doorbell cannot be reached (${source}). ${RESIDENT} will NOT be alerted about visitors.`, `device-${deviceId}`)
-    smsAll(`Doorbell for ${RESIDENT} is OFFLINE. Visitors will not be detected. Please check it and call ${RESIDENT}.`)
+    smsAll(`Doorbell for ${RESIDENT} is OFFLINE. Visitors will not be detected. Please check it and call ${RESIDENT}.`, { urgent: false })
   } else if (prev) {
     notifyAll('✅ Doorbell back online', 'The doorbell is working again.', `device-${deviceId}`)
   }
@@ -635,6 +659,8 @@ export function getState(view: View = 'helper', helperId?: string) {
     }),
     checkin: { doneToday: checkedInToday(now), dueHour: CHECKIN_HOUR },
     quietNow: isQuiet(now),
+    // Helpers learn when alerts may not reach them. The resident screen stays calm: nothing here for them.
+    alerts: resident ? null : alertStatus(now),
   }
 }
 
@@ -661,6 +687,7 @@ export function getHealth() {
     anyDeviceOffline: anyDeviceOffline(),
     openCases: state.cases.filter((c) => c.status === 'waiting').length,
     db: dbEnabled ? { loaded: helpersLoaded, failing: dbLoadFailed || helperSaveErr !== null } : null,
+    alerts: alertStatus(now),
   }
 }
 
@@ -760,4 +787,7 @@ if (!gt.__doorbellPoll && ringConfigured()) {
   void pollDevices()
   gt.__doorbellPoll = setInterval(() => void pollDevices(), 60_000)
   gt.__doorbellPoll.unref?.()
+  // Refresh the Ring token once a day, so the refresh token (valid ~30 days) never expires unused.
+  const daily = setInterval(() => { forceRefresh().catch((e) => console.error('[RING] daily refresh failed', e)) }, 24 * 60 * 60_000)
+  daily.unref?.()
 }

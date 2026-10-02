@@ -8,7 +8,7 @@
 - `CHECKIN_HOUR=10` (10 AM Asia/Kolkata)
 - `CHECKIN_GRACE_MIN=1` (1 minute grace period)
 - Current time: 11:56 AM Asia/Kolkata (past due time)
-- Helper: +918926130730 (approved)
+- Helper: +91XXXXXXXXXX (approved)
 
 ### Test Execution
 1. Cleared state files and database
@@ -65,7 +65,7 @@
 - Max: 4211ms (well under Ring's 5s requirement)
 
 ### SMS Count
-- 1 SMS sent to helper (+918926130730)
+- 1 SMS sent to helper (+91XXXXXXXXXX)
 - ✅ SMS succeeded with Twilio template (status 201, queued)
 - Template used: `sms_appointment_reminders`
 - Twilio response: `{"status":"queued","body":"Reminder: Appt Tue Oct 29, 3:00 PM..."}`
@@ -98,12 +98,12 @@ Updated SMS implementation to use Twilio's predefined template names:
 # Direct curl test (successful)
 curl -X POST "https://api.twilio.com/2010-04-01/Accounts/<TWILIO_ACCOUNT_SID>/Messages.json" \
 -H "Content-Type: application/x-www-form-urlencoded" \
--d "To=%2B918926130730" \
--d "From=%2B17372508034" \
+-d "To=%2B91XXXXXXXXXX" \
+-d "From=%2B1XXXXXXXXXX" \
 -d "Body=sms_appointment_reminders" \
 -u "<TWILIO_ACCOUNT_SID>:<TWILIO_AUTH_TOKEN>"
 
-# Response: {"status":"queued","sid":"SMdcf31b5a956f1b21a952e530e275444c","body":"Reminder: Appt Tue Oct 29, 3:00 PM..."}
+# Response: {"status":"queued","sid":"SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","body":"Reminder: Appt Tue Oct 29, 3:00 PM..."}
 ```
 
 ### Application Test
@@ -128,7 +128,7 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/<TWILIO_ACCOUNT_SID>/Me
 ### Status: READY TO TEST
 
 ### Tunnel Status
-- ✅ New tunnel URL working: `https://hssuh-210-212-2-133.free.pinggy.net`
+- ✅ New tunnel URL working: `https://YOUR-TUNNEL-URL`
 - ✅ Health endpoint responding
 - ✅ Server running and ready
 - ✅ Webhook logging enabled (LOG_WEBHOOK_BODY=1)
@@ -143,10 +143,10 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/<TWILIO_ACCOUNT_SID>/Me
 7. Physical Ring doorbell or Ring Playground access (pending)
 
 ### Configuration Ready
-- Webhook URL: `https://hssuh-210-212-2-133.free.pinggy.net/api/webhook`
-- Account Link URL: `https://hssuh-210-212-2-133.free.pinggy.net/api/ring/link`
-- App Homepage URL: `https://hssuh-210-212-2-133.free.pinggy.net/`
-- Token Exchange URL: `https://hssuh-210-212-2-133.free.pinggy.net/api/ring/token`
+- Webhook URL: `https://YOUR-TUNNEL-URL/api/webhook`
+- Account Link URL: `https://YOUR-TUNNEL-URL/api/ring/link`
+- App Homepage URL: `https://YOUR-TUNNEL-URL/`
+- Token Exchange URL: `https://YOUR-TUNNEL-URL/api/ring/token`
 - Ring HMAC Key: Configured
 - Ring Account ID: Configured
 - Ring Device IDs: Configured
@@ -176,7 +176,7 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/<TWILIO_ACCOUNT_SID>/Me
 3. ✅ Stress test (all checks passed, performance excellent)
 4. ✅ Daily check-in (logic working, flag preventing repeats)
 5. ✅ Build (no errors)
-6. ✅ Tunnel URL working (https://hssuh-210-212-2-133.free.pinggy.net)
+6. ✅ Tunnel URL working (https://YOUR-TUNNEL-URL)
 7. ✅ Twilio template SMS (working with trial account template)
 
 ### Production Readiness

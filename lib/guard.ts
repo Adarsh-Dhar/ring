@@ -23,7 +23,36 @@ export function getSession(req: NextRequest): Session | null {
   return { role: 'helper', helperId: h.id }
 }
 
-export const isAdmin = (req: NextRequest) => adminPinOk(req.headers.get('x-setup-pin'))
+/* ---------- Lock out repeated wrong admin PINs (per client, in memory: this app runs as one instance) ---------- */
+const PIN_MAX_FAILS = 5
+const PIN_WINDOW_MS = 15 * 60_000
+const pinFails = new Map<string, number[]>()
+
+function clientKey(req: NextRequest): string {
+  // x-forwarded-for is only trustworthy behind our own reverse proxy (see docker-compose Caddy).
+  const xf = req.headers.get('x-forwarded-for')
+  return (xf ? xf.split(',')[0].trim() : req.headers.get('x-real-ip')) || 'unknown'
+}
+export function pinLockedOut(key: string, now = Date.now()): boolean {
+  const recent = (pinFails.get(key) || []).filter((t) => now - t < PIN_WINDOW_MS)
+  pinFails.set(key, recent)
+  return recent.length >= PIN_MAX_FAILS
+}
+export function recordPinFailure(key: string, now = Date.now()) {
+  pinFails.set(key, [...(pinFails.get(key) || []).filter((t) => now - t < PIN_WINDOW_MS), now])
+}
+export const clearPinFailures = () => pinFails.clear()
+
+export const isAdmin = (req: NextRequest) => {
+  const provided = req.headers.get('x-setup-pin')
+  if (!provided) return adminPinOk(null)
+  const key = clientKey(req)
+  if (pinLockedOut(key)) return false
+  const ok = adminPinOk(provided)
+  if (!ok) recordPinFailure(key)
+  return ok
+}
+export const isPinLocked = (req: NextRequest) => !!req.headers.get('x-setup-pin') && pinLockedOut(clientKey(req))
 
 /** Dev-only: allow bypassing auth for local development when ALLOW_DEV_AUTH=1 */
 const DEV_AUTH_BYPASS = process.env.ALLOW_DEV_AUTH === '1' && !IS_PROD
@@ -41,6 +70,9 @@ export type Auth = { ok: true; session: Session | null; admin: boolean } | { ok:
 
 export function authorize(req: NextRequest, ...allowed: Who[]): Auth {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return { ok: false, res: fail('bad origin', 403) }
+  if (allowed.includes('admin') && isPinLocked(req)) {
+    return { ok: false, res: NextResponse.json({ error: 'Too many wrong PIN attempts. Try again in 15 minutes.' }, { status: 429 }) }
+  }
   const admin = allowed.includes('admin') && isAdmin(req)
   const s = getSession(req)
   const sessionOk = !!s && allowed.includes(s.role)

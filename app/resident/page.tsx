@@ -127,7 +127,7 @@ export default function ResidentPage() {
   const sosNeedsEmergency = c?.kind === 'sos' && !c.ackedAt && c.status !== 'answered'
 
   return (
-    <main className={`min-h-screen ${screen.bg} text-white flex flex-col items-center justify-between p-6 transition-colors duration-700`}>
+    <main aria-live="polite" className={`min-h-screen ${screen.bg} text-white flex flex-col items-center justify-between p-6 transition-colors duration-700 motion-reduce:transition-none`}>
       <div className="w-full max-w-md flex justify-between text-sm">
         <span>Resident screen</span>
         <div className="flex gap-2">
@@ -164,7 +164,7 @@ export default function ResidentPage() {
           </div>
         )}
         {trusted && !snap!.checkin.doneToday && c?.status !== 'waiting' && (
-          <button onClick={() => post('/api/doorbell/checkin')} className="w-full rounded-3xl bg-emerald-500 py-6 text-center text-3xl font-bold text-white shadow-lg">
+          <button onClick={() => post('/api/doorbell/checkin')} aria-label="I am OK today" className="w-full rounded-3xl bg-emerald-500 py-6 text-center text-3xl font-bold text-white shadow-lg">
             👍 I'm OK today
           </button>
         )}
@@ -179,7 +179,7 @@ export default function ResidentPage() {
           </a>
         )}
         {trusted && (
-          <button onClick={() => post('/api/doorbell/sos')} className="w-full text-3xl font-bold py-6 rounded-3xl bg-black/40 border-4 border-white">
+          <button onClick={() => post('/api/doorbell/sos')} aria-label="I need help. Alert my helpers" className="w-full text-3xl font-bold py-6 rounded-3xl bg-black/40 border-4 border-white">
             😨 I need help
           </button>
         )}

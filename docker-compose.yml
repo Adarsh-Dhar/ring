@@ -8,8 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - pg_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"     # host-only; remove entirely on a server
+    # No published port: only the server container reaches Postgres, over the compose network.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U doorbell -d doorbell"]
       interval: 5s
@@ -19,8 +18,15 @@ services:
   server:
     build: .
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # Run exactly ONE instance: cases, the escalation timer and duplicate checks live in this process.
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -33,6 +39,22 @@ services:
       - app_data:/data                     # state.json (cases, settings) still lives here
       - ./videos:/usr/src/app/videos:ro    # door camera mp4s
 
+  # HTTPS in front of the app. Web push and Ring webhooks both need a real https address.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env, e.g. doorbell.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - server
+
 volumes:
   pg_data:
   app_data:
+  caddy_data:

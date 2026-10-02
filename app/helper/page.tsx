@@ -85,7 +85,7 @@ export default function HelperPage() {
   )
 
   return (
-    <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto">
+    <main className="min-h-screen bg-slate-900 text-white p-4 max-w-2xl mx-auto" aria-live="polite">
       <header className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Helper: {helper?.emoji} {helper?.name ?? 'choose a helper'}</h1>
       </header>
@@ -93,8 +93,15 @@ export default function HelperPage() {
         <EnableAlerts />
         <Link href="/setup" className="text-sm text-cyan-400">⚙️ Setup</Link>
       </div>
-      {stale && <p className="mb-4 rounded-xl bg-amber-700 p-3 text-center font-semibold">Connection lost. What you see may be out of date.</p>}
-      {err && <p className="mb-4 rounded-xl bg-red-900 p-3 text-center">{err}</p>}
+      {stale && <p role="alert" className="mb-4 rounded-xl bg-amber-700 p-3 text-center font-semibold">Connection lost. What you see may be out of date.</p>}
+      {snap.alerts?.degraded && (
+        <p role="alert" className="mb-4 rounded-xl bg-amber-700 p-3 text-center font-semibold">
+          {snap.alerts.helpersWithoutPush.length > 0
+            ? `Alerts are off for: ${snap.alerts.helpersWithoutPush.join(', ')}. They will not hear the doorbell. Turn alerts on.`
+            : 'Some alerts failed to send. If you are unsure, call the resident.'}
+        </p>
+      )}
+      {err && <p role="alert" className="mb-4 rounded-xl bg-red-900 p-3 text-center">{err}</p>}
       <a href="/helper/history" className="mb-4 inline-block text-sm text-cyan-400">📋 History</a>
 
       {!c || !visible ? (

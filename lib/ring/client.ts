@@ -10,8 +10,39 @@
 const API = process.env.RING_API_BASE || 'https://api.amazonvision.com'
 const TOKEN_URL = process.env.RING_TOKEN_URL || 'https://oauth.ring.com/oauth/token'
 
+import fs from 'fs'
+import path from 'path'
+
+/**
+ * Ring rotates the refresh token on every refresh and the old one stops working.
+ * Keep the newest one on disk (DATA_DIR volume, mode 600) so a restart does not fall back to a dead token from .env.
+ */
+const TOKEN_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data')
+const TOKEN_FILE = path.join(TOKEN_DIR, 'ring-token.json')
+
+export function loadSavedRefreshToken(file = TOKEN_FILE): string | null {
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return typeof j?.refreshToken === 'string' && j.refreshToken ? j.refreshToken : null
+  } catch { return null }
+}
+export function saveRefreshToken(token: string, file = TOKEN_FILE) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+    const tmp = file + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify({ refreshToken: token, savedAt: Date.now() }), { mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch (e) { console.error('[RING] could not save the new refresh token. It will be lost on restart.', e) }
+}
+
 let cached: { token: string; exp: number } | null = null
-let refreshToken = process.env.RING_REFRESH_TOKEN || ''
+let refreshToken = loadSavedRefreshToken() || process.env.RING_REFRESH_TOKEN || ''
+
+/** Forces a refresh now (used daily so the ~30 day refresh token never expires unused). */
+export async function forceRefresh(): Promise<boolean> {
+  cached = null
+  return !!(await accessToken())
+}
 
 export const ringConfigured = () => !!(process.env.RING_ACCESS_TOKEN || refreshToken)
 
@@ -31,7 +62,7 @@ async function accessToken(): Promise<string | null> {
     if (!res.ok) { console.error('[RING] token refresh failed', res.status); return null }
     const j: any = await res.json()
     cached = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000 }
-    if (j.refresh_token) refreshToken = j.refresh_token // NOTE: persist this somewhere durable in production
+    if (j.refresh_token) { refreshToken = j.refresh_token; saveRefreshToken(refreshToken) } // save BEFORE anything else: the old token is now dead
     return cached.token
   }
   return process.env.RING_ACCESS_TOKEN || null

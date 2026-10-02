@@ -11,6 +11,19 @@ export interface PushPayload {
   tag?: string
 }
 
+/** Delivery failures, so the app can tell helpers when alerts are NOT getting through. */
+const FAIL_WINDOW_MS = 10 * 60_000
+const failures: { t: number; kind: 'sms' | 'push' }[] = []
+export function recordFailure(kind: 'sms' | 'push', now = Date.now()) {
+  failures.push({ t: now, kind })
+  while (failures.length && now - failures[0].t > FAIL_WINDOW_MS) failures.shift()
+}
+export function recentFailures(now = Date.now()) {
+  const recent = failures.filter((f) => now - f.t <= FAIL_WINDOW_MS)
+  return { sms: recent.filter((f) => f.kind === 'sms').length, push: recent.filter((f) => f.kind === 'push').length }
+}
+export function resetFailures() { failures.length = 0 }
+
 let ready = false
 function init() {
   if (ready) return true
@@ -36,7 +49,13 @@ const SMS_RATE_LIMIT_MS = 60_000 // 1 minute
 /** Sends to every subscription. Returns endpoints that are gone (404/410) so the caller can delete them. */
 export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise<string[]> {
   if (!subs.length) return []
-  if (!init()) return []
+  try {
+    if (!init()) return []
+  } catch (e) {
+    console.error('[PUSH] not configured', (e as Error).message)
+    subs.forEach(() => recordFailure('push'))
+    return []
+  }
   const dead: string[] = []
   await Promise.all(
     subs.map(async (s) => {
@@ -44,14 +63,14 @@ export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise
         await webpush.sendNotification(s, JSON.stringify(payload), { TTL: 60, urgency: 'high' })
       } catch (e: any) {
         if (e?.statusCode === 404 || e?.statusCode === 410) dead.push(s.endpoint)
-        else console.error('[PUSH] failed', e?.statusCode ?? e)
+        else { console.error('[PUSH] failed', e?.statusCode ?? e); recordFailure('push') }
       }
     })
   )
   return dead
 }
 
-export async function sendSms(to: string, body: string): Promise<boolean> {
+export async function sendSms(to: string, body: string, opts: { urgent?: boolean } = {}): Promise<boolean> {
   const sid = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from = process.env.TWILIO_FROM
@@ -61,16 +80,22 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
       console.log(`[SMS mock] to ${to}: ${body}`)
       return true
     }
-    throw new Error('Twilio credentials are required. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM')
+    // Never throw: a missing or broken SMS setup must not crash the server or stall an alert.
+    console.error('[SMS] Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM.')
+    recordFailure('sms')
+    return false
   }
 
   // Rate limit: skip if we sent to this number within the last minute
   const lastSent = smsLastSent.get(to) || 0
   const now = Date.now()
-  if (now - lastSent < SMS_RATE_LIMIT_MS) {
+  if (!opts.urgent && now - lastSent < SMS_RATE_LIMIT_MS) {
     console.log(`[SMS] rate limited to ${to} (last sent ${now - lastSent}ms ago)`)
-    return true // Pretend success to avoid cascading errors
+    return false // suppressed on purpose; not a delivery failure
   }
+  // Reserve the slot BEFORE the network call. Otherwise a burst of simultaneous alerts all pass this check
+  // before the first one finishes, and the limiter does nothing.
+  smsLastSent.set(to, now)
 
 
   try {
@@ -97,13 +122,15 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     if (!res.ok) {
       const errText = await res.text()
       console.error('[SMS] Twilio error', res.status, errText)
+      recordFailure('sms')
+      smsLastSent.delete(to)
       return false
     }
-    // Only update last sent on success
-    smsLastSent.set(to, now)
     return true
   } catch (e) {
     console.error('[SMS] failed', e)
+    recordFailure('sms')
+    smsLastSent.delete(to)
     return false
   }
 }

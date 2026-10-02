@@ -6,3 +6,17 @@ body {
   background: #0f172a;
   color: #e2e8f0;
 }
+
+/* Calm by default: no motion for people who ask for less, and a clear focus ring for keyboard and switch users. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:focus-visible {
+  outline: 3px solid #38bdf8;
+  outline-offset: 2px;
+}
