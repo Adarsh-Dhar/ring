@@ -35,6 +35,7 @@ services:
     environment:
       DATABASE_URL: postgresql://doorbell:${POSTGRES_PASSWORD}@postgres_db:5432/doorbell
       DATA_DIR: /data
+      TRUST_PROXY: "1"   # Caddy is the only way in (port is not published), so x-forwarded-for is trustworthy
     volumes:
       - app_data:/data                     # state.json (cases, settings) still lives here
       - ./videos:/usr/src/app/videos:ro    # door camera mp4s

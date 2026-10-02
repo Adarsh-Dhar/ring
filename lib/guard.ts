@@ -29,9 +29,11 @@ const PIN_WINDOW_MS = 15 * 60_000
 const pinFails = new Map<string, number[]>()
 
 function clientKey(req: NextRequest): string {
-  // x-forwarded-for is only trustworthy behind our own reverse proxy (see docker-compose Caddy).
+  // Anyone can fake x-forwarded-for if the app is reachable directly. Only believe it when
+  // TRUST_PROXY=1, which docker-compose sets because Caddy is the only way in.
+  if (process.env.TRUST_PROXY !== '1') return 'unknown'
   const xf = req.headers.get('x-forwarded-for')
-  return (xf ? xf.split(',')[0].trim() : req.headers.get('x-real-ip')) || 'unknown'
+  return (xf ? xf.split(',').pop()!.trim() : req.headers.get('x-real-ip')) || 'unknown'
 }
 export function pinLockedOut(key: string, now = Date.now()): boolean {
   const recent = (pinFails.get(key) || []).filter((t) => now - t < PIN_WINDOW_MS)

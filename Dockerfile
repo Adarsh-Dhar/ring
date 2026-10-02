@@ -11,4 +11,4 @@ ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN DATABASE_URL=$DATABASE_URL npm run build
 
 EXPOSE 3000
-CMD ["sh", "-c", "npm run db:migrate && npm start"]
+CMD ["sh", "-c", "npm run db:deploy && npm start"]

@@ -18,7 +18,7 @@ Built on the Ring Partner API (webhooks for events, WHEP for live video). Next.j
 ## Prerequisites
 
 - Node.js 20+
-- pnpm or npm
+- npm (the lockfile is package-lock.json)
 - PostgreSQL 17 (optional, for helper persistence)
 - Docker (optional, for PostgreSQL)
 - Ring Partner API access

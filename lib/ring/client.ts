@@ -23,14 +23,19 @@ const TOKEN_FILE = path.join(TOKEN_DIR, 'ring-token.json')
 export function loadSavedRefreshToken(file = TOKEN_FILE): string | null {
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return typeof j?.refreshToken === 'string' && j.refreshToken ? j.refreshToken : null
+    if (typeof j?.refreshToken !== 'string' || !j.refreshToken) return null
+    // If someone pasted a DIFFERENT token into .env since this file was written (re-authorised Ring),
+    // the .env token is newer than the file. Ignore the file so the new token wins.
+    const env = process.env.RING_REFRESH_TOKEN || ''
+    if (env && j.envSeed !== env) return null
+    return j.refreshToken
   } catch { return null }
 }
 export function saveRefreshToken(token: string, file = TOKEN_FILE) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
     const tmp = file + '.tmp'
-    fs.writeFileSync(tmp, JSON.stringify({ refreshToken: token, savedAt: Date.now() }), { mode: 0o600 })
+    fs.writeFileSync(tmp, JSON.stringify({ refreshToken: token, envSeed: process.env.RING_REFRESH_TOKEN || '', savedAt: Date.now() }), { mode: 0o600 })
     fs.renameSync(tmp, file)
   } catch (e) { console.error('[RING] could not save the new refresh token. It will be lost on restart.', e) }
 }
@@ -46,26 +51,36 @@ export async function forceRefresh(): Promise<boolean> {
 
 export const ringConfigured = () => !!(process.env.RING_ACCESS_TOKEN || refreshToken)
 
+let refreshing: Promise<string | null> | null = null
+
+/** Ring rotates the refresh token on every use, so two refreshes at once would make the second one fail.
+ *  Everyone who needs a token while a refresh is running waits for that same refresh. */
 async function accessToken(): Promise<string | null> {
   if (cached && cached.exp > Date.now() + 60_000) return cached.token
   if (refreshToken && process.env.RING_CLIENT_ID && process.env.RING_CLIENT_SECRET) {
-    const res = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-        client_id: process.env.RING_CLIENT_ID,
-        client_secret: process.env.RING_CLIENT_SECRET,
-      }),
-    })
-    if (!res.ok) { console.error('[RING] token refresh failed', res.status); return null }
-    const j: any = await res.json()
-    cached = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000 }
-    if (j.refresh_token) { refreshToken = j.refresh_token; saveRefreshToken(refreshToken) } // save BEFORE anything else: the old token is now dead
-    return cached.token
+    if (!refreshing) refreshing = doRefresh().finally(() => { refreshing = null })
+    return refreshing
   }
   return process.env.RING_ACCESS_TOKEN || null
+}
+
+async function doRefresh(): Promise<string | null> {
+  const res = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: process.env.RING_CLIENT_ID!,
+      client_secret: process.env.RING_CLIENT_SECRET!,
+    }),
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!res.ok) { console.error('[RING] token refresh failed', res.status); return null }
+  const j: any = await res.json()
+  cached = { token: j.access_token, exp: Date.now() + (Number(j.expires_in) || 3600) * 1000 }
+  if (j.refresh_token) { refreshToken = j.refresh_token; saveRefreshToken(refreshToken) } // save BEFORE anything else: the old token is now dead
+  return cached.token
 }
 
 export async function ringFetch(path: string, init: RequestInit = {}, retried = false): Promise<Response> {

@@ -11,6 +11,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma db push --skip-generate",
     "db:studio": "prisma studio",
     "gen:vapid": "node scripts/gen-vapid.mjs",
     "stress": "tsx tools/stress.ts",

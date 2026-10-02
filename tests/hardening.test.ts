@@ -219,10 +219,48 @@ describe('Ring refresh token', () => {
   })
 })
 
+describe('Ring refresh token: concurrency and .env precedence', () => {
+  it('many callers at once share ONE refresh (rotation would break a second one)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ring-race-'))
+    vi.stubEnv('DATA_DIR', dir)
+    vi.stubEnv('RING_REFRESH_TOKEN', 'tok0')
+    vi.stubEnv('RING_CLIENT_ID', 'cid')
+    vi.stubEnv('RING_CLIENT_SECRET', 'sec')
+    vi.resetModules()
+    const R = await import('../lib/ring/client')
+    let calls = 0
+    fakeFetch.mockImplementation(async (url: any) => {
+      if (String(url).includes('oauth')) {
+        calls++
+        await new Promise((r) => setTimeout(r, 30))
+        return new Response(JSON.stringify({ access_token: 'acc', refresh_token: 'tok1', expires_in: 14400 }), { status: 200 })
+      }
+      return new Response('{}', { status: 201 })
+    })
+    const results = await Promise.all(Array.from({ length: 10 }, () => R.forceRefresh()))
+    expect(results.every(Boolean)).toBe(true)
+    expect(calls).toBe(1)
+    fakeFetch.mockReset()
+    fakeFetch.mockImplementation(async (_u: any, init: any) => { smsCalls.push(String(init?.body)); return new Response('{}', { status: 201 }) })
+  })
+
+  it('a token pasted into .env after the file was saved wins over the saved one', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ring-env-'))
+    const file = path.join(dir, 'ring-token.json')
+    vi.stubEnv('RING_REFRESH_TOKEN', 'seed-A')
+    vi.resetModules()
+    const R = await import('../lib/ring/client')
+    R.saveRefreshToken('rotated-from-A', file)
+    expect(R.loadSavedRefreshToken(file)).toBe('rotated-from-A')   // same .env: saved token is used
+    vi.stubEnv('RING_REFRESH_TOKEN', 'seed-B')                      // user re-authorised and pasted a new token
+    expect(R.loadSavedRefreshToken(file)).toBeNull()                // so the stale file is ignored
+  })
+})
+
 describe('admin PIN lockout', () => {
   const req = (pin: string, ip = '203.0.113.7') =>
     new NextRequest('http://localhost/api/setup', { headers: { 'x-setup-pin': pin, 'x-forwarded-for': ip } })
-  beforeEach(() => G.clearPinFailures())
+  beforeEach(() => { G.clearPinFailures(); vi.stubEnv('TRUST_PROXY', '1') })
 
   it('locks out after 5 wrong PINs, even for the right PIN, with 429', () => {
     for (let i = 0; i < 5; i++) {
@@ -237,6 +275,12 @@ describe('admin PIN lockout', () => {
     for (let i = 0; i < 5; i++) G.authorize(req('0000', '198.51.100.1'), 'admin')
     const other = G.authorize(req('4821', '198.51.100.2'), 'admin')
     expect(other.ok).toBe(true)
+  })
+  it('ignores a spoofed x-forwarded-for when not behind our proxy', () => {
+    vi.stubEnv('TRUST_PROXY', '')
+    for (let i = 0; i < 5; i++) G.authorize(req('0000', `10.0.0.${i}`), 'admin')   // attacker rotates fake IPs
+    const r = G.authorize(req('4821', '10.9.9.9'), 'admin')
+    expect(r.ok).toBe(false)                                                       // still locked: the header was not believed
   })
   it('lets the lockout expire after 15 minutes', () => {
     const now = Date.now()
