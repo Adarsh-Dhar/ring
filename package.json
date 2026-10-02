@@ -13,7 +13,8 @@
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
     "gen:vapid": "node scripts/gen-vapid.mjs",
-    "stress": "tsx tools/stress.ts"
+    "stress": "tsx tools/stress.ts",
+    "manual-tests": "tsx tools/manual-tests.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

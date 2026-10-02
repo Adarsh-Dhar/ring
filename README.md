@@ -72,19 +72,21 @@ VAPID_SUBJECT=mailto:you@example.com
 TWILIO_ACCOUNT_SID=your-account-sid
 TWILIO_AUTH_TOKEN=your-auth-token
 TWILIO_FROM=+15551234567
-# For Twilio trial accounts: use a predefined template SID (required for trial)
-TWILIO_TEMPLATE_SID=your-template-sid
+# For Twilio trial accounts: use a predefined template name (e.g., "sms_appointment_reminders")
+# The template name is sent in the Body parameter
+# Leave empty for production accounts (allows custom message bodies)
+TWILIO_TEMPLATE_NAME=
 ```
 
 **Twilio Template Setup (for trial accounts):**
 
 Twilio trial accounts require using predefined message templates instead of custom message bodies:
 
-1. Go to Twilio Console → Messaging → Content
-2. Create a new messaging template
-3. Add a content variable named `message` (this will be replaced with the actual alert text)
-4. Copy the template SID and set it as `TWILIO_TEMPLATE_SID`
-5. For production accounts, leave `TWILIO_TEMPLATE_SID` empty to use custom message bodies
+1. Go to Twilio Console → Messaging → Try it out → Send a message
+2. Find your approved template name (e.g., "sms_appointment_reminders")
+3. Set it as `TWILIO_TEMPLATE_NAME` in your environment
+4. The app will send this template name in the `Body` parameter when sending SMS
+5. For production accounts, leave `TWILIO_TEMPLATE_NAME` empty to use custom message bodies
 
 ### Optional Variables
 
@@ -217,6 +219,133 @@ Resident screen for doorbell events and SOS.
 - **Notifications**: SMS via Twilio, web push via VAPID
 - **Authentication**: HMAC token-based auth for helpers and resident
 - **Ring integration**: Webhook signature verification, Ring API client, WHEP live streaming
+
+## Vercel Deployment
+
+### Prerequisites
+
+- Vercel account
+- Vercel Postgres (or external PostgreSQL)
+- Ring Partner API credentials
+- Twilio account
+- VAPID keys
+
+### Deployment Steps
+
+1. **Push your code to GitHub**
+
+2. **Import project in Vercel**
+   - Go to Vercel dashboard → Add New → Project
+   - Import your GitHub repository
+   - Configure build settings (defaults should work for Next.js)
+
+3. **Set up Vercel Postgres**
+   - In Vercel dashboard → Storage → Create Database
+   - Choose "Postgres"
+   - Copy the `POSTGRES_URL_NON_POOLING` connection string
+
+4. **Configure Environment Variables**
+
+   In Vercel project settings → Environment Variables, add:
+
+   ```env
+   # Required
+   AUTH_SECRET=<generate with: openssl rand -hex 32>
+   ADMIN_PIN=<your PIN>
+   APP_URL=https://your-project.vercel.app
+   RESIDENT_TZ=Asia/Kolkata
+   RESIDENT_NAME=<resident name>
+
+   # Ring Partner API
+   RING_HMAC_KEY=<your webhook signing key>
+   RING_ACCOUNT_ID=<your Ring account ID>
+   RING_DEVICE_IDS=<your device IDs>
+   RING_TRIGGER_EVENTS=button_press
+   RING_REFRESH_TOKEN=<your refresh token>
+   RING_CLIENT_ID=<your client ID>
+   RING_CLIENT_SECRET=<your client secret>
+
+   # Notifications
+   NEXT_PUBLIC_VAPID_PUBLIC_KEY=<your VAPID public key>
+   VAPID_PRIVATE_KEY=<your VAPID private key>
+   VAPID_SUBJECT=mailto:you@example.com
+   TWILIO_ACCOUNT_SID=<your Twilio SID>
+   TWILIO_AUTH_TOKEN=<your Twilio token>
+   TWILIO_FROM=<your Twilio phone number>
+   TWILIO_TEMPLATE_NAME=<for trial accounts only, e.g., "sms_appointment_reminders">
+
+   # Database (CRITICAL for Vercel)
+   DATABASE_URL=${POSTGRES_URL_NON_POOLING}
+   POSTGRES_PASSWORD=<your database password>
+
+   # Optional
+   ESCALATION_SECONDS=30
+   CHECKIN_HOUR=10
+   CHECKIN_GRACE_MIN=60
+   EMERGENCY_NUMBER=112
+   NEXT_PUBLIC_SPEECH_LANG=en-IN
+   EXPECTED_TIMEOUT_SECONDS=60
+   RECURRING_GRACE_MIN=15
+   ```
+
+5. **Deploy**
+   - Click "Deploy"
+   - Wait for deployment to complete
+   - Note your Vercel URL (e.g., `https://your-project.vercel.app`)
+
+6. **Configure Ring Partner API**
+
+   In Ring Developer Console (developer.amazon.com/ring), configure your app:
+
+   **Required URLs:**
+   - **Account Link URL**: `https://your-project.vercel.app/api/ring/link`
+   - **App Homepage URL**: `https://your-project.vercel.app/`
+   - **Token Exchange URL**: `https://your-project.vercel.app/api/ring/token`
+   - **Webhook URL**: `https://your-project.vercel.app/api/webhook`
+
+   **Note**: This app uses direct refresh token flow (not OAuth). The link/token endpoints return 501 with instructions.
+
+   **Get Your Ring Credentials:**
+   1. Go to Ring Developer Playground
+   2. Copy your refresh token (valid for 60 days)
+   3. Copy your client ID and client secret
+   4. Generate a webhook signing key (HMAC key)
+   5. Note your Ring account ID
+
+   **Set Environment Variables:**
+   ```env
+   RING_HMAC_KEY=<your webhook signing key>
+   RING_ACCOUNT_ID=<your Ring account ID>
+   RING_DEVICE_IDS=<your device IDs>
+   RING_REFRESH_TOKEN=<your refresh token>
+   RING_CLIENT_ID=<your client ID>
+   RING_CLIENT_SECRET=<your client secret>
+   RING_TRIGGER_EVENTS=button_press
+   ```
+
+### Important Notes for Vercel
+
+**⚠️ File Storage Won't Work**
+- Vercel is serverless - file-based storage (`DATA_DIR`) won't persist across deployments
+- **You MUST use PostgreSQL** for all persistence in production
+- The app automatically uses PostgreSQL when `DATABASE_URL` is set
+- If `DATABASE_URL` is missing, the app will fall back to file storage (which will lose data on redeploy)
+
+**Ring Webhook URL**
+- Your `APP_URL` must be the public Vercel URL with HTTPS
+- Ring requires HTTPS for webhook endpoints
+- Example: `https://your-project.vercel.app`
+
+**Twilio Template**
+- For Twilio trial accounts, you must use `TWILIO_TEMPLATE_NAME`
+- Find your approved template name in Twilio Console → Messaging → Try it out
+- Set it as the template name (e.g., "sms_appointment_reminders")
+- For production accounts, leave `TWILIO_TEMPLATE_NAME` empty
+
+**Database Persistence**
+- All helpers, cases, recurring visits, and settings are stored in PostgreSQL
+- Vercel Postgres provides persistent storage across deployments
+- Ensure `DATABASE_URL` is set to `${POSTGRES_URL_NON_POOLING}` for best performance
 
 ## Security Notes
 

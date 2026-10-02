@@ -72,15 +72,15 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     return true // Pretend success to avoid cascading errors
   }
 
+
   try {
-    // For Twilio trial accounts, use template SID instead of custom body
-    const templateSid = process.env.TWILIO_TEMPLATE_SID
+    // For Twilio trial accounts: use template name in Body parameter
+    const templateName = process.env.TWILIO_TEMPLATE_NAME
     const params: Record<string, string> = { To: to, From: from }
 
-    if (templateSid) {
-      // Use template for trial accounts
-      params['ContentSid'] = templateSid
-      params['ContentVariables'] = JSON.stringify({ message: body })
+    if (templateName) {
+      // Use template for trial accounts (Body parameter contains template name)
+      params['Body'] = templateName
     } else {
       // Use custom body for production accounts
       params['Body'] = body
