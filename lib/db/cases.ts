@@ -6,9 +6,10 @@ import type { DoorCase } from '../doorbell/store'
  * These replace the in-memory case storage with database persistence.
  */
 
-export async function createCase(data: Omit<DoorCase, 'id'> & { householdId: string }) {
+export async function createCase(data: DoorCase & { householdId: string }) {
   return getDb().case.create({
     data: {
+      id:          data.id,
       householdId: data.householdId,
       kind: data.kind,
       eventType: data.eventType,
@@ -31,6 +32,9 @@ export async function createCase(data: Omit<DoorCase, 'id'> & { householdId: str
       recurringId: data.recurringId,
       visitIcon: data.visitIcon,
       visitLabel: data.visitLabel,
+      checkWho: data.checkWho ?? null,
+      checkWord: data.checkWord ?? null,
+      selfVerifiedAt: data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null,
     }
   })
 }
@@ -76,6 +80,7 @@ export async function updateCase(caseId: string, data: Partial<DoorCase>) {
   if (data.lane !== undefined) updateData.lane = data.lane
   if (data.helperIndex !== undefined) updateData.helperIndex = data.helperIndex
   if (data.deadlineAt !== undefined) updateData.deadlineAt = new Date(data.deadlineAt)
+  if (data.selfVerifiedAt !== undefined) updateData.selfVerifiedAt = data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null
 
   return getDb().case.update({
     where: { id: caseId },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { setQuiet, setTimeoutSec, getSetup } from '@/lib/doorbell/store'
+import { setQuiet, setTimeoutSec, getSetup, setPlannedMode, PLANNED_MODES } from '@/lib/doorbell/store'
 import { updateHousehold, createResidentDevice, createHousehold } from '@/lib/db/households'
 import { authorize, fail, parse, COOKIE, cookieOpts, getPendingUserId } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
@@ -39,6 +39,10 @@ const Body = z.discriminatedUnion('action', [
     residentName:  z.string().trim().min(1).max(30),
     timezone:      z.string().optional(),
     emergencyNumber: z.string().optional(),
+  }),
+  z.object({
+    action: z.literal('plannedMode'),
+    mode:   z.enum(PLANNED_MODES as [string, ...string[]]),
   }),
 ])
 
@@ -154,6 +158,9 @@ export async function POST(req: NextRequest) {
         timezone:        b.timezone,
         emergencyNumber: b.emergencyNumber,
       })
+      return NextResponse.json({ ok: true })
+    case 'plannedMode':
+      await setPlannedMode(householdId, b.mode as any)
       return NextResponse.json({ ok: true })
   }
 }

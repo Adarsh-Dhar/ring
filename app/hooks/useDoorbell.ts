@@ -19,6 +19,8 @@ export interface DoorbellSnapshot {
   recurring: (RecurringVisit & { next: number | null })[]
   recurringNow: RecurringNow[]
   timeZone: string
+  plannedMode: 'helper' | 'resident' | 'all-helper'
+  todayVisits: { id: string; icon: string; label: string; startsAt: number; endsAt: number; done: boolean }[]
   checkin: { doneToday: boolean; dueHour: number }
   quietNow: boolean
   alerts: { degraded: boolean; recentSmsFailures: number; recentPushFailures: number; helpersWithoutPush: string[] } | null

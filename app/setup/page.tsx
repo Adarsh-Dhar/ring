@@ -22,6 +22,7 @@ interface HouseholdData {
   ready: boolean
   timeZone: string
   recurring: any[]
+  plannedMode?: 'helper' | 'resident' | 'all-helper'
 }
 
 const BADGE: Record<string, string> = {
@@ -40,6 +41,7 @@ export default function SetupPage() {
   const [form, setForm] = useState({ name: '', phone: '', email: '', emoji: '🙂' })
   const [secs, setSecs] = useState(30)
   const [quiet, setQuietForm] = useState({ enabled: false, startHour: 22, endHour: 6 })
+  const [plannedMode, setPlannedModeLocal] = useState<'helper' | 'resident' | 'all-helper'>('helper')
   const [pairingCode, setPairingCode] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -57,6 +59,7 @@ export default function SetupPage() {
     setData(d)
     setSecs(d.timeoutSec)
     setQuietForm(d.quiet)
+    setPlannedModeLocal(d.plannedMode ?? 'helper')
   }, [router])
 
   useEffect(() => {
@@ -195,6 +198,26 @@ export default function SetupPage() {
         <span>o'clock</span>
         <button onClick={() => act('/api/household', { action: 'quiet', ...quiet })} disabled={loading} className={btn}>Save</button>
       </div>
+
+      <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">Planned visits</h2>
+      <p className="mb-2 text-sm text-slate-400">How the resident screen handles a doorbell ring during a planned visit window.</p>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <select
+          value={plannedMode}
+          onChange={e => setPlannedModeLocal(e.target.value as typeof plannedMode)}
+          className={input}
+        >
+          <option value="helper">A helper confirms (recommended)</option>
+          <option value="resident">The resident checks a pass-word, helper is told</option>
+          <option value="all-helper">No shortcut: every visitor goes to a helper</option>
+        </select>
+        <button onClick={() => act('/api/household', { action: 'plannedMode', mode: plannedMode })} disabled={loading} className={btn}>Save</button>
+      </div>
+      {plannedMode === 'resident' && (
+        <p className="text-sm rounded-lg bg-amber-800 p-2">
+          ⚠️ Only visits with a pass-word will be checked by the resident. Visits without a pass-word still go to a helper.
+        </p>
+      )}
     </main>
   )
 }

@@ -29,6 +29,7 @@ model Household {
   quietEnabled     Boolean   @default(false)
   emergencyNumber  String    @default("112")
   residentEpoch    Int       @default(1)
+  plannedMode      String    @default("helper")   // 'helper' | 'resident' | 'all-helper'
   createdAt        DateTime  @default(now())
   memberships      Membership[]
   residentDevices  ResidentDevice[]
@@ -130,6 +131,9 @@ model Case {
   recurringId  String?
   visitIcon    String?
   visitLabel   String?
+  checkWho     String?  // who the resident should ask for (shown on resident screen)
+  checkWord    String?  // passphrase the resident checks (only present when plannedMode='resident')
+  selfVerifiedAt DateTime?  // set when the resident confirms the passphrase
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
@@ -144,6 +148,8 @@ model ExpectedVisit {
   label      String
   startsAt   DateTime
   endsAt     DateTime
+  who        String?  // who is expected (shown to resident for identity check)
+  passphrase String?  // word the visitor should know
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
@@ -164,6 +170,8 @@ model RecurringVisit {
   paused        Boolean  @default(false)
   lastArrived   String?
   lastMissedAlert String?
+  who           String?  // who to expect (shown to resident)
+  passphrase    String?  // word the visitor should know
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

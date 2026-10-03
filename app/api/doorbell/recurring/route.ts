@@ -7,15 +7,17 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const Add = z.object({
-  icon: z.string().max(8),
-  label: z.string().min(1).max(40),
-  days: z.array(z.number().int().min(0).max(6)).min(1).max(7),
-  everyNWeeks: z.number().int().min(1).max(8).default(1),
-  startMin: z.number().int().min(0).max(1439),
-  endMin: z.number().int().min(1).max(1440),
+  icon:          z.string().max(8),
+  label:         z.string().min(1).max(40),
+  days:          z.array(z.number().int().min(0).max(6)).min(1).max(7),
+  everyNWeeks:   z.number().int().min(1).max(8).default(1),
+  startMin:      z.number().int().min(0).max(1439),
+  endMin:        z.number().int().min(1).max(1440),
   alertIfMissed: z.boolean().default(false),
   startNextWeek: z.boolean().default(false),
-}).refine((v) => v.endMin > v.startMin, { message: 'End must be after start' })
+  who:           z.string().trim().max(40).optional(),
+  passphrase:    z.string().trim().min(2).max(30).optional(),
+}).refine(v => v.endMin > v.startMin, { message: 'End must be after start' })
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')

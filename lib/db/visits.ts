@@ -3,17 +3,19 @@ import type { ExpectedVisit, RecurringVisit } from '../doorbell/store'
 
 /**
  * Visit repository functions.
- * These handle expected and recurring visits.
  */
 
-export async function createExpectedVisit(data: Omit<ExpectedVisit, 'id'> & { householdId: string }) {
+export async function createExpectedVisit(data: ExpectedVisit & { householdId: string }) {
   return getDb().expectedVisit.create({
     data: {
+      id:          data.id,
       householdId: data.householdId,
-      icon: data.icon,
-      label: data.label,
-      startsAt: new Date(data.startsAt),
-      endsAt: new Date(data.endsAt),
+      icon:        data.icon,
+      label:       data.label,
+      startsAt:    new Date(data.startsAt),
+      endsAt:      new Date(data.endsAt),
+      who:         data.who ?? null,
+      passphrase:  data.passphrase ?? null,
     }
   })
 }
@@ -30,15 +32,14 @@ export async function getActiveExpectedVisits(householdId: string, now: number) 
     where: {
       householdId,
       startsAt: { lte: new Date(now) },
-      endsAt: { gt: new Date(now) }
+      endsAt:   { gt:  new Date(now) }
     }
   })
 }
 
-export async function deleteExpectedVisit(id: string) {
-  return getDb().expectedVisit.delete({
-    where: { id }
-  })
+/** Scoped delete: requires both id AND householdId so one household can't delete another's visits. */
+export async function deleteExpectedVisit(householdId: string, id: string) {
+  return getDb().expectedVisit.deleteMany({ where: { id, householdId } })
 }
 
 export async function deleteOldExpectedVisits(householdId: string) {
@@ -50,21 +51,24 @@ export async function deleteOldExpectedVisits(householdId: string) {
   })
 }
 
-export async function createRecurringVisit(data: Omit<RecurringVisit, 'id' | 'createdAt' | 'updatedAt'> & { householdId: string }) {
+export async function createRecurringVisit(data: RecurringVisit & { householdId: string }) {
   return getDb().recurringVisit.create({
     data: {
-      householdId: data.householdId,
-      icon: data.icon,
-      label: data.label,
-      days: data.days as any,
-      everyNWeeks: data.everyNWeeks,
-      anchorWeek: data.anchorWeek,
-      startMin: data.startMin,
-      endMin: data.endMin,
+      id:            data.id,
+      householdId:   data.householdId,
+      icon:          data.icon,
+      label:         data.label,
+      days:          data.days as any,
+      everyNWeeks:   data.everyNWeeks,
+      anchorWeek:    data.anchorWeek,
+      startMin:      data.startMin,
+      endMin:        data.endMin,
       alertIfMissed: data.alertIfMissed,
-      paused: data.paused,
-      lastArrived: data.lastArrived,
+      paused:        data.paused,
+      lastArrived:   data.lastArrived,
       lastMissedAlert: data.lastMissedAlert,
+      who:           data.who ?? null,
+      passphrase:    data.passphrase ?? null,
     }
   })
 }
@@ -79,18 +83,16 @@ export async function getRecurringVisitsForHousehold(householdId: string) {
 export async function updateRecurringVisit(id: string, data: Partial<RecurringVisit>) {
   const updateData: any = {}
 
-  if (data.paused !== undefined) updateData.paused = data.paused
-  if (data.lastArrived !== undefined) updateData.lastArrived = data.lastArrived
+  if (data.paused          !== undefined) updateData.paused          = data.paused
+  if (data.lastArrived     !== undefined) updateData.lastArrived     = data.lastArrived
   if (data.lastMissedAlert !== undefined) updateData.lastMissedAlert = data.lastMissedAlert
+  if (data.who             !== undefined) updateData.who             = data.who ?? null
+  if (data.passphrase      !== undefined) updateData.passphrase      = data.passphrase ?? null
 
-  return getDb().recurringVisit.update({
-    where: { id },
-    data: updateData
-  })
+  return getDb().recurringVisit.update({ where: { id }, data: updateData })
 }
 
-export async function deleteRecurringVisit(id: string) {
-  return getDb().recurringVisit.delete({
-    where: { id }
-  })
+/** Scoped delete: requires both id AND householdId. */
+export async function deleteRecurringVisit(householdId: string, id: string) {
+  return getDb().recurringVisit.deleteMany({ where: { id, householdId } })
 }
