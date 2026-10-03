@@ -366,21 +366,23 @@ function checkMissedVisits(state: HouseholdState, now: number, timezone: string,
 /** Today's planned visits for the resident idle screen — no passphrases. */
 function todayVisits(state: HouseholdState, now: number, timezone: string) {
   if (state.plannedMode === 'all-helper') return []
+  const today   = zonedDayKey(now, timezone)
   const results: { id: string; icon: string; label: string; startsAt: number; endsAt: number; done: boolean }[] = []
 
   for (const v of state.recurring) {
     if (v.paused) continue
     const w = windowToday(v, now, timezone)
     if (!w) continue
-    const done = v.lastArrived === w.key
-    results.push({ id: v.id, icon: v.icon, label: v.label, startsAt: w.start, endsAt: w.end, done })
+    results.push({ id: v.id, icon: v.icon, label: v.label, startsAt: w.start, endsAt: w.end, done: v.lastArrived === w.key })
   }
   for (const e of state.expected) {
-    if (e.endsAt < now - GRACE_MS) continue
-    const done = state.cases.some(c => c.recurringId === e.id && c.status === 'answered' && c.answer === 'safe')
+    // Only show visits whose window falls on today (not future dates)
+    if (zonedDayKey(e.startsAt, timezone) !== today) continue
+    // Mark as done if the window has fully closed (no open case needed: resident saw them)
+    const done = now >= e.endsAt
     results.push({ id: e.id, icon: e.icon, label: e.label, startsAt: e.startsAt, endsAt: e.endsAt, done })
   }
-  return results
+  return results.sort((a, b) => a.startsAt - b.startsAt)
 }
 
 const dayKey      = (ms: number, tz: string) => zonedDayKey(ms, tz)
@@ -559,7 +561,7 @@ async function openCase(
     if (m.recurring) {
       // Persist lastArrived on the recurring rule
       m.recurring.lastArrived = m.key
-      await updateRecurringVisit(m.recurring.id, { lastArrived: m.key })
+      updateRecurringVisit(m.recurring.id, { lastArrived: m.key }).catch((e) => console.error('[STORE] could not save arrival mark', e))
     }
     if (residentCheck) {
       addLog(c, `Planned visit: ${m.icon} ${m.label}. Resident will verify the pass-word first.`)
@@ -675,9 +677,12 @@ export async function selfVerify(
   const c         = state.cases.find(x => x.id === caseId)
   if (!c) return null
   // Only applicable to a waiting expected-visitor case that has a checkWord
-  if (c.status !== 'waiting' || c.lane !== 'expected' || !c.checkWord) return null
+  if (c.kind !== 'visitor' || c.status !== 'waiting' || c.lane !== 'expected' || !c.checkWord) return null
 
-  const now = Date.now()
+  const household = await getHousehold(householdId)
+  if (!household) return null
+  const now      = Date.now()
+  const approved = await getApprovedMemberships(householdId)
 
   if (ok) {
     // Resident confirmed the pass-word → case resolved as safe
@@ -686,24 +691,23 @@ export async function selfVerify(
     c.selfVerifiedAt = now
     c.confirmedAt    = now
     c.resolvedAt     = now
-    addLog(c, 'Resident verified the pass-word. Visitor confirmed.')
-    // Notify all helpers that the visit was confirmed without them
-    notifyAll(state, `${c.visitIcon ?? '👤'} ${c.visitLabel ?? 'Planned visit'} confirmed`, 'Resident verified the pass-word.', c.id)
+    addLog(c, `Resident said the visitor gave the right word (${c.checkWho ?? c.visitLabel}). Door can be opened.`)
+    // Notify all helpers; they can still override to not_safe
+    approved.forEach(m => pushToMembership(m.id, {
+      title: `${c.visitIcon ?? '👤'} ${c.visitLabel ?? 'Visitor'} verified`,
+      body:  `${household.residentName} checked the word and may open the door. You can still say Don't open.`,
+      tag: c.id, url: '/helper'
+    }))
   } else {
-    // Resident rejected → demote to normal alert and escalate to helper
+    // Resident rejected → demote to normal lane and escalate to first helper immediately
     c.lane       = 'normal'
     c.checkWord  = undefined   // don't show the check-word again
     c.deadlineAt = now + state.timeoutSec * 1000
-    addLog(c, 'Resident did not recognise the visitor. Treating as unknown visitor.')
-
-    const approved = await getApprovedMemberships(householdId)
-    const helper   = approved.find(m => m.id === c.chain[c.helperIndex])
-    if (helper) {
-      pushToMembership(helper.id, { title: '🚪 Unknown visitor!', body: 'Resident did not recognise them. Open the app now.', tag: c.id, url: '/helper' })
-      if (helper.user.phone) {
-        const household = await getHousehold(householdId)
-        sendSms(helper.user.phone, `Unknown visitor at ${household?.residentName ?? 'the resident'}'s door. Open the helper app now.`, { urgent: true })
-      }
+    addLog(c, 'Resident said the visitor did NOT give the right word. Treated as an unknown visitor: full alert and SMS.')
+    const first = approved.find(m => m.id === c.chain[c.helperIndex])
+    if (first) {
+      pushToMembership(first.id, { title: '🚪 Someone is at the door', body: `The expected visitor did not pass the check. Open the app. You have ${state.timeoutSec}s.`, tag: c.id, url: '/helper' })
+      if (first.user.phone) sendSms(first.user.phone, `Someone is at ${household.residentName}'s door and did not pass the check. Open the helper app now. You have ${state.timeoutSec}s.`, { urgent: true })
     }
   }
 
@@ -846,9 +850,9 @@ export async function addExpected(
   who?: string, passphrase?: string
 ): Promise<ExpectedVisit> {
   const state = await getOrCreateState(householdId)
-  const e: ExpectedVisit = { id: newId('exp'), icon, label, startsAt, endsAt, who, passphrase }
+  const e: ExpectedVisit = { id: newId('exp'), icon, label, startsAt, endsAt, who: clean(who), passphrase: clean(passphrase) }
+  await createExpectedVisit({ householdId, ...e })   // write first: a failed write leaves nothing half-created in memory
   state.expected.push(e)
-  await createExpectedVisit({ householdId, ...e })
   return e
 }
 
@@ -883,11 +887,11 @@ export async function addRecurring(
     endMin:        v.endMin,
     alertIfMissed: v.alertIfMissed,
     paused:        false,
-    who:           v.who,
-    passphrase:    v.passphrase,
+    who:           clean(v.who),
+    passphrase:    clean(v.passphrase),
   }
+  await createRecurringVisit({ householdId, ...r })   // write first
   state.recurring.push(r)
-  await createRecurringVisit({ householdId, ...r })
   return r
 }
 
@@ -940,6 +944,10 @@ export async function resetAll(householdId: string) {
   state.offline      = false
   state.devices      = {}
   state.recurring    = []
+  state.expected     = []
+  // Re-read plannedMode from DB so tests that change it don't bleed into the next test
+  const household = await getHousehold(householdId)
+  if (household) state.plannedMode = asMode((household as any).plannedMode)
   await deleteOldCases(householdId, 0)
 }
 
