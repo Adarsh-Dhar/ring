@@ -4,6 +4,7 @@ import { setQuiet, setTimeoutSec, getSetup } from '@/lib/doorbell/store'
 import { updateHousehold, createResidentDevice, createHousehold } from '@/lib/db/households'
 import { authorize, fail, parse, COOKIE, cookieOpts, getPendingUserId } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
+import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import { getDb } from '@/lib/db/client'
 import crypto from 'crypto'
 
@@ -25,7 +26,7 @@ const Body = z.discriminatedUnion('action', [
     action:       z.literal('create'),
     residentName: z.string().trim().min(1).max(60),
     guardianName: z.string().trim().min(1).max(60),
-    guardianPhone: z.string().trim().regex(/^\+\d{7,15}$/).optional(),
+    guardianPhone: z.string().trim().min(7).max(20).optional(),  // normalised in handler
     guardianEmail: z.string().email().optional(),
     timezone:     z.string().optional(),
   }),
@@ -64,15 +65,22 @@ export async function POST(req: NextRequest) {
       return fail('Guardian phone or email is required', 400)
     }
 
+    // Normalise contact info to the same canonical form used at login
+    const guardianPhone = b.guardianPhone ? normalizePhone(b.guardianPhone) : null
+    const guardianEmail = b.guardianEmail ? normalizeEmail(b.guardianEmail) : null
+    if (b.guardianPhone && !guardianPhone) return fail('Invalid phone number', 400)
+
     const db = getDb()
 
-    // Update the user's name if they just provided it
-    if (b.guardianName) {
-      await db.user.update({
-        where: { id: guardianUserId },
-        data:  { name: b.guardianName },
-      })
-    }
+    // Update the user's name (and normalised contact) if they just provided it
+    await db.user.update({
+      where: { id: guardianUserId },
+      data: {
+        ...(b.guardianName                  ? { name:  b.guardianName }  : {}),
+        ...(guardianPhone                   ? { phone: guardianPhone }   : {}),
+        ...(guardianEmail && !guardianPhone ? { email: guardianEmail }   : {}),
+      },
+    })
 
     // Make sure this user doesn't already have a household as guardian
     const existingGuardian = await db.membership.findFirst({

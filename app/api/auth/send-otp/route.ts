@@ -3,27 +3,52 @@ import { z } from 'zod'
 import { fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { IS_PROD } from '@/lib/auth'
+import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const OTP_TTL_MS         = 10 * 60 * 1000  // 10 minutes
-const OTP_MAX_PER_WINDOW = 5               // max sends per user per TTL window
+const OTP_MAX_PER_USER   = 5               // max sends per user per window
+const OTP_MAX_PER_IP     = 10              // max sends per IP per window
 
 function hashOtp(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex')
 }
 
-// ── SMS delivery via Twilio (same fetch pattern as notify.ts) ──────────────
+// ── Delivery helpers ───────────────────────────────────────────────────────
+
 async function sendOtpSms(to: string, code: string): Promise<boolean> {
   const sid   = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from  = process.env.TWILIO_FROM
   if (!sid || !token || !from) return false
 
+  // Support two Twilio modes:
+  //   • Production accounts: plain Body text.
+  //   • Trial accounts / pre-approved templates: Body = template name from
+  //     TWILIO_TEMPLATE_NAME, or ContentSid + ContentVariables.
+  //
+  // TWILIO_OTP_BODY (optional): message template with {{code}} placeholder.
+  //   Default: "Your doorbell-helper code: {{code}}. It expires in 10 minutes."
+  //
+  // TWILIO_CONTENT_SID (optional): if set, use the Twilio Content API instead
+  //   of a plain Body.  The {{code}} value goes into ContentVariables slot "1".
+  const tpl  = process.env.TWILIO_OTP_BODY ?? 'Your doorbell-helper code: {{code}}. It expires in 10 minutes.'
+  const bodyText = tpl.replace('{{code}}', code)
+
+  const contentSid = process.env.TWILIO_CONTENT_SID
+
+  const params: Record<string, string> = { To: to, From: from }
+  if (contentSid) {
+    params['ContentSid']       = contentSid
+    params['ContentVariables'] = JSON.stringify({ '1': code })
+  } else {
+    params['Body'] = bodyText
+  }
+
   try {
-    const body = process.env.TWILIO_TEMPLATE_NAME ?? `Your doorbell-helper code: ${code}`
     const res = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
       {
@@ -32,7 +57,7 @@ async function sendOtpSms(to: string, code: string): Promise<boolean> {
           Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64'),
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({ To: to, From: from, Body: body }),
+        body:   new URLSearchParams(params),
         signal: AbortSignal.timeout(10_000),
       }
     )
@@ -47,7 +72,6 @@ async function sendOtpSms(to: string, code: string): Promise<boolean> {
   }
 }
 
-// ── Email delivery via Resend (fetch-based, no extra package needed) ────────
 async function sendOtpEmail(to: string, code: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) return false
@@ -80,20 +104,22 @@ async function sendOtpEmail(to: string, code: string): Promise<boolean> {
   }
 }
 
+// ── Route ──────────────────────────────────────────────────────────────────
+
 /**
- * POST { email } | { phone }
+ * POST { email?, phone?, name? }
  *
- * Creates the user if they don't exist yet (signup + login use the same flow),
- * generates a 6-digit OTP, stores it hashed in the DB, and sends it.
- *
- * Response is always { ok: true } – we never reveal whether the address
- * already existed, or whether delivery succeeded.
+ * Signup and login share the same endpoint.  A new address creates an account;
+ * a known one reuses it.  The response is always { ok: true } regardless of
+ * whether the address was new, whether it was rate-limited, or whether
+ * delivery succeeded — callers must not be able to enumerate accounts or probe
+ * rate-limit status.
  */
 export async function POST(req: NextRequest) {
   const p = await parse(req, z.object({
     email: z.string().email().optional(),
     phone: z.string().min(7).max(20).optional(),
-    name:  z.string().trim().min(1).max(60).optional(),  // used when creating a new account
+    name:  z.string().trim().min(1).max(60).optional(),
   }))
   if (p.ok === false) return p.res
 
@@ -101,78 +127,86 @@ export async function POST(req: NextRequest) {
     return fail('Email or phone required', 400)
   }
 
+  // ── Normalise inputs ───────────────────────────────────────────────────────
+  const phone = p.data.phone ? normalizePhone(p.data.phone) : null
+  const email = p.data.email ? normalizeEmail(p.data.email) : null
+
+  if (p.data.phone && !phone) return fail('Invalid phone number', 400)
+  // email normalisation can't fail (zod already validated it), but guard anyway
+  if (p.data.email && !email) return fail('Invalid email address', 400)
+
   const db = getDb()
 
-  // ── Upsert user (signup + login are the same step) ────────────────────────
-  // We upsert so that a new phone/email creates an account automatically.
-  // The `name` field is only written on insert; an existing user's name is
-  // not overwritten to prevent a caller from renaming someone else.
+  // ── IP-based rate-limit (checked before upsert to limit account creation) ──
+  // Trust the first value in X-Forwarded-For, which Caddy sets to the real
+  // client IP.  Do NOT trust this header if the app is directly Internet-facing
+  // without a proxy.
+  const ip          = (req.headers.get('x-forwarded-for')?.split(',')[0] ?? '').trim() || 'unknown'
+  const windowStart = new Date(Date.now() - OTP_TTL_MS)
+
+  const ipCount = await db.otpCode.count({
+    where: { ip, createdAt: { gte: windowStart } },
+  })
+  if (ipCount >= OTP_MAX_PER_IP) {
+    return NextResponse.json({ ok: true })
+  }
+
+  // ── Upsert user (signup = login) ───────────────────────────────────────────
+  // `name` only written on INSERT to prevent a caller from renaming others.
   let user: { id: string }
-  if (p.data.email) {
+  if (email) {
     user = await db.user.upsert({
-      where:  { email: p.data.email },
+      where:  { email },
       update: {},
-      create: { email: p.data.email, name: p.data.name ?? null },
+      create: { email, name: p.data.name ?? null },
       select: { id: true },
     })
   } else {
     user = await db.user.upsert({
-      where:  { phone: p.data.phone! },
+      where:  { phone: phone! },
       update: {},
-      create: { phone: p.data.phone!, name: p.data.name ?? null },
+      create: { phone: phone!, name: p.data.name ?? null },
       select: { id: true },
     })
   }
 
-  // ── Rate-limit: max OTP_MAX_PER_WINDOW sends per user per window ──────────
-  const windowStart = new Date(Date.now() - OTP_TTL_MS)
+  // ── Per-user rate-limit (counts ALL codes, not just unused ones) ───────────
+  // Counting used codes too means an attacker who keeps requesting codes just
+  // to burn them with wrong guesses can't escape the per-user window.
   const recent = await db.otpCode.count({
-    where: {
-      userId:    user.id,
-      used:      false,
-      createdAt: { gte: windowStart },
-    },
+    where: { userId: user.id, createdAt: { gte: windowStart } },
   })
-  if (recent >= OTP_MAX_PER_WINDOW) {
-    return NextResponse.json({ ok: true })   // silent; don't leak rate-limit status
+  if (recent >= OTP_MAX_PER_USER) {
+    return NextResponse.json({ ok: true })
   }
 
-  // Invalidate all previous unused codes so only the latest one works
+  // Invalidate all previous unused codes — only the latest one is valid
   await db.otpCode.updateMany({
     where: { userId: user.id, used: false },
     data:  { used: true },
   })
 
-  // ── Generate and persist the code ─────────────────────────────────────────
+  // ── Generate and persist ───────────────────────────────────────────────────
   const code      = crypto.randomInt(100_000, 999_999).toString()
   const codeHash  = hashOtp(code)
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
 
   await db.otpCode.create({
-    data: { userId: user.id, codeHash, expiresAt, attempts: 0 },
+    data: { userId: user.id, codeHash, expiresAt, attempts: 0, ip },
   })
 
-  // ── Delivery ───────────────────────────────────────────────────────────────
+  // ── Deliver ────────────────────────────────────────────────────────────────
   if (!IS_PROD) {
-    // Dev: print to server log only — never in the HTTP response
-    console.log(`[OTP DEV] ${p.data.email ?? p.data.phone} → ${code}`)
+    console.log(`[OTP DEV] ${email ?? phone} → ${code}`)
   } else {
     let delivered = false
 
-    if (p.data.phone) {
-      delivered = await sendOtpSms(p.data.phone, code)
-    }
-
-    if (!delivered && p.data.email) {
-      delivered = await sendOtpEmail(p.data.email, code)
-    }
+    if (phone) delivered = await sendOtpSms(phone, code)
+    if (!delivered && email) delivered = await sendOtpEmail(email, code)
 
     if (!delivered) {
-      // Log loudly but don't fail the request — the code is in the DB and the
-      // user can retry.  A misconfigured delivery channel must not lock users out.
       console.error(
-        '[OTP] Failed to deliver code to',
-        p.data.email ?? p.data.phone,
+        '[OTP] Failed to deliver code to', email ?? phone,
         '— check TWILIO_* and RESEND_API_KEY env vars'
       )
     }

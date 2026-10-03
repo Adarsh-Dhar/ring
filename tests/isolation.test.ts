@@ -308,3 +308,50 @@ describe('doorbell state route scoping', () => {
     expect(getState).not.toHaveBeenCalledWith('hh-B', expect.any(String), expect.anything())
   })
 })
+
+// ── Identity normalisation ─────────────────────────────────────────────────
+import { normalizePhone, normalizeEmail } from '@/lib/identity'
+
+describe('phone normalisation', () => {
+  // Default country code used by all the tests below
+  const cc = '+91'
+
+  it('E.164 passes through unchanged', () => {
+    expect(normalizePhone('+919876543210', cc)).toBe('+919876543210')
+  })
+
+  it('local number without trunk zero → prepend country code', () => {
+    expect(normalizePhone('9876543210', cc)).toBe('+919876543210')
+  })
+
+  it('local number with trunk zero → strip zero, prepend country code', () => {
+    expect(normalizePhone('09876543210', cc)).toBe('+919876543210')
+  })
+
+  it('spaces, hyphens, dots, parens stripped', () => {
+    expect(normalizePhone('98765 43210',    cc)).toBe('+919876543210')
+    expect(normalizePhone('987-654-3210',   cc)).toBe('+919876543210')
+    expect(normalizePhone('(987) 654.3210', cc)).toBe('+919876543210')
+  })
+
+  it('00-prefix treated as international +', () => {
+    expect(normalizePhone('00919876543210', cc)).toBe('+919876543210')
+  })
+
+  it('"98765 43210" and "+919876543210" normalise to the same string', () => {
+    expect(normalizePhone('98765 43210', cc)).toBe(normalizePhone('+919876543210', cc))
+  })
+
+  it('returns null for too-short numbers', () => {
+    expect(normalizePhone('1234', cc)).toBeNull()
+  })
+
+  it('returns null for numbers with letters', () => {
+    expect(normalizePhone('9876ABCD', cc)).toBeNull()
+  })
+})
+
+describe('email normalisation', () => {
+  it('lowercases', () => expect(normalizeEmail('User@Example.COM')).toBe('user@example.com'))
+  it('trims whitespace', () => expect(normalizeEmail('  a@b.com  ')).toBe('a@b.com'))
+})

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { COOKIE, cookieOpts, fail, parse } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
 import { getDb } from '@/lib/db/client'
+import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -41,13 +42,18 @@ export async function POST(req: NextRequest) {
   const db  = getDb()
   const now = new Date()
 
+  // Normalise to the same canonical form used when the code was sent
+  const phone = p.data.phone ? normalizePhone(p.data.phone) : null
+  const email = p.data.email ? normalizeEmail(p.data.email) : null
+  if (p.data.phone && !phone) return fail('Invalid code', 401)
+
   // Resolve user — same generic error whether address unknown or code wrong
   let userId: string | null = null
-  if (p.data.email) {
-    const u = await db.user.findUnique({ where: { email: p.data.email }, select: { id: true } })
+  if (email) {
+    const u = await db.user.findUnique({ where: { email }, select: { id: true } })
     userId = u?.id ?? null
-  } else if (p.data.phone) {
-    const u = await db.user.findUnique({ where: { phone: p.data.phone }, select: { id: true } })
+  } else if (phone) {
+    const u = await db.user.findUnique({ where: { phone }, select: { id: true } })
     userId = u?.id ?? null
   }
 

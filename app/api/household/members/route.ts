@@ -5,6 +5,7 @@ import { createInvite, getInvitesForHousehold, deleteInvite } from '@/lib/db/inv
 import { authorize, fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { makeToken } from '@/lib/auth'
+import { normalizePhone, normalizeEmail } from '@/lib/identity'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -59,20 +60,26 @@ export async function POST(req: NextRequest) {
   switch (b.action) {
     case 'invite': {
       if (!b.email && !b.phone) return fail('Email or phone required')
-      
-      // Find or create user
+
+      // Normalise to canonical form so inviting "98765 43210" finds the same
+      // user as an existing "+919876543210" account.
+      const phone = b.phone ? normalizePhone(b.phone) : null
+      const email = b.email ? normalizeEmail(b.email) : null
+      if (b.phone && !phone) return fail('Invalid phone number', 400)
+
+      // Find or create user using the normalised address
       let user
-      if (b.email) {
+      if (email) {
         user = await getDb().user.upsert({
-          where: { email: b.email },
+          where:  { email },
           update: {},
-          create: { email: b.email, name: b.name }
+          create: { email, name: b.name },
         })
       } else {
         user = await getDb().user.upsert({
-          where: { phone: b.phone! },
+          where:  { phone: phone! },
           update: {},
-          create: { phone: b.phone!, name: b.name }
+          create: { phone: phone!, name: b.name },
         })
       }
 

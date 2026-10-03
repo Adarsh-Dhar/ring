@@ -204,11 +204,13 @@ model OtpCode {
   expiresAt DateTime
   used      Boolean  @default(false)
   attempts  Int      @default(0)  // incremented on each wrong guess; invalidated at 5
+  ip        String?               // source IP for cross-user rate-limiting
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([ip, createdAt])
 }
 
 model RingNonce {
