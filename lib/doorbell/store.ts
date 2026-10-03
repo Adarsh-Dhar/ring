@@ -502,7 +502,7 @@ export async function getSetup(householdId: string) {
     ready:       memberships.some(m => m.consent === 'approved'),
     timeZone:    household.timezone,
     plannedMode: state.plannedMode,
-    expected:    state.expected.filter(e => e.endsAt > now),
+    expected:    state.expected,
     recurring:   state.recurring.map(v => ({ ...v, next: nextOccurrence(v, now, household.timezone) })),
   }
 }
@@ -949,6 +949,7 @@ export async function resetAll(householdId: string) {
   const household = await getHousehold(householdId)
   if (household) state.plannedMode = asMode((household as any).plannedMode)
   await deleteOldCases(householdId, 0)
+  await deleteOldExpectedVisits(householdId)
 }
 
 // ── Alert status ──────────────────────────────────────────────────────────────
