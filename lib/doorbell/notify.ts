@@ -1,4 +1,5 @@
 import webpush from 'web-push'
+import { getPushSubscriptionsForMembership, deletePushSubscriptionByEndpoint } from '../db/push'
 
 export interface PushSub {
   endpoint: string
@@ -68,6 +69,25 @@ export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise
     })
   )
   return dead
+}
+
+/**
+ * Send push notifications to a specific membership.
+ * Automatically cleans up dead subscriptions.
+ */
+export async function pushToMembership(membershipId: string, payload: PushPayload): Promise<void> {
+  const subs = await getPushSubscriptionsForMembership(membershipId)
+  const pushSubs: PushSub[] = subs.map((s: any) => ({
+    endpoint: s.endpoint,
+    keys: s.keys
+  }))
+
+  const dead = await pushToSubs(pushSubs, payload)
+
+  // Clean up dead subscriptions
+  for (const endpoint of dead) {
+    await deletePushSubscriptionByEndpoint(membershipId, endpoint)
+  }
 }
 
 export async function sendSms(to: string, body: string, opts: { urgent?: boolean } = {}): Promise<boolean> {

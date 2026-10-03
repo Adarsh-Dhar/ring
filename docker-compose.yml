@@ -22,7 +22,7 @@ services:
     expose:
       - "3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.1:3000/api/health >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -34,10 +34,8 @@ services:
       - .env.prod
     environment:
       DATABASE_URL: postgresql://doorbell:${POSTGRES_PASSWORD}@postgres_db:5432/doorbell
-      DATA_DIR: /data
       TRUST_PROXY: "1"   # Caddy is the only way in (port is not published), so x-forwarded-for is trustworthy
     volumes:
-      - app_data:/data                     # state.json (cases, settings) still lives here
       - ./videos:/usr/src/app/videos:ro    # door camera mp4s
 
   # HTTPS in front of the app. Web push and Ring webhooks both need a real https address.
@@ -57,5 +55,4 @@ services:
 
 volumes:
   pg_data:
-  app_data:
   caddy_data:

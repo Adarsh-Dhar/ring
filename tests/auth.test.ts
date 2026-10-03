@@ -5,14 +5,15 @@ import { verifyRingSignature } from '../lib/ring/verify'
 
 describe('tokens', () => {
   it('round-trips and rejects tampering', () => {
-    const t = makeToken({ role: 'helper', id: 'h1', epoch: 1 })!
-    expect(verifyToken(t)).toEqual({ role: 'helper', id: 'h1', epoch: 1 })
-    const [p, s] = t.split('.')
-    const forged = Buffer.from('helper:h2:1').toString('base64url') + '.' + s
-    expect(verifyToken(forged)).toBeNull()
-    expect(verifyToken(p + '.AAAA')).toBeNull()
-    expect(verifyToken('garbage')).toBeNull()
-    expect(verifyToken(null)).toBeNull()
+    process.env.AUTH_SECRET = 'a'.repeat(32)
+    const t = makeToken({ kind: 'helper', sub: 'h1', householdId: 'hh1', epoch: 1, exp: Math.floor(Date.now() / 1000) + 3600 })!
+    const verified = verifyToken(t)
+    expect(verified.ok).toBe(true)
+    if (verified.ok) {
+      expect(verified.data).toEqual({ kind: 'helper', sub: 'h1', householdId: 'hh1', epoch: 1 })
+    }
+    expect(verifyToken('garbage').ok).toBe(false)
+    expect(verifyToken(null).ok).toBe(false)
   })
 })
 

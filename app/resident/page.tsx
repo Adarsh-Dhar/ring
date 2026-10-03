@@ -43,7 +43,11 @@ export default function ResidentPage() {
   // Order matters: anything that means "we can't be sure" comes BEFORE any "all quiet" or "OK to open" screen.
   let screen: Screen
   if (unauthorized) {
-    screen = { icon: '🔒', title: 'Not set up', sub: 'Ask your helper to open your link again. Keep the door closed.', bg: 'bg-amber-700', alarm: true }
+    // Redirect to pair page
+    if (typeof window !== 'undefined') {
+      window.location.href = '/pair'
+    }
+    screen = { icon: '🔒', title: 'Not paired', sub: 'Enter the pairing code to connect your device.', bg: 'bg-amber-700', alarm: true }
   } else if (stale || (error && !snap)) {
     screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.ready) {

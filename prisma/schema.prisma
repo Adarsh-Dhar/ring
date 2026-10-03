@@ -7,13 +7,211 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Helper {
-  id         String   @id
-  name       String
-  phone      String
-  emoji      String   @default("🙂")
-  consent    String   @default("pending")
-  consentAt  DateTime?
-  tokenEpoch Int      @default(1)
-  position   Int
+model User {
+  id        String   @id @default(cuid())
+  email     String?  @unique
+  phone     String?  @unique
+  name      String?
+  createdAt DateTime @default(now())
+  memberships Membership[]
+  createdInvites Invite[] @relation("CreatedInvites")
+  acceptedInvites Invite[] @relation("AcceptedInvites")
+}
+
+model Household {
+  id               String    @id @default(cuid())
+  residentName     String
+  timezone         String    @default("Asia/Kolkata")
+  timeoutSec       Int       @default(30)
+  quietStartHour   Int       @default(22)
+  quietEndHour     Int       @default(6)
+  quietEnabled     Boolean   @default(false)
+  emergencyNumber  String    @default("112")
+  residentEpoch    Int       @default(1)
+  createdAt        DateTime  @default(now())
+  memberships      Membership[]
+  residentDevices  ResidentDevice[]
+  ringConnections  RingConnection[]
+  devices          Device[]
+  cases            Case[]
+  expectedVisits   ExpectedVisit[]
+  recurringVisits  RecurringVisit[]
+  webhookEvents    WebhookEvent[]
+  invites          Invite[]
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  userId      String
+  householdId String
+  role        String    // 'guardian' | 'helper'
+  consent     String    @default("pending") // 'pending' | 'approved' | 'declined'
+  consentAt   DateTime?
+  position    Int
+  tokenEpoch  Int       @default(1)
+  emoji       String    @default("🙂")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  pushSubscriptions PushSubscription[]
+
+  @@unique([userId, householdId])
+  @@index([householdId])
+}
+
+model ResidentDevice {
+  id              String   @id @default(cuid())
+  householdId     String
+  pairingCodeHash String   @unique
+  deviceTokenEpoch Int     @default(1)
+  lastSeenAt      DateTime?
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model RingConnection {
+  id                    String   @id @default(cuid())
+  householdId           String?
+  ringAccountId         String   @unique
+  encryptedAccessToken  String
+  encryptedRefreshToken String
+  expiresAt             DateTime?
+  status                String   @default("unclaimed") // 'unclaimed' | 'linked' | 'revoked'
+  linkedByUserId        String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  household Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([ringAccountId])
+}
+
+model Device {
+  id         String   @id @default(cuid())
+  householdId String
+  ringDeviceId String
+  online     Boolean  @default(false)
+  since      DateTime
+  alertedAt  DateTime?
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, ringDeviceId])
+  @@index([householdId])
+}
+
+model Case {
+  id           String   @id @default(cuid())
+  householdId  String
+  kind         String   // 'visitor' | 'sos'
+  eventType    String
+  createdAt    DateTime @default(now())
+  helperIndex  Int      @default(0)
+  deadlineAt   DateTime
+  status       String   @default("waiting") // 'waiting' | 'answered' | 'no_response'
+  answer       String?  // 'safe' | 'not_safe' | 'call_me'
+  answeredBy   String?
+  resolvedAt   DateTime?
+  log          Json     @default("[]")
+  visitor      String?  // 'known' | 'delivery' | 'unknown'
+  confirmedAt  DateTime?
+  declinedAt   DateTime?
+  chain        Json     @default("[]")
+  deviceId     String?
+  ackedBy      String?
+  ackedAt      DateTime?
+  lane         String?  // 'normal' | 'expected'
+  recurringId  String?
+  visitIcon    String?
+  visitLabel   String?
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([createdAt])
+}
+
+model ExpectedVisit {
+  id         String   @id @default(cuid())
+  householdId String
+  icon       String
+  label      String
+  startsAt   DateTime
+  endsAt     DateTime
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model RecurringVisit {
+  id            String   @id @default(cuid())
+  householdId   String
+  icon          String
+  label         String
+  days          Json     @default("[]")
+  everyNWeeks   Int      @default(1)
+  anchorWeek    Int
+  startMin      Int
+  endMin        Int
+  alertIfMissed Boolean  @default(false)
+  paused        Boolean  @default(false)
+  lastArrived   String?
+  lastMissedAlert String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model PushSubscription {
+  id          String   @id @default(cuid())
+  membershipId String
+  endpoint    String
+  keys        Json
+  createdAt   DateTime @default(now())
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, endpoint])
+  @@index([membershipId])
+}
+
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  requestId   String   @unique
+  householdId String
+  receivedAt  DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([requestId])
+}
+
+model Invite {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  householdId       String
+  role              String   @default("helper") // 'guardian' | 'helper'
+  status            String   @default("pending") // 'pending' | 'accepted' | 'expired'
+  expiresAt         DateTime?
+  createdByUserId   String
+  acceptedByUserId  String?
+  createdAt         DateTime @default(now())
+
+  household      Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy      User      @relation("CreatedInvites", fields: [createdByUserId], references: [id])
+  acceptedBy     User?     @relation("AcceptedInvites", fields: [acceptedByUserId], references: [id])
+
+  @@index([householdId])
+  @@index([code])
+  @@index([status])
 }

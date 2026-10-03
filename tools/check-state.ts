@@ -1,12 +1,19 @@
 /**
  * Debug script to check current state
  */
-import { loadState } from '../lib/doorbell/persist'
+import { getDb } from '../lib/db/client'
 
-const state = loadState<any>()
-console.log('Current state:')
-console.log('  checkinAt:', state.checkinAt)
-console.log('  missedAlertDay:', state.missedAlertDay)
-console.log('  RESIDENT_TZ:', process.env.RESIDENT_TZ)
-console.log('  CHECKIN_HOUR:', process.env.CHECKIN_HOUR)
-console.log('  CHECKIN_GRACE_MIN:', process.env.CHECKIN_GRACE_MIN)
+async function main() {
+  const db = getDb()
+  const households = await db.household.findMany()
+  console.log('Households:', households.length)
+  for (const h of households) {
+    console.log(`  ${h.id}: ${h.residentName} (tz: ${h.timezone})`)
+    const cases = await db.case.findMany({ where: { householdId: h.id } })
+    console.log(`    Cases: ${cases.length}`)
+    const members = await db.membership.findMany({ where: { householdId: h.id } })
+    console.log(`    Members: ${members.length}`)
+  }
+}
+
+main().catch(console.error)
