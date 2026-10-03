@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createMembership, deleteMembership, updateMembership, moveMembership, setMembershipConsent, reorderMemberships, getMembershipsForHousehold } from '@/lib/db/memberships'
@@ -12,28 +11,28 @@ export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   const memberships = await getMembershipsForHousehold(householdId)
   const invites = await getInvitesForHousehold(householdId)
   return NextResponse.json({
-    members: memberships.map((m: any) => ({
-      id: m.id,
-      name: m.user.name,
-      phone: m.user.phone,
-      email: m.user.email,
-      emoji: m.emoji,
-      consent: m.consent,
-      role: m.role,
+    members: memberships.map(m => ({
+      id:       m.id,
+      name:     m.user.name,
+      phone:    m.user.phone,
+      email:    m.user.email,
+      emoji:    m.emoji,
+      consent:  m.consent,
+      role:     m.role,
       position: m.position,
     })),
-    invites: invites.map((i: any) => ({
-      id: i.id,
-      code: i.code,
-      role: i.role,
-      status: i.status,
+    invites: invites.map(i => ({
+      id:        i.id,
+      code:      i.code,
+      role:      i.role,
+      status:    i.status,
       expiresAt: i.expiresAt,
-      createdBy: i.createdBy.name,
+      createdBy: i.createdBy?.name ?? null,
     }))
   })
 }
@@ -51,10 +50,10 @@ const Body = z.discriminatedUnion('action', [
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   const p = await parse(req, Body)
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const b = p.data
 
   switch (b.action) {
@@ -79,7 +78,7 @@ export async function POST(req: NextRequest) {
 
       // Get current max position
       const currentMembers = await getMembershipsForHousehold(householdId)
-      const maxPosition = currentMembers.length > 0 ? Math.max(...currentMembers.map((m: any) => m.position)) : -1
+      const maxPosition = currentMembers.length > 0 ? Math.max(...currentMembers.map(m => m.position)) : -1
 
       const membership = await createMembership({
         userId: user.id,

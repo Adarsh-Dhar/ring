@@ -82,7 +82,7 @@ async function doRefresh(connectionId: string, refreshToken: string, db: ReturnT
       signal: AbortSignal.timeout(10000),
     })
 
-    if (!res.ok) {
+    if (res.ok === false) {
       console.error('[RING] Token refresh failed', res.status)
 
       // Mark connection as revoked if refresh fails permanently
@@ -195,7 +195,7 @@ export async function ringConfiguredForHousehold(householdId: string): Promise<b
 /** GET /v1/devices/{id}/status  ->  data.attributes.online */
 export async function fetchDeviceOnline(connectionId: string, deviceId: string): Promise<boolean> {
   const res = await ringFetchForConnection(connectionId, `/v1/devices/${encodeURIComponent(deviceId)}/status`)
-  if (!res.ok) throw new Error(`status ${res.status}`)
+  if (res.ok === false) throw new Error(`status ${res.status}`)
   const j: any = await res.json()
   return j?.data?.attributes?.online === true
 }
@@ -203,7 +203,7 @@ export async function fetchDeviceOnline(connectionId: string, deviceId: string):
 /** GET /v1/devices -> ids of devices shared with this app. */
 export async function listDeviceIds(connectionId: string): Promise<string[]> {
   const res = await ringFetchForConnection(connectionId, '/v1/devices')
-  if (!res.ok) throw new Error(`devices ${res.status}`)
+  if (res.ok === false) throw new Error(`devices ${res.status}`)
   const j: any = await res.json()
   return (j?.data ?? []).map((d: any) => d.id as string)
 }

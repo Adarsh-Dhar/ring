@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { addExpected, removeExpected } from '@/lib/doorbell/store'
@@ -16,9 +15,9 @@ const Add = z.object({
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, Add)
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const { icon, label, startsAt, endsAt } = p.data
   const householdId = a.session!.householdId
   return NextResponse.json({ ok: true, expected: await addExpected(householdId, icon, label, startsAt, endsAt) })
@@ -26,9 +25,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, z.object({ id: z.string().max(80) }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const householdId = a.session!.householdId
   await removeExpected(householdId, p.data.id)
   return NextResponse.json({ ok: true })

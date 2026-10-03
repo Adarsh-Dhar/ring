@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createPushSubscription, deletePushSubscriptionByEndpoint } from '@/lib/db/push'
@@ -15,9 +14,9 @@ const Sub = z.object({
 // The membership id always comes from the signed session: nobody can subscribe to (or unsubscribe) someone else.
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, z.object({ subscription: Sub }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const membershipId = a.session!.membershipId!
   await createPushSubscription(membershipId, p.data.subscription.endpoint, p.data.subscription.keys)
   return NextResponse.json({ ok: true })
@@ -25,9 +24,9 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const a = await authorize(req, 'helper')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, z.object({ endpoint: z.string().max(1000) }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const membershipId = a.session!.membershipId!
   await deletePushSubscriptionByEndpoint(membershipId, p.data.endpoint)
   return NextResponse.json({ ok: true })

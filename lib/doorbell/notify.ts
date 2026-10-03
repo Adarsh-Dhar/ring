@@ -139,7 +139,7 @@ export async function sendSms(to: string, body: string, opts: { urgent?: boolean
       },
       body: new URLSearchParams(params),
     })
-    if (!res.ok) {
+    if (res.ok === false) {
       const errText = await res.text()
       console.error('[SMS] Twilio error', res.status, errText)
       recordFailure('sms')

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { RingWebhookSchema } from '@/lib/schemas/webhook'
 import { verifyRingSignature } from '@/lib/ring/verify'

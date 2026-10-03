@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextResponse } from 'next/server'
 import { getHealth } from '@/lib/doorbell/store'
 

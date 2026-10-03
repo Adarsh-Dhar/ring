@@ -22,7 +22,7 @@ export default function PairPage() {
       })
       const data = await res.json()
 
-      if (!res.ok) {
+      if (res.ok === false) {
         setMessage(data.error || 'Failed to pair device')
         return
       }

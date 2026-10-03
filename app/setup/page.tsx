@@ -49,7 +49,7 @@ export default function SetupPage() {
       router.push('/login')
       return
     }
-    if (!r.ok) {
+    if (r.ok === false) {
       setErr('Failed to load household data')
       return
     }
@@ -73,7 +73,7 @@ export default function SetupPage() {
     })
     const j = await r.json().catch(() => ({}))
     setLoading(false)
-    if (!r.ok) setErr(j.error || 'Something went wrong')
+    if (r.ok === false) setErr(j.error || 'Something went wrong')
     load()
     return j
   }

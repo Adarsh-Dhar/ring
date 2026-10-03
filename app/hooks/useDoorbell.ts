@@ -39,7 +39,7 @@ export function useDoorbell(intervalMs = 1000) {
     try {
       const res = await fetch('/api/doorbell/state', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
       if (res.status === 401) { setUnauthorized(true); setError('unauthorized'); return }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`) // a 5xx page must never replace the last good data silently
+      if (res.ok === false) throw new Error(`HTTP ${res.status}`) // a 5xx page must never replace the last good data silently
       const data: DoorbellSnapshot = await res.json()
       offsetRef.current = data.now - Date.now()
       setUnauthorized(false)

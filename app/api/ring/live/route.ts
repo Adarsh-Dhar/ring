@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { authorize, fail, parse } from '@/lib/guard'
@@ -16,7 +15,7 @@ export const runtime = 'nodejs'
  */
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   const membershipId = a.session!.membershipId!
   const caseId = req.nextUrl.searchParams.get('caseId') || ''
@@ -40,11 +39,11 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const a = await authorize(req, 'helper')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   const membershipId = a.session!.membershipId!
   const p = await parse(req, z.object({ caseId: z.string().max(80), sessionId: z.string().max(200) }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   if (!(await isCaseOpenFor(householdId, p.data.caseId, membershipId))) return fail('not allowed', 403)
   const device = caseDevice(householdId, p.data.caseId)
   const connection = await getConnectionForHousehold(householdId)

@@ -27,7 +27,7 @@ export default function LoginPage() {
       })
       const data = await res.json()
 
-      if (!res.ok) {
+      if (res.ok === false) {
         setMessage(data.error || 'Failed to send OTP')
         return
       }
@@ -57,7 +57,7 @@ export default function LoginPage() {
       })
       const data = await res.json()
 
-      if (!res.ok) {
+      if (res.ok === false) {
         setMessage(data.error || 'Failed to verify OTP')
         return
       }
@@ -91,7 +91,7 @@ export default function LoginPage() {
       })
       const data = await res.json()
 
-      if (!res.ok) {
+      if (res.ok === false) {
         setMessage(data.error || 'Failed to select household')
         setLoading(false)
         return

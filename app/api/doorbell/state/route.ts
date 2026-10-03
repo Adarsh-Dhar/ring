@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { getState } from '@/lib/doorbell/store'
 import { authorize } from '@/lib/guard'
@@ -8,7 +7,7 @@ export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const a = await authorize(req, 'helper', 'resident')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const s = a.session!
   const householdId = s.householdId
   const membershipId = s.membershipId

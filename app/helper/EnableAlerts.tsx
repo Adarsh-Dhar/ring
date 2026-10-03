@@ -22,7 +22,7 @@ export default function EnableAlerts() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ subscription: sub.toJSON() }),
       })
-      if (!res.ok) {
+      if (res.ok === false) {
         const error = await res.json().catch(() => ({ error: 'Server error' }))
         throw new Error(error.error || 'Failed to register with server')
       }

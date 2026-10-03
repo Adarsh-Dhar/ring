@@ -47,7 +47,7 @@ export default function RecurringVisits({ items, timeZone, onChange, adminPin }:
         alertIfMissed: missed, startNextWeek: every > 1 && nextWeek,
       }),
     })
-    if (!r.ok) return setErr((await r.json().catch(() => ({}))).error || 'Could not save.')
+    if (r.ok === false) return setErr((await r.json().catch(() => ({}))).error || 'Could not save.')
     setName('')
     onChange()
   }

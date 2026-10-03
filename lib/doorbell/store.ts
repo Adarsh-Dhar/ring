@@ -70,6 +70,7 @@ export interface DeviceInfo { online: boolean; since: number; alertedAt?: number
 
 interface HouseholdState {
   householdId: string
+  timezone: string
   cases: DoorCase[]
   offline: boolean
   timeoutSec: number
@@ -200,6 +201,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
 
     const state: HouseholdState = {
       householdId,
+      timezone: household.timezone || 'UTC',
       cases,
       offline: false,
       timeoutSec: household.timeoutSec || DEFAULT_ESCALATION_SECONDS,
@@ -224,6 +226,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
     // Create empty state on error
     householdStates.set(householdId, {
       householdId,
+      timezone: 'UTC',
       cases: [],
       offline: false,
       timeoutSec: DEFAULT_ESCALATION_SECONDS,
@@ -319,10 +322,7 @@ const id = () => `case_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
 function isQuiet(state: HouseholdState, now: number): boolean {
   const q = state.quiet
   if (!q.enabled || q.startHour === q.endHour) return false
-  const household = householdStates.get(state.householdId)
-  const tz = household ? (getHousehold(state.householdId).then(h => h?.timezone).catch(() => 'Asia/Kolkata')) : 'Asia/Kolkata'
-  // For now, use household timezone from DB
-  const h = zonedHour(now, 'Asia/Kolkata') // TODO: get actual timezone from household
+  const h = zonedHour(now, state.timezone)
   return q.startHour < q.endHour ? h >= q.startHour && h < q.endHour : h >= q.startHour || h < q.endHour
 }
 

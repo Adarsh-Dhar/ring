@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { addRecurring, setRecurringPaused, removeRecurring } from '@/lib/doorbell/store'
@@ -20,18 +19,18 @@ const Add = z.object({
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, Add)
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const householdId = a.session!.householdId
   return NextResponse.json({ ok: true, recurring: await addRecurring(householdId, p.data) })
 }
 
 export async function PATCH(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, z.object({ id: z.string().max(80), paused: z.boolean() }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const householdId = a.session!.householdId
   await setRecurringPaused(householdId, p.data.id, p.data.paused)
   return NextResponse.json({ ok: true })
@@ -39,9 +38,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const p = await parse(req, z.object({ id: z.string().max(80) }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const householdId = a.session!.householdId
   await removeRecurring(householdId, p.data.id)
   return NextResponse.json({ ok: true })

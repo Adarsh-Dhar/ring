@@ -44,7 +44,7 @@ export default function LiveView({ caseId }: { caseId: string }) {
         conn.addEventListener('icegatheringstatechange', () => { if (conn.iceGatheringState === 'complete') { clearTimeout(t); res() } })
       })
       const r = await fetch(`/api/ring/live?caseId=${encodeURIComponent(caseId)}`, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: conn.localDescription!.sdp })
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)
+      if (r.ok === false) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)
       session.current = r.headers.get('X-Session-Id') || ''
       await conn.setRemoteDescription({ type: 'answer', sdp: await r.text() })
     } catch (e) {

@@ -1,16 +1,15 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { authorize, fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
-import { getConnectionForHousehold, ringConfiguredForHousehold } from '@/lib/ring/client'
+import { getConnectionForHousehold, ringConfiguredForHousehold, ringFetchForConnection } from '@/lib/ring/client'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
 
   const connection = await getConnectionForHousehold(householdId)
@@ -20,11 +19,11 @@ export async function GET(req: NextRequest) {
     ok: true,
     configured,
     connection: connection ? {
-      id: connection.id,
-      ringAccountId: connection.ringAccountId,
-      status: connection.status,
+      id:             connection.id,
+      ringAccountId:  connection.ringAccountId,
+      status:         connection.status,
       linkedByUserId: connection.linkedByUserId,
-      expiresAt: connection.expiresAt,
+      expiresAt:      connection.expiresAt,
     } : null,
   })
 }
@@ -36,37 +35,50 @@ const Body = z.discriminatedUnion('action', [
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
 
   const p = await parse(req, Body)
-  if (!p.ok) return p.res
-  const b = p.data
+  if (p.ok === false) return p.res
 
-  const db = getDb()
+  const db         = getDb()
   const connection = await db.ringConnection.findFirst({
-    where: { householdId, status: 'linked' }
+    where: { householdId, status: 'linked' },
   })
 
-  if (!connection) {
-    return fail('No Ring connection found', 404)
-  }
+  if (!connection) return fail('No Ring connection found', 404)
 
-  switch (b.action) {
+  switch (p.data.action) {
     case 'disconnect':
-      // Just mark as revoked locally
+      // Local-only: mark revoked without calling Ring
       await db.ringConnection.update({
         where: { id: connection.id },
-        data: { status: 'revoked' }
+        data:  { status: 'revoked' },
       })
       return NextResponse.json({ ok: true })
-    case 'revoke':
-      // Mark as revoked locally AND call Ring to revoke
+
+    case 'revoke': {
+      // 1. Call Ring's API to revoke our app's access on their side
+      const clientId = process.env.RING_CLIENT_ID
+      try {
+        if (clientId) {
+          await ringFetchForConnection(connection.id, '/v1/oauth/revoke', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body:    new URLSearchParams({ client_id: clientId }),
+          })
+        }
+      } catch (e) {
+        // Log but continue – we still revoke locally so the user isn't stuck
+        console.error('[RING REVOKE] Ring API call failed (continuing with local revoke)', e)
+      }
+
+      // 2. Mark revoked locally regardless of Ring API result
       await db.ringConnection.update({
         where: { id: connection.id },
-        data: { status: 'revoked' }
+        data:  { status: 'revoked' },
       })
-      // TODO: Call Ring API to revoke the integration
       return NextResponse.json({ ok: true })
+    }
   }
 }

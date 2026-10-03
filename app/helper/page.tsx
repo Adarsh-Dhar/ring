@@ -42,7 +42,7 @@ export default function HelperPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ caseId: c.id, answer: a, visitor: who ?? visitor ?? undefined }),
     })
-    if (!r.ok) setErr((await r.json().catch(() => ({}))).error || 'Could not send your answer. Try again or call the resident.')
+    if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not send your answer. Try again or call the resident.')
     refresh()
   }
   const ack = async () => {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { verifyToken, makeToken } from '@/lib/auth'
@@ -56,7 +55,7 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   const p = await parse(req, z.object({ pairingCode: z.string().length(6) }))
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
 
   const codeHash = crypto.createHash('sha256').update(p.data.pairingCode).digest('hex')
 
@@ -81,7 +80,7 @@ export async function POST(req: NextRequest) {
     where: { id: device.householdId },
     select: { residentEpoch: true }
   })
-  const epoch = (household as any)?.residentEpoch ?? 1
+  const epoch = household?.residentEpoch ?? 1
 
   const token = makeToken({
     kind: 'device',

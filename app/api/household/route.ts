@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { setQuiet, setTimeoutSec, getSetup } from '@/lib/doorbell/store'
@@ -13,7 +12,7 @@ const hour = z.number().int().min(0).max(23)
 
 export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   return NextResponse.json(await getSetup(householdId))
 }
@@ -27,10 +26,10 @@ const Body = z.discriminatedUnion('action', [
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
-  if (!a.ok) return a.res
+  if (a.ok === false) return a.res
   const householdId = a.session!.householdId
   const p = await parse(req, Body)
-  if (!p.ok) return p.res
+  if (p.ok === false) return p.res
   const b = p.data
 
   switch (b.action) {

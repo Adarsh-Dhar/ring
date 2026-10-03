@@ -34,7 +34,7 @@ export default function OnboardingPage() {
           guardianEmail: memberEmail,
         }),
       })
-      if (!res.ok) {
+      if (res.ok === false) {
         const data = await res.json()
         setError(data.error || 'Failed to create household')
         return
@@ -78,7 +78,7 @@ export default function OnboardingPage() {
           role: 'helper',
         }),
       })
-      if (!res.ok) {
+      if (res.ok === false) {
         const data = await res.json()
         setError(data.error || 'Failed to invite helper')
         return
