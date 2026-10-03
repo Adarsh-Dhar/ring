@@ -82,8 +82,16 @@ export default function ResidentPage() {
     }
   } else if (snap?.quietNow && (c.status === 'waiting' || (c.status === 'answered' && c.answer === 'safe'))) {
     screen = { icon: '🌙', title: 'Night lock is on', sub: 'Do not open the door', bg: 'bg-indigo-900' }
-  } else if (c.lane === 'expected' && c.status === 'waiting' && c.checkWord) {
-    screen = { icon: c.visitIcon ?? '👤', title: `${c.checkWho ?? c.visitLabel ?? 'A visitor'} may be here`, sub: `Ask them to say a word. Did they say "${c.checkWord}"?`, bg: 'bg-sky-800', calm: true }
+  } else if (c.lane === 'expected' && c.status === 'waiting' && (c.checkMode === 'code' || c.checkWord)) {
+    const isCode = c.checkMode === 'code'
+    screen = {
+      icon: c.visitIcon ?? '👤',
+      title: `${c.checkWho ?? c.visitLabel ?? 'A visitor'} may be here`,
+      sub: isCode
+        ? (c.checkAttempts ? 'Ask them to read the number again. Is it the same?' : 'Ask them to read the number on their phone. Is it the same?')
+        : `Ask them to say a word. Did they say "${c.checkWord}"?`,
+      bg: 'bg-sky-800', calm: true,
+    }
   } else if (c.lane === 'expected' && c.status === 'waiting') {
     screen = { icon: c.visitIcon ?? '👤', title: `${c.visitLabel ?? 'A visitor'} may be here`, sub: `Wait. ${currentHelper?.name ?? 'Your helper'} is checking.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'waiting') {
@@ -135,7 +143,7 @@ export default function ResidentPage() {
   const trusted = !unauthorized && !stale && !!snap
   const awaitingConfirm = trusted && c?.kind === 'visitor' && c.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt && !snap?.quietNow
   const showBar = false // a shrinking timer is pressure the resident does not need; helpers see the countdown
-  const showCheck = trusted && c?.kind === 'visitor' && c.status === 'waiting' && c.lane === 'expected' && !!c.checkWord && !snap?.quietNow
+  const showCheck = trusted && c?.kind === 'visitor' && c.status === 'waiting' && c.lane === 'expected' && (c.checkMode === 'code' || !!c.checkWord) && !snap?.quietNow
   const pct = showBar ? Math.max(0, Math.min(100, (secondsLeft(c!.deadlineAt) / snap!.timeoutSec) * 100)) : 0
   const sosNeedsEmergency = c?.kind === 'sos' && !c.ackedAt && c.status !== 'answered'
 
@@ -160,6 +168,15 @@ export default function ResidentPage() {
         <div className="text-[9rem] leading-none">{screen.icon}</div>
         <h1 className="text-4xl font-bold">{screen.title}</h1>
         {screen.sub && <p className="text-2xl max-w-sm">{screen.sub}</p>}
+        {/* Live rotating code shown to resident for code-mode check */}
+        {showCheck && c?.checkMode === 'code' && (c as any).checkCode && (
+          <div
+            className="text-[7rem] font-mono font-bold tracking-widest leading-none mt-2"
+            aria-label={`Code ${String((c as any).checkCode).split('').join(' ')}`}
+          >
+            {(c as any).checkCode}
+          </div>
+        )}
         {!c && trusted && snap!.todayVisits?.length > 0 && !snap!.expectedNow?.length && !snap!.recurringNow?.length && (
           <div className="mt-4 w-full max-w-sm rounded-3xl bg-black/25 p-4 text-left" aria-label="Planned today">
             <p className="mb-2 text-xl font-bold">Today</p>
@@ -187,8 +204,12 @@ export default function ResidentPage() {
       <div className="w-full max-w-md flex flex-col gap-4">
         {showCheck && (
           <div className="grid grid-cols-2 gap-4">
-            <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: true })} className="rounded-3xl bg-white py-6 text-2xl font-bold text-emerald-900">✅ Yes</button>
-            <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: false })} className="rounded-3xl border-4 border-white bg-black/40 py-6 text-2xl font-bold">✋ No</button>
+            <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: true })} className="rounded-3xl bg-white py-6 text-2xl font-bold text-emerald-900">
+              {c?.checkMode === 'code' ? '✅ Same number' : '✅ Yes'}
+            </button>
+            <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: false })} className="rounded-3xl border-4 border-white bg-black/40 py-6 text-2xl font-bold">
+              {c?.checkMode === 'code' ? '❌ Different' : '✋ No'}
+            </button>
           </div>
         )}
         {awaitingConfirm && (

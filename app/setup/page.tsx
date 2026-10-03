@@ -23,6 +23,8 @@ interface HouseholdData {
   timeZone: string
   recurring: any[]
   plannedMode?: 'helper' | 'resident' | 'all-helper'
+  requireResidentOk?: boolean
+  visitLink?: { active: boolean; createdAt: number | null }
 }
 
 const BADGE: Record<string, string> = {
@@ -42,6 +44,10 @@ export default function SetupPage() {
   const [secs, setSecs] = useState(30)
   const [quiet, setQuietForm] = useState({ enabled: false, startHour: 22, endHour: 6 })
   const [plannedMode, setPlannedModeLocal] = useState<'helper' | 'resident' | 'all-helper'>('helper')
+  const [requireResidentOk, setRequireResidentOk] = useState(false)
+  const [visitLinkUrl, setVisitLinkUrl] = useState('')
+  const [visitLinkActive, setVisitLinkActive] = useState(false)
+  const [visitLinkCreatedAt, setVisitLinkCreatedAt] = useState<number | null>(null)
   const [pairingCode, setPairingCode] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -60,6 +66,9 @@ export default function SetupPage() {
     setSecs(d.timeoutSec)
     setQuietForm(d.quiet)
     setPlannedModeLocal(d.plannedMode ?? 'helper')
+    setRequireResidentOk(d.requireResidentOk ?? false)
+    setVisitLinkActive(d.visitLink?.active ?? false)
+    setVisitLinkCreatedAt(d.visitLink?.createdAt ?? null)
   }, [router])
 
   useEffect(() => {
@@ -114,6 +123,26 @@ export default function SetupPage() {
       setPairingCode(j.code)
       setNote(`Pairing code: ${j.code}. Enter this on the resident device.`)
     }
+  }
+
+  const createVisitLink = async () => {
+    const r = await fetch('/api/visit-requests/link', { method: 'POST' })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) { setErr(j.error || 'Could not create link'); return }
+    setVisitLinkUrl(j.url)
+    setVisitLinkActive(true)
+    load()
+  }
+
+  const revokeVisitLink = async () => {
+    if (!confirm('Revoke the link? Pending visit requests will be cancelled.')) return
+    const r = await fetch('/api/visit-requests/link', { method: 'DELETE' })
+    if (r.ok) { setVisitLinkActive(false); setVisitLinkUrl(''); setVisitLinkCreatedAt(null); load() }
+  }
+
+  const toggleResidentOk = async (v: boolean) => {
+    setRequireResidentOk(v)
+    await act('/api/household', { action: 'requireResidentOk', value: v })
   }
 
   if (!data) return <main className="p-6 text-slate-400">Loading…</main>
@@ -217,6 +246,55 @@ export default function SetupPage() {
         <p className="text-sm rounded-lg bg-amber-800 p-2">
           ⚠️ Only visits with a pass-word will be checked by the resident. Visits without a pass-word still go to a helper.
         </p>
+      )}
+
+      <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">Visit requests</h2>
+      <p className="mb-2 text-sm text-slate-400">Share a link so visitors can ask to visit without a helper needing to be online.</p>
+
+      <div className="mb-4 rounded-2xl bg-slate-800 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm">
+            {visitLinkActive
+              ? `Link active since ${visitLinkCreatedAt ? new Date(visitLinkCreatedAt).toLocaleDateString() : '—'}`
+              : 'No link'}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={createVisitLink} disabled={loading} className={`${btn} bg-cyan-700`}>
+              {visitLinkActive ? 'Rotate link' : 'Create link'}
+            </button>
+            {visitLinkActive && (
+              <button onClick={revokeVisitLink} disabled={loading} className={`${btn} text-red-300`}>Revoke</button>
+            )}
+          </div>
+        </div>
+        {visitLinkUrl && (
+          <div className="flex items-center gap-2 bg-slate-700 rounded-lg px-3 py-2">
+            <code className="text-xs text-cyan-300 break-all flex-1">{visitLinkUrl}</code>
+            <button
+              onClick={() => { navigator.clipboard?.writeText(visitLinkUrl).catch(() => {}); setNote('Link copied!') }}
+              className="shrink-0 text-sm text-slate-400 hover:text-white"
+              aria-label="Copy link"
+            >
+              📋 Copy
+            </button>
+          </div>
+        )}
+        {visitLinkUrl && <p className="text-xs text-amber-400">⚠️ Copy this link now — it is only shown once.</p>}
+      </div>
+
+      <div className="mb-2 flex items-center gap-3">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={requireResidentOk}
+            onChange={e => toggleResidentOk(e.target.checked)}
+            disabled={loading}
+          />
+          <span className="text-sm">Resident must also approve visit requests</span>
+        </label>
+      </div>
+      {requireResidentOk && (
+        <p className="text-xs text-slate-400 mb-4">The resident only sees requests a helper has already approved.</p>
       )}
     </main>
   )

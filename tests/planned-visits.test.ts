@@ -37,6 +37,7 @@ vi.mock('@/lib/db/visits', () => ({
   deleteRecurringVisit:      () => Promise.resolve({}),
   deleteOldExpectedVisits:   () => Promise.resolve({}),
   updateRecurringVisit:      (id: string, data: any) => { dbUpdates.push({ id, data }); return Promise.resolve(data) },
+  markExpectedUsed:          () => Promise.resolve({}),
 }))
 
 const HOUSEHOLD = {
@@ -276,3 +277,8 @@ describe('no duplicate visits on save', () => {
     expect(recCreates.length).toBe(1)
   })
 })
+
+vi.mock('@/lib/doorbell/request-lifecycle', () => ({
+  sweepRequests:          () => Promise.resolve(),
+  cancelRequestForVisit:  () => Promise.resolve(),
+}))

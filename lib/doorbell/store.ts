@@ -1,12 +1,16 @@
-import { DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, type PublicHelper, type Consent } from './config'
+import { DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, CODE_MAX_ATTEMPTS, type PublicHelper, type Consent } from './config'
 import { zonedHour, zonedDayKey, zonedHourOnSameDay, zonedWeekday, zonedDayNumber, zonedMinuteOnSameDay } from '../time'
 import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfiguredForHousehold, getConnectionForHousehold } from '../ring/client'
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
 import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases } from '../db/cases'
-import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit } from '../db/visits'
+import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
+import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
+import { currentCode } from '../visit-code'
+import { newSecret } from '../visit-tokens'
+import { PURPOSES, type Purpose } from './purposes'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -23,13 +27,17 @@ const asMode = (v: string | null | undefined): PlannedMode =>
 export interface Quiet { enabled: boolean; startHour: number; endHour: number }
 
 export interface ExpectedVisit {
-  id:         string
-  icon:       string
-  label:      string
-  startsAt:   number
-  endsAt:     number
-  who?:       string
+  id:          string
+  icon:        string
+  label:       string
+  startsAt:    number
+  endsAt:      number
+  who?:        string
   passphrase?: string
+  codeSecret?: string   // hex HMAC key for the live code; never sent to any client
+  requestId?:  string   // VisitRequest that created this visit
+  singleUse?:  boolean
+  usedAt?:     number
 }
 
 export interface RecurringVisit {
@@ -77,6 +85,11 @@ export interface DoorCase {
   visitLabel?:   string
   checkWho?:     string    // visitor identity shown on resident screen
   checkWord?:    string    // passphrase resident checks (only set when plannedMode='resident')
+  checkMode?:    'word' | 'code'
+  checkAttempts?: number
+  checkCode?:    string    // resident snapshot only — live rotating code; never stored
+  checkCodeEndsAt?: number // resident snapshot only — when the code changes next
+  expectedId?:   string    // ExpectedVisit that matched (null for recurring or unplanned)
   selfVerifiedAt?: number  // set when resident confirms the passphrase
 }
 
@@ -87,6 +100,7 @@ interface PlannedMatch {
   label:       string
   who?:        string
   passphrase?: string
+  codeSecret?: string
   key:         string
   recurring?:  RecurringVisit  // set when the match came from a recurring schedule
 }
@@ -107,6 +121,7 @@ interface HouseholdState {
   missedAlertDay: string | null
   devices:        Record<string, DeviceInfo>
   lastTickAt:     number
+  lastRequestSweepAt: number
   loaded:         boolean
 }
 
@@ -159,6 +174,9 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       visitLabel:    c.visitLabel || undefined,
       checkWho:      (c as any).checkWho   || undefined,
       checkWord:     (c as any).checkWord  || undefined,
+      checkMode:     ((c as any).checkMode as any) || undefined,
+      checkAttempts: (c as any).checkAttempts ?? 0,
+      expectedId:    (c as any).expectedId    || undefined,
       selfVerifiedAt: (c as any).selfVerifiedAt ? new Date((c as any).selfVerifiedAt).getTime() : undefined,
     }))
 
@@ -182,6 +200,10 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       endsAt:     e.endsAt.getTime(),
       who:        (e as any).who        || undefined,
       passphrase: (e as any).passphrase || undefined,
+      codeSecret: (e as any).codeSecret || undefined,
+      requestId:  (e as any).requestId  || undefined,
+      singleUse:  !!(e as any).singleUse,
+      usedAt:     (e as any).usedAt ? new Date((e as any).usedAt).getTime() : undefined,
     }))
 
     const dbRecurring = await getRecurringVisitsForHousehold(householdId)
@@ -222,6 +244,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       missedAlertDay: null,
       devices,
       lastTickAt: 0,
+      lastRequestSweepAt: 0,
       loaded: true,
     })
     console.log(`[STORE] Loaded state for household ${householdId}`)
@@ -241,6 +264,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       missedAlertDay: null,
       devices: {},
       lastTickAt: 0,
+      lastRequestSweepAt: 0,
       loaded: false,
     })
   }
@@ -333,8 +357,9 @@ function matchPlanned(
   // 2. One-off expected visits
   if (!forceId) {
     for (const e of state.expected) {
+      if (e.singleUse && e.usedAt) continue
       if (now >= e.startsAt - GRACE_MS && now < e.endsAt + GRACE_MS) {
-        return { id: e.id, icon: e.icon, label: e.label, who: e.who, passphrase: e.passphrase, key: `${e.id}:once` }
+        return { id: e.id, icon: e.icon, label: e.label, who: e.who, passphrase: e.passphrase, codeSecret: e.codeSecret, key: `${e.id}:once` }
       }
     }
   }
@@ -440,11 +465,21 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
     ...(withPhone ? { phone: m.user.phone } : {})
   })
 
-  // For resident view: strip checkWho/checkWord unless it is an expected waiting case
+  // For resident view: strip checkWho/checkWord/checkMode unless it is an expected waiting case
   const currentForResident = cur ? (() => {
-    const base = { ...cur, log: [] }
-    const showCheck = cur.lane === 'expected' && cur.status === 'waiting' && !!cur.checkWord
-    if (!showCheck) { delete base.checkWho; delete base.checkWord }
+    const base: DoorCase = { ...cur, log: [] }
+    const showCheck = cur.lane === 'expected' && cur.status === 'waiting' && hasCheck(cur)
+    if (!showCheck) {
+      delete base.checkWho; delete base.checkWord; delete base.checkMode; delete base.checkAttempts
+    } else if (cur.checkMode === 'code') {
+      // Inject the live code into the resident snapshot (never stored, never sent elsewhere)
+      const e = state.expected.find(x => x.id === cur.expectedId)
+      if (e?.codeSecret) {
+        const w = currentCode(e.codeSecret, now)
+        base.checkCode       = w.code
+        base.checkCodeEndsAt = w.endsAt
+      }
+    }
     return base
   })() : null
 
@@ -458,8 +493,10 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
     helpers:     memberships.map(m => pub(m, resident)),
     current:     resident ? currentForResident : cur,
     history:     resident ? [] : state.cases.slice(0, 10),
-    expected:    state.expected.filter(e => e.endsAt > now).map(e => ({ ...e, passphrase: undefined })),
-    expectedNow: state.expected.filter(e => e.startsAt <= now && now < e.endsAt),
+    expected:    state.expected.filter(e => e.endsAt > now).map(e => ({ ...e, passphrase: undefined, codeSecret: undefined })),
+    expectedNow: state.expected
+      .filter(e => e.startsAt <= now && now < e.endsAt)
+      .map(e => ({ id: e.id, icon: e.icon, label: e.label, startsAt: e.startsAt, endsAt: e.endsAt })),
     timeZone:    tz,
     plannedMode: state.plannedMode,
     todayVisits: resident ? todayVisits(state, now, tz) : [],
@@ -502,7 +539,7 @@ export async function getSetup(householdId: string) {
     ready:       memberships.some(m => m.consent === 'approved'),
     timeZone:    household.timezone,
     plannedMode: state.plannedMode,
-    expected:    state.expected,
+    expected:    state.expected.map(e => ({ ...e, codeSecret: undefined })),
     recurring:   state.recurring.map(v => ({ ...v, next: nextOccurrence(v, now, household.timezone) })),
   }
 }
@@ -532,7 +569,8 @@ async function openCase(
 
   const now      = Date.now()
   const m        = kind === 'visitor' ? matchPlanned(state, now, household.timezone, forceRecurringId) : null
-  const residentCheck = !!m && state.plannedMode === 'resident' && !!m.passphrase
+  const hasSecret     = !!m?.codeSecret
+  const residentCheck = !!m && state.plannedMode === 'resident' && (!!m.passphrase || hasSecret)
   const secs     = m ? EXPECTED_TIMEOUT_SECONDS : state.timeoutSec
   const approved = await getApprovedMemberships(state.householdId)
 
@@ -552,7 +590,10 @@ async function openCase(
     visitIcon:   m?.icon,
     visitLabel:  m?.label,
     checkWho:    m ? (m.who || m.label) : undefined,
-    checkWord:   residentCheck ? m!.passphrase : undefined,
+    checkMode:   residentCheck ? (hasSecret ? 'code' : 'word') : undefined,
+    checkAttempts: 0,
+    checkWord:   residentCheck && !hasSecret ? m!.passphrase : undefined,
+    expectedId:  m && !m.recurring ? m.id : undefined,
   }
 
   addLog(c, note)
@@ -577,7 +618,7 @@ async function openCase(
     if (m && !residentCheck) {
       pushToMembership(approved[0].id, { title: `${m.icon} ${m.label} may be at the door`, body: 'Open the app and confirm. One tap.', tag: c.id, url: '/helper' })
     } else if (m && residentCheck) {
-      pushToMembership(approved[0].id, { title: `${m.icon} ${m.label} may be here`, body: 'Resident is checking a pass-word. You will be notified.', tag: c.id, url: '/helper' })
+      pushToMembership(approved[0].id, { title: `${m.icon} ${m.label} may be here`, body: `Resident is checking${hasSecret ? ' a number' : ' a pass-word'}. You will be notified.`, tag: c.id, url: '/helper' })
     } else {
       pushToMembership(approved[0].id, { title: '🚪 Someone is at the door', body: `Open the app. You have ${state.timeoutSec}s.`, tag: c.id, url: '/helper' })
       if (approved[0].user.phone) {
@@ -666,7 +707,17 @@ export const isCaseOpenFor = async (householdId: string, caseId: string, members
   return !!c && !!membership && membership.consent === 'approved' && c.chain.includes(membershipId) && Date.now() - c.createdAt < 30 * 60_000
 }
 
-// ── Self-verify (resident checks pass-word) ───────────────────────────────────
+// ── Self-verify (resident checks pass-word or live code) ──────────────────────
+
+const hasCheck = (c: DoorCase) => !!c.checkWord || c.checkMode === 'code'
+
+async function markUsed(state: HouseholdState, c: DoorCase) {
+  if (!c.expectedId) return
+  const e = state.expected.find(x => x.id === c.expectedId)
+  if (!e || !e.singleUse || e.usedAt) return
+  e.usedAt = Date.now()
+  await markExpectedUsed(e.id, e.usedAt).catch(err => console.error('[STORE] could not mark visit used', err))
+}
 
 export async function selfVerify(
   householdId: string,
@@ -676,8 +727,8 @@ export async function selfVerify(
   const state     = await getOrCreateState(householdId)
   const c         = state.cases.find(x => x.id === caseId)
   if (!c) return null
-  // Only applicable to a waiting expected-visitor case that has a checkWord
-  if (c.kind !== 'visitor' || c.status !== 'waiting' || c.lane !== 'expected' || !c.checkWord) return null
+  // Only applicable to a waiting expected-visitor case that has a check
+  if (c.kind !== 'visitor' || c.status !== 'waiting' || c.lane !== 'expected' || !hasCheck(c)) return null
 
   const household = await getHousehold(householdId)
   if (!household) return null
@@ -685,25 +736,32 @@ export async function selfVerify(
   const approved = await getApprovedMemberships(householdId)
 
   if (ok) {
-    // Resident confirmed the pass-word → case resolved as safe
+    // Resident confirmed → case resolved as safe
     c.status         = 'answered'
     c.answer         = 'safe'
     c.selfVerifiedAt = now
     c.confirmedAt    = now
     c.resolvedAt     = now
-    addLog(c, `Resident said the visitor gave the right word (${c.checkWho ?? c.visitLabel}). Door can be opened.`)
-    // Notify all helpers; they can still override to not_safe
+    addLog(c, `Resident confirmed the visitor (${c.checkWho ?? c.visitLabel}). Door can be opened.`)
+    // Mark the single-use visit as used
+    await markUsed(state, c)
+    // Notify all helpers; they can still override to not_safe within 5 min
     approved.forEach(m => pushToMembership(m.id, {
       title: `${c.visitIcon ?? '👤'} ${c.visitLabel ?? 'Visitor'} verified`,
-      body:  `${household.residentName} checked the word and may open the door. You can still say Don't open.`,
+      body:  `${household.residentName} confirmed the visitor. You can still say Don't open.`,
       tag: c.id, url: '/helper'
     }))
+  } else if (c.checkMode === 'code' && (c.checkAttempts ?? 0) + 1 < CODE_MAX_ATTEMPTS) {
+    // Code mode — first "No": grant one retry
+    c.checkAttempts = (c.checkAttempts ?? 0) + 1
+    addLog(c, `Resident said the number did not match. Asked them to have it read out again. (attempt ${c.checkAttempts}/${CODE_MAX_ATTEMPTS})`)
   } else {
-    // Resident rejected → demote to normal lane and escalate to first helper immediately
+    // Word mode first "No", or code mode second "No" → demote to normal lane
     c.lane       = 'normal'
-    c.checkWord  = undefined   // don't show the check-word again
+    c.checkWord  = undefined
+    c.checkMode  = undefined
     c.deadlineAt = now + state.timeoutSec * 1000
-    addLog(c, 'Resident said the visitor did NOT give the right word. Treated as an unknown visitor: full alert and SMS.')
+    addLog(c, 'Resident said the visitor did NOT pass the check. Treated as an unknown visitor: full alert and SMS.')
     const first = approved.find(m => m.id === c.chain[c.helperIndex])
     if (first) {
       pushToMembership(first.id, { title: '🚪 Someone is at the door', body: `The expected visitor did not pass the check. Open the app. You have ${state.timeoutSec}s.`, tag: c.id, url: '/helper' })
@@ -768,6 +826,7 @@ export async function answerCase(
   c.resolvedAt = Date.now()
   const label  = answer === 'safe' ? 'SAFE' : answer === 'not_safe' ? 'NOT SAFE' : 'will CALL the resident'
   addLog(c, `${membership.user.name} answered: ${label}.`)
+  if (answer === 'safe') await markUsed(state, c)
   await updateCase(c.id, c)
   return { ok: true, case: c }
 }
@@ -856,10 +915,49 @@ export async function addExpected(
   return e
 }
 
+/** Create an ExpectedVisit from an approved VisitRequest (code-mode, single-use). */
+export async function addExpectedFromRequest(
+  householdId: string,
+  r: { requestId: string; name: string; purpose: Purpose; startsAt: number; endsAt: number }
+): Promise<ExpectedVisit> {
+  const state = await getOrCreateState(householdId)
+  const p = PURPOSES[r.purpose] ?? PURPOSES.other
+  const e: ExpectedVisit = {
+    id:         newId('exp'),
+    icon:       p.icon,
+    label:      p.label,
+    startsAt:   r.startsAt,
+    endsAt:     r.endsAt,
+    who:        clean(r.name),
+    codeSecret: newSecret(),
+    requestId:  r.requestId,
+    singleUse:  true,
+  }
+  await createExpectedVisit({ householdId, ...e })
+  state.expected.push(e)
+  return e
+}
+
+/** Return the current rotating code for a visit, or a state string if unavailable. */
+export async function visitCodeFor(householdId: string, expectedId: string, now = Date.now()) {
+  const state = await getOrCreateState(householdId)
+  const e = state.expected.find(x => x.id === expectedId)
+  if (!e || !e.codeSecret) return { state: 'gone' as const }
+  if (e.usedAt)            return { state: 'used' as const }
+  if (now < e.startsAt - GRACE_MS) return { state: 'early' as const }
+  if (now >= e.endsAt + GRACE_MS)  return { state: 'late' as const }
+  return { state: 'ok' as const, ...currentCode(e.codeSecret, now) }
+}
+
 export async function removeExpected(householdId: string, id: string) {
   const state = await getOrCreateState(householdId)
+  const e = state.expected.find(x => x.id === id)
   state.expected = state.expected.filter(e => e.id !== id)
   await deleteExpectedVisit(householdId, id)
+  // If this visit was created from a request, notify the visitor it was cancelled
+  if (e?.requestId) {
+    cancelRequestForVisit(householdId, e.requestId).catch(console.error)
+  }
 }
 
 export async function addRecurring(
@@ -1029,6 +1127,12 @@ export async function tick(householdId?: string) {
 
     checkMissedCheckin(state, now, household.timezone, household.residentName)
     checkMissedVisits(state, now, household.timezone, household.residentName)
+
+    // Throttled request sweep (~every 30 s per household)
+    if (now - state.lastRequestSweepAt > 30_000) {
+      state.lastRequestSweepAt = now
+      sweepRequests(householdId, now).catch(e => console.error('[STORE] request sweep failed', e))
+    }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }
   }

@@ -24,5 +24,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'nothing to check' }, { status: 404 })
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, retry: result.status === 'waiting' && result.lane === 'expected' })
 }

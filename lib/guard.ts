@@ -116,7 +116,7 @@ export async function getDeviceSession(req: NextRequest): Promise<{ householdId:
 }
 
 /** Browsers always send Origin on cross-site POSTs. If it is present it must match our host. */
-function sameOrigin(req: NextRequest) {
+export function sameOrigin(req: NextRequest) {
   const o = req.headers.get('origin')
   if (!o) return true
   try { return new URL(o).host === req.headers.get('host') } catch { return false }

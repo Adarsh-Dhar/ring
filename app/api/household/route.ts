@@ -6,6 +6,7 @@ import { authorize, fail, parse, COOKIE, cookieOpts, getPendingUserId } from '@/
 import { makeToken } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import { getDb } from '@/lib/db/client'
+import { findActiveLink } from '@/lib/db/visit-requests'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -17,7 +18,16 @@ export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
-  return NextResponse.json(await getSetup(householdId))
+  const setup = await getSetup(householdId)
+  if (!setup) return fail('Household not found', 404)
+  const { getHousehold } = await import('@/lib/db/households')
+  const hh = await getHousehold(householdId)
+  const link = await findActiveLink(householdId)
+  return NextResponse.json({
+    ...setup,
+    requireResidentOk: !!(hh as any)?.requireResidentOk,
+    visitLink: link ? { active: true, createdAt: link.createdAt.getTime() } : { active: false, createdAt: null },
+  })
 }
 
 const Body = z.discriminatedUnion('action', [
@@ -42,8 +52,9 @@ const Body = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('plannedMode'),
-    mode:   z.enum(PLANNED_MODES as [string, ...string[]]),
+    mode:   z.enum([...PLANNED_MODES] as [string, ...string[]]),
   }),
+  z.object({ action: z.literal('requireResidentOk'), value: z.boolean() }),
 ])
 
 export async function POST(req: NextRequest) {
@@ -161,6 +172,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true })
     case 'plannedMode':
       await setPlannedMode(householdId, b.mode as any)
+      return NextResponse.json({ ok: true })
+    case 'requireResidentOk':
+      await updateHousehold(householdId, { requireResidentOk: b.value })
       return NextResponse.json({ ok: true })
   }
 }

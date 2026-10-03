@@ -38,3 +38,18 @@ export const isPlaceholderPhone = (p: string) => /0{6,}/.test(p.replace(/^\+\d{1
 export const EXPECTED_TIMEOUT_SECONDS = Number(process.env.EXPECTED_TIMEOUT_SECONDS || 60)
 /** A visit may arrive this many minutes before the window starts or after it ends. */
 export const RECURRING_GRACE_MIN = Number(process.env.RECURRING_GRACE_MIN || 15)
+
+/** How many wrong code attempts before the resident demotes the case to unknown visitor. */
+export const CODE_MAX_ATTEMPTS = Number(process.env.VISIT_CODE_MAX_ATTEMPTS || 2)
+
+/** Rate-limit and validation constants for the public visit-request form. */
+export const VISIT_LIMITS = {
+  perIpHour:      Number(process.env.VISIT_REQ_PER_IP_HOUR      || 5),
+  perContactDay:  Number(process.env.VISIT_REQ_PER_CONTACT_DAY  || 3),
+  perLinkDay:     Number(process.env.VISIT_REQ_PER_LINK_DAY     || 50),
+  maxOpen:        Number(process.env.VISIT_REQ_MAX_OPEN         || 25),
+  maxWindowHours: Number(process.env.VISIT_REQ_MAX_WINDOW_H     || 12),
+  maxDaysAhead:   Number(process.env.VISIT_REQ_MAX_DAYS_AHEAD   || 30),
+  ttlHours:       Number(process.env.VISIT_REQ_TTL_H            || 48),
+  resendMax:      Number(process.env.VISIT_REQ_RESEND_MAX       || 5),
+}

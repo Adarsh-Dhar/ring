@@ -7,6 +7,7 @@ import type { Answer, Visitor, ExpectedVisit } from '@/lib/doorbell/store'
 import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
 import LiveView from './LiveView'
+import VisitRequests from './VisitRequests'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -166,6 +167,7 @@ export default function HelperPage() {
         </div>
       )}
 
+      <VisitRequests requireResidentOk={!!(snap as any).requireResidentOk} />
       <ExpectedForm items={snap.expected} onChange={refresh} />
 
       <section className="mt-6">

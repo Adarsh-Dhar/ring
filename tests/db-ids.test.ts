@@ -28,6 +28,7 @@ vi.mock('@/lib/db/visits', () => ({
   deleteRecurringVisit:      (_hid: string, id: string) => { deleted.recurring.push(id); return Promise.resolve({}) },
   deleteOldExpectedVisits:   () => Promise.resolve({}),
   updateRecurringVisit:      () => Promise.resolve({}),
+  markExpectedUsed:          () => Promise.resolve({}),
 }))
 
 vi.mock('@/lib/db/households', () => ({
@@ -101,3 +102,8 @@ describe('visit IDs are store-generated', () => {
     expect(created.recurring[0].passphrase).toBe('mango')
   })
 })
+
+vi.mock('@/lib/doorbell/request-lifecycle', () => ({
+  sweepRequests:          () => Promise.resolve(),
+  cancelRequestForVisit:  () => Promise.resolve(),
+}))

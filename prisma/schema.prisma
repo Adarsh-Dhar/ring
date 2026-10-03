@@ -30,6 +30,7 @@ model Household {
   emergencyNumber  String    @default("112")
   residentEpoch    Int       @default(1)
   plannedMode      String    @default("helper")   // 'helper' | 'resident' | 'all-helper'
+  requireResidentOk Boolean  @default(false)
   createdAt        DateTime  @default(now())
   memberships      Membership[]
   residentDevices  ResidentDevice[]
@@ -40,6 +41,8 @@ model Household {
   recurringVisits  RecurringVisit[]
   webhookEvents    WebhookEvent[]
   invites          Invite[]
+  visitRequestLinks VisitRequestLink[]
+  visitRequests     VisitRequest[]
 }
 
 model Membership {
@@ -133,7 +136,10 @@ model Case {
   visitLabel   String?
   checkWho     String?  // who the resident should ask for (shown on resident screen)
   checkWord    String?  // passphrase the resident checks (only present when plannedMode='resident')
+  checkMode    String?  // 'word' | 'code'
+  checkAttempts Int     @default(0)
   selfVerifiedAt DateTime?  // set when the resident confirms the passphrase
+  expectedId   String?  // ExpectedVisit that matched (null for recurring or unplanned)
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
@@ -150,6 +156,10 @@ model ExpectedVisit {
   endsAt     DateTime
   who        String?  // who is expected (shown to resident for identity check)
   passphrase String?  // word the visitor should know
+  codeSecret String?  // hex HMAC key for the live code; never sent to any client
+  requestId  String?  // VisitRequest that created this visit
+  singleUse  Boolean  @default(false)
+  usedAt     DateTime?
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
@@ -244,4 +254,51 @@ model Invite {
   @@index([householdId])
   @@index([code])
   @@index([status])
+}
+
+model VisitRequestLink {
+  id              String    @id @default(cuid())
+  householdId     String
+  tokenHash       String    @unique   // sha256 of the public token; the token itself is shown once
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+  revokedAt       DateTime?
+
+  household Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  requests  VisitRequest[]
+
+  @@index([householdId])
+}
+
+model VisitRequest {
+  id              String    @id @default(cuid())
+  householdId     String
+  linkId          String
+  name            String
+  purpose         String              // 'doctor' | 'delivery' | 'family' | 'carer' | 'other'
+  note            String?
+  contact         String              // E.164 phone or lower-cased email
+  contactKind     String              // 'sms' | 'email'
+  startsAt        DateTime
+  endsAt          DateTime
+  status          String    @default("pending") // pending | approved | declined | expired | cancelled
+  helperOkBy      String?             // membershipId
+  helperOkAt      DateTime?
+  residentOkAt    DateTime?
+  decidedAt       DateTime?
+  expectedVisitId String?
+  statusToken     String    @unique   // visitor's status link token
+  deviceHash      String?             // sha256 of the cookie of the phone that tapped "This is my phone"
+  resendCount     Int       @default(0)
+  ip              String?
+  createdAt       DateTime  @default(now())
+  expiresAt       DateTime
+
+  household Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  link      VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+  @@index([ip, createdAt])
+  @@index([linkId, createdAt])
+  @@index([householdId, contact, createdAt])
 }

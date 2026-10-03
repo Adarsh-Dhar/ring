@@ -16,6 +16,10 @@ export async function createExpectedVisit(data: ExpectedVisit & { householdId: s
       endsAt:      new Date(data.endsAt),
       who:         data.who ?? null,
       passphrase:  data.passphrase ?? null,
+      codeSecret:  data.codeSecret ?? null,
+      requestId:   data.requestId  ?? null,
+      singleUse:   !!data.singleUse,
+      usedAt:      data.usedAt ? new Date(data.usedAt) : null,
     }
   })
 }
@@ -95,4 +99,12 @@ export async function updateRecurringVisit(id: string, data: Partial<RecurringVi
 /** Scoped delete: requires both id AND householdId. */
 export async function deleteRecurringVisit(householdId: string, id: string) {
   return getDb().recurringVisit.deleteMany({ where: { id, householdId } })
+}
+
+/** Mark a one-off visit as used (idempotent — only sets if not already set). */
+export async function markExpectedUsed(id: string, usedAt: number) {
+  return getDb().expectedVisit.updateMany({
+    where: { id, usedAt: null },
+    data:  { usedAt: new Date(usedAt) },
+  })
 }

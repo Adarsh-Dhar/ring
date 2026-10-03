@@ -34,6 +34,9 @@ export async function createCase(data: DoorCase & { householdId: string }) {
       visitLabel: data.visitLabel,
       checkWho: data.checkWho ?? null,
       checkWord: data.checkWord ?? null,
+      checkMode: data.checkMode ?? null,
+      checkAttempts: data.checkAttempts ?? 0,
+      expectedId: data.expectedId ?? null,
       selfVerifiedAt: data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null,
     }
   })
@@ -81,6 +84,9 @@ export async function updateCase(caseId: string, data: Partial<DoorCase>) {
   if (data.helperIndex !== undefined) updateData.helperIndex = data.helperIndex
   if (data.deadlineAt !== undefined) updateData.deadlineAt = new Date(data.deadlineAt)
   if (data.selfVerifiedAt !== undefined) updateData.selfVerifiedAt = data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null
+  if ('checkWord'      in data) updateData.checkWord      = data.checkWord      ?? null
+  if ('checkMode'      in data) updateData.checkMode      = data.checkMode      ?? null
+  if (data.checkAttempts !== undefined) updateData.checkAttempts = data.checkAttempts
 
   return getDb().case.update({
     where: { id: caseId },
