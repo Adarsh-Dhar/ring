@@ -5,7 +5,7 @@ import { getDb } from "./client"
  * These replace the in-memory push subscription storage.
  */
 
-export async function createPushSubscription(membershipId: string, endpoint: string, keys: any) {
+export async function createPushSubscription(membershipId: string, endpoint: string, keys: { p256dh: string; auth: string }) {
   return getDb().pushSubscription.create({
     data: {
       membershipId,
@@ -30,7 +30,7 @@ export async function getPushSubscriptionsForHousehold(householdId: string) {
     select: { id: true }
   })
 
-  const membershipIds = memberships.map((m: any) => m.id)
+  const membershipIds = memberships.map((m) => m.id)
 
   return getDb().pushSubscription.findMany({
     where: {

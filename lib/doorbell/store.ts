@@ -11,6 +11,7 @@ import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
 import { currentCode } from '../visit-code'
 import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
+import { reportError } from '../errors'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -185,10 +186,17 @@ async function loadStateFromDB(householdId: string): Promise<void> {
     const approved = await getApprovedMemberships(householdId)
     const known    = approved.map(m => m.id)
     const timeout  = household.timeoutSec || DEFAULT_ESCALATION_SECONDS
+    const now = Date.now()
     for (const c of cases) {
       if (c.status === 'waiting') {
-        c.deadlineAt = Date.now() + timeout * 1000
-        c.log.push({ t: Date.now(), msg: 'Server restarted while this case was open. Timer restarted and helper alerted again.' })
+        if (c.deadlineAt <= now) {
+          // Deadline already passed while the server was down — give a short grace window
+          // so tick() can immediately escalate/resolve rather than leaving it stuck.
+          c.deadlineAt = now + 5_000
+          c.log.push({ t: now, msg: 'Server restarted. Case deadline had already passed; resuming escalation.' })
+        } else {
+          c.log.push({ t: now, msg: 'Server restarted. Resuming timer from saved deadline (no duplicate alert).' })
+        }
       }
       c.chain = c.chain.length ? c.chain : known
     }
@@ -297,7 +305,7 @@ async function saveState(householdId: string, state: HouseholdState) {
       })
     }
   } catch (e) {
-    console.error(`[STORE] Failed to save state for household ${householdId}`, e)
+    reportError(e, { householdId, fn: 'saveState' })
   }
 }
 
@@ -462,7 +470,8 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
   const tz       = household.timezone
 
   const memberships = await getApprovedMemberships(householdId)
-  const pub = (m: any, withPhone: boolean) => ({
+  type MemberRow = { id: string; emoji: string; user: { name: string | null; phone: string | null } }
+  const pub = (m: MemberRow, withPhone: boolean) => ({
     id: m.id, name: m.user.name, emoji: m.emoji,
     ...(withPhone ? { phone: m.user.phone } : {})
   })
@@ -1155,7 +1164,7 @@ export async function tick(householdId?: string) {
     // Throttled request sweep (~every 30 s per household)
     if (now - state.lastRequestSweepAt > 30_000) {
       state.lastRequestSweepAt = now
-      sweepRequests(householdId, now).catch(e => console.error('[STORE] request sweep failed', e))
+      sweepRequests(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepRequests' }))
     }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }
@@ -1165,12 +1174,16 @@ export async function tick(householdId?: string) {
 export async function getHealth() {
   const now    = Date.now()
   const states = Array.from(householdStates.values())
+  // "ready" means the app is running and has at least one household loaded.
+  // It does NOT require an active case — that was wrong and caused constant 503s.
+  const householdsLoaded = states.length
   return {
-    tickAgeMs:       states.length > 0 ? now - Math.max(...states.map(s => s.lastTickAt)) : null,
-    ready:           states.some(s => s.cases.some(c => c.status === 'waiting')),
+    tickAgeMs:        states.length > 0 ? now - Math.max(...states.map(s => s.lastTickAt)) : null,
+    ready:            true,   // app is alive; householdsLoaded tells you how many are in memory
+    householdsLoaded,
     anyDeviceOffline: states.some(s => anyDeviceOffline(s)),
-    openCases:       states.reduce((sum, s) => sum + s.cases.filter(c => c.status === 'waiting').length, 0),
-    alerts:          alertStatus(now),
+    openCases:        states.reduce((sum, s) => sum + s.cases.filter(c => c.status === 'waiting').length, 0),
+    alerts:           alertStatus(now),
   }
 }
 
@@ -1179,21 +1192,28 @@ export async function getHealth() {
 const gt = globalThis as unknown as { __doorbellTimer?: ReturnType<typeof setInterval>; __doorbellPoll?: ReturnType<typeof setInterval> }
 
 if (!gt.__doorbellTimer) {
-  gt.__doorbellTimer = setInterval(() => tick(), 1000)
+  gt.__doorbellTimer = setInterval(() => {
+    tick().catch(e => reportError(e, { fn: 'tick/global' }))
+  }, 1000)
   gt.__doorbellTimer.unref?.()
 }
 
 if (!gt.__doorbellPoll) {
   gt.__doorbellPoll = setInterval(async () => {
-    for (const householdId of householdStates.keys()) { await pollDevicesForHousehold(householdId) }
+    for (const householdId of householdStates.keys()) {
+      await pollDevicesForHousehold(householdId)
+    }
   }, 60_000)
   gt.__doorbellPoll.unref?.()
 
   setInterval(async () => {
     for (const householdId of householdStates.keys()) {
       const connection = await getConnectionForHousehold(householdId)
-      if (connection) forceRefreshConnection(connection.id).catch(e => console.error('[RING] daily refresh failed', e))
+      if (connection) forceRefreshConnection(connection.id).catch(e => reportError(e, { householdId, fn: 'forceRefreshConnection' }))
     }
+    // Daily face-embedding retention purge (throttled inside purgeOldEnrollments to once/hour)
+    const { purgeOldEnrollments } = await import('@/face/store').catch(() => ({ purgeOldEnrollments: null }))
+    if (purgeOldEnrollments) purgeOldEnrollments().catch(e => reportError(e, { fn: 'purgeOldEnrollments' }))
   }, 24 * 60 * 60_000).unref?.()
 }
 

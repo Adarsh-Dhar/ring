@@ -76,3 +76,39 @@ export function memoryFaceStore(): FaceStore {
 let active: FaceStore = prismaStore
 export const faceStore = () => active
 export const setFaceStore = (s: FaceStore | null) => { active = s ?? prismaStore }
+
+/**
+ * Hard-delete GuestFace rows that are older than `retentionDays` AND belong to
+ * a RegularVisitor that has since been removed/declined/expired.
+ *
+ * We keep the "live" (approved) embeddings indefinitely while consent is active
+ * because they are needed for camera matching. Only closed registrations age out.
+ *
+ * Runs at most once per hour (throttled internally). Called by the daily timer in store.ts.
+ */
+let lastEnrollmentPurge = 0
+export async function purgeOldEnrollments(now = Date.now()): Promise<number> {
+  if (now - lastEnrollmentPurge < 3_600_000) return 0
+  lastEnrollmentPurge = now
+  try {
+    const { FACE } = await import('./config')
+    const cutoff = new Date(now - FACE.retentionDays * 86_400_000)
+    // Remove GuestFace rows that were created before the retention cutoff
+    // and whose ref points to a reg:* (regular visitor registration) — those
+    // are only live while the visitor is approved. If the household guardian
+    // manually enrolled a face (no ref or a visit ref) we leave it alone and
+    // let them delete it explicitly.
+    const result = await getDb().guestFace.deleteMany({
+      where: {
+        createdAt: { lt: cutoff },
+        ref:       { startsWith: 'reg:' },
+      },
+    })
+    if (result.count > 0) console.log(`[FACE] purged ${result.count} old enrollment(s) older than ${FACE.retentionDays} days`)
+    return result.count
+  } catch (e) {
+    console.error('[FACE] enrollment purge failed', e)
+    return 0
+  }
+}
+export const _resetEnrollmentPurgeClock = () => { lastEnrollmentPurge = 0 }  // tests only

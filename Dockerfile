@@ -15,4 +15,5 @@ ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN DATABASE_URL=$DATABASE_URL npm run build
 
 EXPOSE 3000
+# Use `migrate deploy` (safe, idempotent, never drops columns) instead of `db push`
 CMD ["sh", "-c", "npx prisma generate && npm run db:deploy && npm start"]

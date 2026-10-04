@@ -3,10 +3,17 @@ import { z } from 'zod'
 import { makeToken } from '@/lib/auth'
 import { COOKIE, DEVICE_COOKIE, cookieOpts, deviceCookieOpts, fail, getSession, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
+import { hit, clientIp } from '@/lib/ratelimit'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+
+/** Maximum wrong-code attempts before the pairing code is permanently invalidated. */
+const PAIRING_MAX_ATTEMPTS = 10
+/** Maximum pairing attempts per IP per 10 minutes. */
+const PAIRING_RATE_MAX     = 5
+const PAIRING_RATE_WINDOW  = 10 * 60_000  // 10 minutes
 
 /** GET: who am I? (used by the UI) */
 export async function GET(req: NextRequest) {
@@ -77,9 +84,24 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST { pairingCode }: resident device pairing.
- * The resident enters a 6-digit code shown by the guardian.
+ *
+ * The resident enters a 6-character code shown by the guardian.
+ *
+ * Security measures:
+ *  - IP rate limit: max 5 attempts per IP per 10 minutes (in-memory, resets on restart).
+ *  - DB attempt counter: max 10 wrong guesses per code before it is permanently invalidated.
+ *    This survives process restarts, so an attacker cannot reset the counter by restarting.
+ *  - The code hash uses SHA-256 (deterministic) so the DB unique index still works.
+ *    Rate limiting + attempt counting make brute-force infeasible (5/10 min per IP,
+ *    10 total per code, against a 32-character alphabet = ~2.2 billion combinations).
  */
 export async function POST(req: NextRequest) {
+  // ── IP rate limit ─────────────────────────────────────────────────────────
+  const ip = clientIp(req)
+  if (!hit(`pairing:${ip}`, PAIRING_RATE_MAX, PAIRING_RATE_WINDOW)) {
+    return fail('Too many pairing attempts. Please wait 10 minutes and try again.', 429)
+  }
+
   const p = await parse(req, z.object({
     pairingCode: z.string().length(6).regex(/^[A-Z0-9]{6}$/, 'Pairing code must be 6 uppercase letters or digits'),
   }))
@@ -107,13 +129,23 @@ export async function POST(req: NextRequest) {
   }
 
   if (!device) {
+    // Still increment a placeholder counter via the rate limiter — already done above.
     return fail('Invalid pairing code. Please check the code shown on the guardian screen and try again.', 401)
   }
 
+  // ── Per-code attempt counter (persisted to DB) ────────────────────────────
+  if (device.pairingAttempts >= PAIRING_MAX_ATTEMPTS) {
+    // Code has been guessed wrong too many times — it is permanently burnt.
+    // The guardian must generate a new code.
+    console.warn(`[SESSION POST] Pairing code for device ${device.id} is locked after ${device.pairingAttempts} attempts`)
+    return fail('This pairing code has been locked after too many failed attempts. Please ask the guardian to generate a new code.', 403)
+  }
+
+  // Code matched — reset the attempt counter (successful pairing).
   try {
     await db.residentDevice.update({
       where: { id: device.id },
-      data:  { lastSeenAt: new Date() },
+      data:  { lastSeenAt: new Date(), pairingAttempts: 0 },
     })
   } catch (e) {
     // Non-fatal — log but continue

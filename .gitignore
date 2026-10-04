@@ -43,3 +43,10 @@ dist/
 *.tsbuildinfo
 
 claude
+
+# Scratch scripts and ad-hoc test reports (keep only committed files under tests/ or tools/)
+_*.mjs
+_*.sh
+_*.ts
+TEST_RESULTS*.md
+FINAL_TEST_REPORT*.md

@@ -1,5 +1,6 @@
 import { getDb } from "./client"
 import type { ExpectedVisit, RecurringVisit } from '../doorbell/store'
+import type { Prisma } from '@prisma/client'
 
 /**
  * Visit repository functions.
@@ -85,7 +86,7 @@ export async function getRecurringVisitsForHousehold(householdId: string) {
 }
 
 export async function updateRecurringVisit(id: string, data: Partial<RecurringVisit>) {
-  const updateData: any = {}
+  const updateData: Prisma.RecurringVisitUpdateInput = {}
 
   if (data.paused          !== undefined) updateData.paused          = data.paused
   if (data.lastArrived     !== undefined) updateData.lastArrived     = data.lastArrived

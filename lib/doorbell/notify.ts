@@ -77,9 +77,9 @@ export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise
  */
 export async function pushToMembership(membershipId: string, payload: PushPayload): Promise<void> {
   const subs = await getPushSubscriptionsForMembership(membershipId)
-  const pushSubs: PushSub[] = subs.map((s: any) => ({
+  const pushSubs: PushSub[] = subs.map((s) => ({
     endpoint: s.endpoint,
-    keys: s.keys
+    keys: s.keys as { p256dh: string; auth: string },
   }))
 
   const dead = await pushToSubs(pushSubs, payload)

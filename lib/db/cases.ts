@@ -1,4 +1,5 @@
 import { getDb } from "./client"
+import type { Prisma } from '@prisma/client'
 import type { DoorCase } from '../doorbell/store'
 
 /**
@@ -68,17 +69,17 @@ export async function getOpenCasesForHousehold(householdId: string) {
 }
 
 export async function updateCase(caseId: string, data: Partial<DoorCase>) {
-  const updateData: any = {}
+  const updateData: Prisma.CaseUpdateInput = {}
 
   if (data.status !== undefined) updateData.status = data.status
   if (data.answer !== undefined) updateData.answer = data.answer
   if (data.answeredBy !== undefined) updateData.answeredBy = data.answeredBy
   if (data.resolvedAt !== undefined) updateData.resolvedAt = data.resolvedAt ? new Date(data.resolvedAt) : null
-  if (data.log !== undefined) updateData.log = data.log as any
+  if (data.log !== undefined) updateData.log = data.log as Prisma.JsonArray
   if (data.visitor !== undefined) updateData.visitor = data.visitor
   if (data.confirmedAt !== undefined) updateData.confirmedAt = data.confirmedAt ? new Date(data.confirmedAt) : null
   if (data.declinedAt !== undefined) updateData.declinedAt = data.declinedAt ? new Date(data.declinedAt) : null
-  if (data.chain !== undefined) updateData.chain = data.chain as any
+  if (data.chain !== undefined) updateData.chain = data.chain as Prisma.JsonArray
   if (data.ackedBy !== undefined) updateData.ackedBy = data.ackedBy
   if (data.ackedAt !== undefined) updateData.ackedAt = data.ackedAt ? new Date(data.ackedAt) : null
   if (data.lane !== undefined) updateData.lane = data.lane
@@ -94,7 +95,7 @@ export async function updateCase(caseId: string, data: Partial<DoorCase>) {
 
   return getDb().case.update({
     where: { id: caseId },
-    data: updateData
+    data: updateData,
   })
 }
 

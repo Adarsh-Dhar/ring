@@ -72,6 +72,7 @@ model ResidentDevice {
   id               String    @id @default(cuid())
   householdId      String
   pairingCodeHash  String    @unique
+  pairingAttempts  Int       @default(0)
   deviceTokenEpoch Int       @default(1)
   lastSeenAt       DateTime?
   household        Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
