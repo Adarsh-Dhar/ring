@@ -59,8 +59,8 @@ const Body = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('invite'),
     email:  z.string().email().optional(),
-    phone:  z.string().trim().regex(/^\+\d{8,15}$/, 'Phone must be in E.164 format, e.g. +919876543210').optional(),
-    name:   z.string().trim().min(1).max(30),
+    phone:  z.string().trim().optional(),
+    name:   z.string().trim().min(1).max(60),
     role:   z.enum(['guardian', 'helper']),
     emoji:  z.string().max(8).default('🙂'),
   }),
@@ -97,9 +97,9 @@ export async function POST(req: NextRequest) {
           return fail('An email address or phone number is required to invite a member.', 400)
         }
 
-        const phone = b.phone ? normalizePhone(b.phone) : null
-        const email = b.email ? normalizeEmail(b.email) : null
-        if (b.phone && !phone) {
+        const phone = b.phone && b.phone.trim() ? normalizePhone(b.phone) : null
+        const email = b.email && b.email.trim() ? normalizeEmail(b.email) : null
+        if (b.phone && b.phone.trim() && !phone) {
           return fail(`"${b.phone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
         }
 

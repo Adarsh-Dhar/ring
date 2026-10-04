@@ -11,6 +11,7 @@ export interface DoorbellSnapshot {
   emergencyNumber: string
   timeoutSec: number
   offline: boolean
+  dbHealthy: boolean
   helpers: PublicHelper[]
   current: DoorCase | null
   history: DoorCase[]

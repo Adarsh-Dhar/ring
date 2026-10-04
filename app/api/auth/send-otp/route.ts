@@ -4,6 +4,7 @@ import { fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { IS_PROD } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
+import { checkRateLimit } from '@/lib/ratelimit/redis'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -123,6 +124,20 @@ export async function POST(req: NextRequest) {
   }
   if (p.data.email && !email) {
     return fail(`"${p.data.email}" is not a valid email address`, 400)
+  }
+
+  // Redis rate limiting
+  const identifier = email || phone || 'unknown'
+  const rateLimitResult = await checkRateLimit({
+    key: `otp-send:${identifier}`,
+    limit: OTP_MAX_PER_USER,
+    window: Math.floor(OTP_TTL_MS / 1000),
+  })
+
+  if (!rateLimitResult.allowed) {
+    console.warn('[SEND-OTP] Rate limit exceeded for', identifier)
+    // Return success to avoid revealing rate limit info
+    return NextResponse.json({ ok: true })
   }
 
   let db

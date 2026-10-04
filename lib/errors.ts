@@ -20,7 +20,7 @@ async function loadSentry(): Promise<SentryCapture | null> {
   try {
     // Dynamic import so builds without @sentry/node still compile.
     // Install with: npm install @sentry/node
-    const Sentry = await import('@sentry/node' as string)
+    const Sentry = await import('@sentry/node')
     if (typeof Sentry.init === 'function') {
       Sentry.init({ dsn, environment: process.env.NODE_ENV ?? 'production' })
       return (err, extra) => {

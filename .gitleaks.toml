@@ -1,0 +1,42 @@
+title = "gitleaks config"
+
+[[rules]]
+id = "stripe-api-key"
+description = "Stripe API key"
+regex = '''sk_(live|test)_[0-9a-zA-Z]{24,}'''
+
+[[rules]]
+id = "twilio-account-sid"
+description = "Twilio Account SID"
+regex = '''AC[a-z0-9]{32}'''
+
+[[rules]]
+id = "twilio-auth-token"
+description = "Twilio Auth Token"
+regex = '''[a-z0-9]{32}'''
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS Access Key ID"
+regex = '''AKIA[0-9A-Z]{16}'''
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API key"
+regex = '''(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*['"]?[0-9a-zA-Z\-_]{20,}'''
+
+[[rules]]
+id = "jwt-token"
+description = "JWT token"
+regex = '''eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+'''
+
+[allowlist]
+paths = [
+  '''\.env\.example$''',
+  '''\.env\.prod\.example$''',
+  '''node_modules''',
+  '''\.git''',
+  '''dist''',
+  '''build''',
+  '''\.next''',
+]

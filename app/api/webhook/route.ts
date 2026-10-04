@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { RingWebhookSchema } from '@/lib/schemas/webhook'
 import { verifyRingSignature } from '@/lib/ring/verify'
-import { ingestEvent, setDeviceOnline } from '@/lib/doorbell/store'
 import { IS_PROD } from '@/lib/auth'
 import { getDb } from '@/lib/db/client'
+import { ingestEvent, setDeviceOnline } from '@/lib/doorbell/store'
+import { enqueueJob, isQueueInitialized } from '@/lib/queue'
+import { JOB_NAMES } from '@/lib/queue/jobs'
+import { checkRateLimit } from '@/lib/ratelimit/redis'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -48,7 +51,31 @@ export async function POST(request: NextRequest) {
 
   const { meta, data } = parsed.data
 
-  // 3. Guard: account_id is required to look up the household.
+  // 3. Guard: reject events with timestamps that are too old (replay attack prevention).
+  // Ring's timestamp is in ISO 8601 format with microseconds. We allow a 5-minute window.
+  const WEBHOOK_TIMESTAMP_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
+  try {
+    const eventTime = new Date(meta.time).getTime()
+    const now = Date.now()
+    if (isNaN(eventTime)) {
+      console.warn('[WEBHOOK] Invalid timestamp format:', meta.time)
+      return NextResponse.json({ error: 'Invalid timestamp' }, { status: 400 })
+    }
+    if (now - eventTime > WEBHOOK_TIMESTAMP_WINDOW_MS) {
+      console.warn('[WEBHOOK] Timestamp too old:', meta.time, 'age:', now - eventTime, 'ms')
+      return NextResponse.json({ error: 'Timestamp too old' }, { status: 400 })
+    }
+    // Also reject events that are too far in the future (clock skew attack)
+    if (eventTime - now > WEBHOOK_TIMESTAMP_WINDOW_MS) {
+      console.warn('[WEBHOOK] Timestamp too far in the future:', meta.time, 'offset:', eventTime - now, 'ms')
+      return NextResponse.json({ error: 'Timestamp too far in the future' }, { status: 400 })
+    }
+  } catch (e) {
+    console.warn('[WEBHOOK] Failed to parse timestamp:', meta.time, e)
+    return NextResponse.json({ error: 'Invalid timestamp' }, { status: 400 })
+  }
+
+  // 4. Guard: account_id is required to look up the household.
   if (!meta.account_id) {
     console.warn('[WEBHOOK] Missing meta.account_id — cannot route event, ignoring.')
     return NextResponse.json({ status: 'ignored' })
@@ -81,6 +108,18 @@ export async function POST(request: NextRequest) {
 
   const householdId = connection.householdId
 
+  // Redis rate limiting for webhook events
+  const rateLimitResult = await checkRateLimit({
+    key: `webhook:${householdId}`,
+    limit: 100, // 100 events per minute per household
+    window: 60,
+  })
+
+  if (!rateLimitResult.allowed) {
+    console.warn('[WEBHOOK] Rate limit exceeded for household', householdId)
+    return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
+  }
+
   // 5. Idempotency — skip events we have already processed.
   if (meta.request_id) {
     try {
@@ -109,26 +148,66 @@ export async function POST(request: NextRequest) {
   const deviceId = data.attributes?.source ?? null
 
   try {
-    // Device online/offline updates — always processed regardless of TRIGGER_EVENTS
+    const useQueue = isQueueInitialized()
+
+    // Device online/offline updates — enqueue for async processing, fall back to inline if queue not available
     if (type === 'device_offline' && deviceId) {
+      if (useQueue) {
+        try {
+          await enqueueJob(JOB_NAMES.DEVICE_OFFLINE, {
+            householdId,
+            deviceId,
+            reason: 'Ring reported it offline',
+          })
+          return NextResponse.json({ status: 'enqueued' })
+        } catch (queueError) {
+          console.warn('[WEBHOOK] Queue error, processing inline:', queueError)
+        }
+      }
       await setDeviceOnline(householdId, deviceId, false, 'Ring reported it offline')
-      return NextResponse.json({ status: 'processed' })
+      return NextResponse.json({ status: 'processed_inline' })
     }
 
     if (type === 'device_online' && deviceId) {
+      if (useQueue) {
+        try {
+          await enqueueJob(JOB_NAMES.DEVICE_ONLINE, {
+            householdId,
+            deviceId,
+            reason: 'Ring reported it online',
+          })
+          return NextResponse.json({ status: 'enqueued' })
+        } catch (queueError) {
+          console.warn('[WEBHOOK] Queue error, processing inline:', queueError)
+        }
+      }
       await setDeviceOnline(householdId, deviceId, true, 'Ring reported it online')
-      return NextResponse.json({ status: 'processed' })
+      return NextResponse.json({ status: 'processed_inline' })
     }
 
-    // Doorbell/motion events — only create a case if the event type is in TRIGGER_EVENTS
+    // Doorbell/motion events — enqueue for async processing if in TRIGGER_EVENTS
     if (TRIGGER_EVENTS.has(type)) {
+      if (useQueue) {
+        try {
+          await enqueueJob(JOB_NAMES.WEBHOOK_PROCESS, {
+            householdId,
+            eventType: type,
+            eventId: data.id,
+            deviceId,
+            raw: json,
+          })
+          return NextResponse.json({ status: 'enqueued' })
+        } catch (queueError) {
+          console.warn('[WEBHOOK] Queue error, processing inline:', queueError)
+        }
+      }
       const c = await ingestEvent(householdId, {
         event_type: type,
-        event_id:   data.id,
-        device_id:  deviceId,
-        raw:        json,
+        event_id: data.id,
+        device_id: deviceId,
+        raw: json,
       })
-      return NextResponse.json({ status: 'processed', case_id: c?.id ?? null })
+      return NextResponse.json({ status: 'processed_inline', case_id: c?.id ?? null })
     }
 
     // Known but non-triggering event (e.g. motion_detected when only button_press is configured)

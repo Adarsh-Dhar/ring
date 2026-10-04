@@ -23,6 +23,8 @@ export type TokenClaims = {
   kind: string
   sub: string
   householdId: string
+  membershipId?: string
+  userId?: string
   epoch: number
   exp: number   // required – Unix seconds
 }

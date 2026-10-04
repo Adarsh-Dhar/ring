@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 
 type MessageKind = 'error' | 'info' | 'success'
 
@@ -32,6 +33,7 @@ export default function LoginPage() {
   const [loading,     setLoading]     = useState(false)
   const [message,     setMessage]     = useState<Message | null>(null)
   const [memberships, setMemberships] = useState<any[]>([])
+  const [authMethod,  setAuthMethod]  = useState<'otp' | 'passkey' | 'magic'>('otp')
 
   // Synchronous in-flight guard — prevents double-submit before React re-renders
   const inFlight = useRef(false)
@@ -88,6 +90,96 @@ export default function LoginPage() {
       })
     } catch {
       setMessage({ text: 'Network error — please check your connection and try again.', kind: 'error' })
+    } finally {
+      inFlight.current = false
+      setLoading(false)
+    }
+  }
+
+  const handleSendMagicLink = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (inFlight.current) return
+    inFlight.current = true
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      const res = await fetch('/api/auth/magic-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      if (!res.ok) {
+        setMessage({ text: await apiError(res), kind: 'error' })
+        inFlight.current = false
+        setLoading(false)
+        return
+      }
+
+      setMessage({ text: 'Magic link sent! Check your email to sign in.', kind: 'success' })
+    } catch (error) {
+      setMessage({ text: 'Failed to send magic link. Try again.', kind: 'error' })
+    } finally {
+      inFlight.current = false
+      setLoading(false)
+    }
+  }
+
+  const handlePasskeyLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (inFlight.current) return
+    inFlight.current = true
+    setLoading(true)
+    setMessage(null)
+
+    try {
+      // Get authentication options from server
+      const optionsRes = await fetch('/api/auth/passkey/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+
+      if (!optionsRes.ok) {
+        setMessage({ text: await apiError(optionsRes), kind: 'error' })
+        inFlight.current = false
+        setLoading(false)
+        return
+      }
+
+      const { options, userId } = await optionsRes.json()
+
+      // Use WebAuthn to authenticate
+      const authResp = await startAuthentication(options)
+
+      // Verify with server
+      const verifyRes = await fetch('/api/auth/passkey/login/verify', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          response: authResp,
+          expectedChallenge: options.challenge,
+        }),
+      })
+
+      if (!verifyRes.ok) {
+        setMessage({ text: await apiError(verifyRes), kind: 'error' })
+        inFlight.current = false
+        setLoading(false)
+        return
+      }
+
+      const data = await verifyRes.json()
+
+      // Redirect based on role
+      if (data.role === 'guardian') {
+        router.push('/setup')
+      } else {
+        router.push('/helper')
+      }
+    } catch (error) {
+      setMessage({ text: 'Passkey authentication failed. Try code or magic link instead.', kind: 'error' })
     } finally {
       inFlight.current = false
       setLoading(false)
@@ -181,43 +273,131 @@ export default function LoginPage() {
         {message && <Alert message={message} />}
 
         {step === 'input' && (
-          <form onSubmit={handleSendOtp} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={e => { setEmail(e.target.value); if (e.target.value) setPhone('') }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="you@example.com"
-                autoComplete="email"
-              />
+          <div className="space-y-4">
+            {/* Auth method selector */}
+            <div className="flex gap-2 mb-4">
+              <button
+                type="button"
+                onClick={() => setAuthMethod('otp')}
+                className={`flex-1 py-2 px-4 rounded-md transition-colors ${
+                  authMethod === 'otp' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                Code
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMethod('passkey')}
+                className={`flex-1 py-2 px-4 rounded-md transition-colors ${
+                  authMethod === 'passkey' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                Passkey
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMethod('magic')}
+                className={`flex-1 py-2 px-4 rounded-md transition-colors ${
+                  authMethod === 'magic' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                Magic Link
+              </button>
             </div>
-            <div className="text-center text-gray-400 text-sm">or</div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Phone
-              </label>
-              <input
-                type="tel"
-                value={phone}
-                onChange={e => { setPhone(e.target.value); if (e.target.value) setEmail('') }}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="+919876543210"
-                autoComplete="tel"
-              />
-              <p className="mt-1 text-xs text-gray-400">Include country code, e.g. +1 for US, +91 for India</p>
-            </div>
-            <button
-              type="submit"
-              disabled={loading || (!email && !phone)}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
-            >
-              {loading ? 'Sending…' : 'Send sign-in code'}
-            </button>
-          </form>
+
+            {authMethod === 'otp' && (
+              <form onSubmit={handleSendOtp} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); if (e.target.value) setPhone('') }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="text-center text-gray-400 text-sm">or</div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone
+                  </label>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={e => { setPhone(e.target.value); if (e.target.value) setEmail('') }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="+919876543210"
+                    autoComplete="tel"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Include country code, e.g. +1 for US, +91 for India</p>
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading || (!email && !phone)}
+                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Sending…' : 'Send sign-in code'}
+                </button>
+              </form>
+            )}
+
+            {authMethod === 'magic' && (
+              <form onSubmit={handleSendMagicLink} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading || !email}
+                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Sending…' : 'Send magic link'}
+                </button>
+              </form>
+            )}
+
+            {authMethod === 'passkey' && (
+              <form onSubmit={handlePasskeyLogin} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                </div>
+                <p className="text-sm text-gray-600">
+                  Use your device's biometric (Face ID, fingerprint) or security key to sign in.
+                </p>
+                <button
+                  type="submit"
+                  disabled={loading || !email}
+                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Authenticating…' : 'Sign in with Passkey'}
+                </button>
+              </form>
+            )}
+          </div>
         )}
 
         {step === 'otp' && (
@@ -229,7 +409,6 @@ export default function LoginPage() {
               <input
                 type="text"
                 inputMode="numeric"
-                pattern="\d{6}"
                 value={otp}
                 onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                 maxLength={6}
@@ -321,7 +500,8 @@ export default function LoginPage() {
               ← Sign in with a different account
             </button>
           </div>
-        )}      </div>
+        )}
+      </div>
     </div>
   )
 }

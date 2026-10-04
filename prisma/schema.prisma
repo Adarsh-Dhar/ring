@@ -32,6 +32,7 @@ model Household {
   createdAt         DateTime           @default(now())
   plannedMode       String             @default("helper")
   requireResidentOk Boolean            @default(false)
+  preset            String             @default("standard") // v2: standard | strict | custom
   cases             Case[]
   devices           Device[]
   expectedVisits    ExpectedVisit[]
@@ -46,6 +47,8 @@ model Household {
   visitRequests     VisitRequest[]
   visitRequestLinks VisitRequestLink[]
   webhookEvents     WebhookEvent[]
+  v2Devices         V2Device[]         // v2: new device model
+  passes            Pass[]             // v2: visitor passes
 }
 
 model Membership {
@@ -63,6 +66,8 @@ model Membership {
   household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   pushSubscriptions PushSubscription[]
+  passkeys          Passkey[]          // v2: WebAuthn passkeys
+  v2Devices         V2Device[]         // v2: devices belonging to this member
 
   @@unique([userId, householdId])
   @@index([householdId])
@@ -357,4 +362,68 @@ model RegularVisitor {
   @@index([ip, createdAt])
   @@index([linkId, createdAt])
   @@index([householdId, contact, createdAt])
+}
+
+// v2: Device model replacing cookies, pairing codes, and visitor tokens
+model V2Device {
+  id          String       @id @default(cuid())
+  householdId String
+  memberId    String?      // Null for resident devices
+  kind        String       // resident | helper | guardian | visitor
+  publicKey   String       // Device public key for authentication
+  lastSeenAt  DateTime     @default(now())
+  revokedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  household   Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  membership  Membership?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  passes      Pass[]
+
+  @@unique([householdId, kind, revokedAt]) // At most one active device per kind per household
+  @@index([householdId])
+  @@index([memberId])
+}
+
+// v2: WebAuthn passkeys
+model Passkey {
+  id           String     @id @default(cuid())
+  memberId     String
+  credentialId String     @unique
+  publicKey    String
+  counter      Int        @default(0)
+  createdAt    DateTime   @default(now())
+  membership   Membership @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+}
+
+// v2: Visitor passes replacing pass-words and rotating codes
+model Pass {
+  id          String      @id @default(cuid())
+  householdId String
+  visitorName String
+  windowStart DateTime
+  windowEnd   DateTime
+  recurrence Json?       // Optional recurrence rules
+  deviceId    String?     // Device-bound pass
+  revokedAt   DateTime?
+  createdAt   DateTime    @default(now())
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  device      V2Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  events      PassEvent[]
+
+  @@index([householdId])
+  @@index([windowStart, windowEnd])
+}
+
+// v2: Pass audit log
+model PassEvent {
+  id        String   @id @default(cuid())
+  passId    String
+  type      String   // created | used | revoked
+  deviceId  String?
+  at        DateTime @default(now())
+  pass      Pass     @relation(fields: [passId], references: [id], onDelete: Cascade)
+
+  @@index([passId])
+  @@index([at])
 }

@@ -161,7 +161,11 @@ function SetupPage() {
     })
     const j = await r.json().catch(() => ({}))
     setLoading(false)
-    if (!r.ok) setErr(j.error || 'Something went wrong')
+    if (!r.ok) {
+      setErr(j.error || 'Something went wrong')
+      return j
+    }
+    setNote('Saved successfully')
     load()
     return j
   }
@@ -200,7 +204,11 @@ function SetupPage() {
       setErr('Name and either phone or email are required')
       return
     }
-    await act('/api/household/members', { action: 'invite', ...form, role: 'helper' })
+    // Only include phone or email if they have a value
+    const body: any = { action: 'invite', name: form.name, emoji: form.emoji, role: 'helper' }
+    if (form.phone.trim()) body.phone = form.phone
+    if (form.email.trim()) body.email = form.email
+    await act('/api/household/members', body)
     setForm({ name: '', phone: '', email: '', emoji: '🙂' })
     setNote('Invitation sent. Ask them to log in and accept.')
   }
@@ -210,8 +218,10 @@ function SetupPage() {
   const moveMember   = (id: string, dir: -1 | 1) => act('/api/household/members', { action: 'move', id, dir })
 
   const createDevice = async () => {
-    const j = await act('/api/household', { action: 'createDevice' })
-    if (j.code) { setPairingCode(j.code); setNote(`Pairing code: ${j.code}. Enter this on the resident device.`) }
+    setNote('Generating QR code...')
+    setPairingCode('loading')
+    // Redirect to QR pairing page
+    router.push('/pair-qr')
   }
 
   const createVisitLink = async () => {
@@ -410,10 +420,9 @@ function SetupPage() {
       {/* ── Resident device ───────────────────────────────────────────── */}
       <h2 className="mb-2 text-sm uppercase tracking-wide text-slate-400">Resident device</h2>
       <div className="mb-2 flex flex-wrap gap-2">
-        <button onClick={createDevice} disabled={loading} className={btn}>Generate pairing code</button>
-        {pairingCode && <span className="text-2xl font-mono bg-slate-800 px-4 py-2 rounded">{pairingCode}</span>}
+        <button onClick={createDevice} disabled={loading} className={btn}>Generate QR code</button>
       </div>
-      <p className="mb-6 text-sm text-slate-400">Enter the code on the resident device to pair it. The device stays signed in.</p>
+      <p className="mb-6 text-sm text-slate-400">Scan the QR code with the resident device to pair it. The device stays signed in.</p>
 
       {/* ── Timeout ───────────────────────────────────────────────────── */}
       <h2 className="mb-2 text-sm uppercase tracking-wide text-slate-400">Time each member has to answer</h2>

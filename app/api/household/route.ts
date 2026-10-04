@@ -54,7 +54,7 @@ const Body = z.discriminatedUnion('action', [
     action:        z.literal('create'),
     residentName:  z.string().trim().min(1).max(60),
     guardianName:  z.string().trim().min(1).max(60),
-    guardianPhone: z.string().trim().min(7).max(20).optional(),
+    guardianPhone: z.string().trim().optional(),
     guardianEmail: z.string().email().optional(),
     timezone:      z.string().optional(),
   }),
@@ -63,7 +63,7 @@ const Body = z.discriminatedUnion('action', [
   z.object({ action: z.literal('createDevice') }),
   z.object({
     action:          z.literal('updateSettings'),
-    residentName:    z.string().trim().min(1).max(30),
+    residentName:  z.string().trim().min(1).max(30),
     timezone:        z.string().optional(),
     emergencyNumber: z.string().optional(),
   }),
@@ -94,10 +94,10 @@ export async function POST(req: NextRequest) {
       return fail('Guardian phone number or email address is required.', 400)
     }
 
-    const guardianPhone = b.guardianPhone ? normalizePhone(b.guardianPhone) : null
-    const guardianEmail = b.guardianEmail ? normalizeEmail(b.guardianEmail) : null
+    const guardianPhone = b.guardianPhone && b.guardianPhone.trim() ? normalizePhone(b.guardianPhone) : null
+    const guardianEmail = b.guardianEmail && b.guardianEmail.trim() ? normalizeEmail(b.guardianEmail) : null
 
-    if (b.guardianPhone && !guardianPhone) {
+    if (b.guardianPhone && b.guardianPhone.trim() && !guardianPhone) {
       return fail(`"${b.guardianPhone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
     }
 

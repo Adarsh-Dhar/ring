@@ -129,6 +129,49 @@ export async function getDeviceSession(req: NextRequest): Promise<{ householdId:
   return { householdId: device.householdId, deviceId: device.id }
 }
 
+/**
+ * v2: Resolves a v2 device session from the session cookie.
+ * Supports device-based authentication for residents, helpers, and guardians.
+ */
+export async function getV2DeviceSession(req: NextRequest): Promise<{
+  deviceId: string
+  householdId: string
+  membershipId?: string
+  kind: 'resident' | 'helper' | 'guardian' | 'visitor'
+} | null> {
+  const t = verifyToken(tokenFrom(req))
+  if (!t.ok) return null
+
+  const data = t.data
+
+  // v2 device sessions have deviceId as 'sub' and kind indicating device type
+  if (!['resident', 'helper', 'guardian', 'visitor'].includes(data.kind)) {
+    return null
+  }
+
+  const db = getDb()
+  const device = await db.v2Device.findUnique({
+    where: { id: data.sub },
+    include: { membership: true, household: true },
+  })
+
+  if (!device) return null
+  if (device.revokedAt) return null
+  if (device.householdId !== data.householdId) return null
+
+  // Check session expiry (90 days from last seen)
+  const SESSION_DURATION = 90 * 24 * 60 * 60 * 1000
+  const sessionExpiry = new Date(device.lastSeenAt.getTime() + SESSION_DURATION)
+  if (new Date() > sessionExpiry) return null
+
+  return {
+    deviceId: device.id,
+    householdId: device.householdId,
+    membershipId: device.memberId ?? undefined,
+    kind: device.kind as 'resident' | 'helper' | 'guardian' | 'visitor',
+  }
+}
+
 /** Browsers always send Origin on cross-site POSTs. If it is present it must match our host. */
 export function sameOrigin(req: NextRequest) {
   const o = req.headers.get('origin')
@@ -170,12 +213,43 @@ export function isParseOk<T>(p: ParseResult<T>): p is { ok: true; data: T } { re
 /**
  * Authorizes a request. Returns the session if authenticated and authorized.
  * All authorized sessions must have a householdId - this is used for scoping.
+ * Supports both old-style cookie sessions and new v2 device sessions.
  */
 export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Auth> {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) {
     return { ok: false as const, res: fail('Cross-origin requests are not allowed', 403) }
   }
 
+  // Try v2 device session first
+  const v2Session = await getV2DeviceSession(req)
+  if (v2Session) {
+    // Convert v2 device session to old-style Session format for compatibility
+    let role: 'guardian' | 'helper' | undefined
+    if (v2Session.kind === 'guardian') role = 'guardian'
+    if (v2Session.kind === 'helper') role = 'helper'
+
+    const session: Session = {
+      kind: v2Session.kind === 'resident' ? 'resident' : 'helper',
+      userId: v2Session.deviceId,
+      householdId: v2Session.householdId,
+      membershipId: v2Session.membershipId,
+      role,
+    }
+
+    // Check role authorization
+    let roleOk = false
+    if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
+    if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
+    if (allowed.includes('resident') && session.kind === 'resident') roleOk = true
+
+    if (!roleOk) {
+      return { ok: false as const, res: fail('Forbidden', 403) }
+    }
+
+    return { ok: true as const, session }
+  }
+
+  // Fall back to old-style session
   const session = await getSession(req)
   if (!session) {
     return { ok: false as const, res: fail('Not signed in', 401) }

@@ -4,12 +4,15 @@ import { COOKIE, cookieOpts, fail, parse } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
 import { getDb } from '@/lib/db/client'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
+import { hit, clientIp } from '@/lib/ratelimit'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-const MAX_ATTEMPTS = 5
+const MAX_ATTEMPTS_PER_CODE = 5          // per IP per code
+const MAX_GLOBAL_ATTEMPTS_PER_CODE = 10 // across all IPs per code
+const OTP_VERIFY_RATE_LIMIT_WINDOW = 10 * 60 * 1000 // 10 minutes
 
 function hashOtp(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex')
@@ -25,6 +28,12 @@ export async function POST(req: NextRequest) {
 
   if (!p.data.email && !p.data.phone) {
     return fail('Please provide either an email address or a phone number', 400)
+  }
+
+  // IP-based rate limiting to prevent OTP brute force
+  const ip = clientIp(req)
+  if (!hit(`otp-verify:${ip}`, MAX_ATTEMPTS_PER_CODE, OTP_VERIFY_RATE_LIMIT_WINDOW)) {
+    return fail('Too many verification attempts. Please wait a few minutes.', 429)
   }
 
   let db
@@ -66,7 +75,7 @@ export async function POST(req: NextRequest) {
         userId,
         used:      false,
         expiresAt: { gt: now },
-        attempts:  { lt: MAX_ATTEMPTS },
+        attempts:  { lt: MAX_GLOBAL_ATTEMPTS_PER_CODE },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -83,21 +92,21 @@ export async function POST(req: NextRequest) {
 
   if (otpRecord.codeHash !== codeHash) {
     const newAttempts = otpRecord.attempts + 1
-    const remaining   = MAX_ATTEMPTS - newAttempts
+    const remaining   = MAX_GLOBAL_ATTEMPTS_PER_CODE - newAttempts
 
     try {
       await db.otpCode.update({
         where: { id: otpRecord.id },
         data: {
           attempts: newAttempts,
-          used:     newAttempts >= MAX_ATTEMPTS,
+          used:     newAttempts >= MAX_GLOBAL_ATTEMPTS_PER_CODE,
         },
       })
     } catch (e) {
       console.error('[VERIFY-OTP] Failed to increment attempt count', e)
     }
 
-    if (newAttempts >= MAX_ATTEMPTS) {
+    if (newAttempts >= MAX_GLOBAL_ATTEMPTS_PER_CODE) {
       return fail('Too many incorrect attempts. Please request a new sign-in code.', 401)
     }
     return fail(

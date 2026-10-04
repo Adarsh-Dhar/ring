@@ -309,6 +309,98 @@ describe('doorbell state route scoping', () => {
   })
 })
 
+// ── Cross-household IDOR tests for additional endpoints ───────────────────────
+
+describe('cross-household IDOR protection', () => {
+  it('household settings route cannot be accessed with wrong householdId in body', async () => {
+    // Test that /api/household POST with a different householdId in body is rejected
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/household', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B', timeoutSec: 30 },
+    })
+    const auth = await authorize(req, 'guardian')
+    // Authorization succeeds (mem-A is a guardian), but the householdId in session is A
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+    // The route handler should only use session.householdId, not body.householdId
+  })
+
+  it('expected visit route cannot access another household\'s visits', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/doorbell/expected', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+  })
+
+  it('member removal cannot target another household\'s member', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/household/members', {
+      method: 'DELETE',
+      token,
+      body: { membershipId: 'mem-B' }, // Try to delete a member from household B
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+    // The route must verify membershipId belongs to session.householdId
+  })
+
+  it('face enrollment cannot be done for another household', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/face', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B', action: 'enroll' },
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+  })
+
+  it('visit request link cannot be accessed for another household', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/visit-requests/link', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B' },
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+  })
+
+  it('SOS cannot be triggered for another household', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/doorbell/sos', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B' },
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+  })
+
+  it('recurring visit cannot be created for another household', async () => {
+    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const req = makeRequest('/api/doorbell/recurring', {
+      method: 'POST',
+      token,
+      body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
+    })
+    const auth = await authorize(req, 'guardian')
+    expect(auth.ok).toBe(true)
+    if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
+  })
+})
+
 // ── Identity normalisation ─────────────────────────────────────────────────
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
 

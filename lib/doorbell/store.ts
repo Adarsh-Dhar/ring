@@ -115,6 +115,7 @@ interface HouseholdState {
   plannedMode:    PlannedMode
   cases:          DoorCase[]
   offline:        boolean
+  dbHealthy:      boolean
   timeoutSec:     number
   quiet:          Quiet
   expected:       ExpectedVisit[]
@@ -246,6 +247,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       plannedMode: asMode((household as any).plannedMode),
       cases,
       offline: false,
+      dbHealthy: true,
       timeoutSec: household.timeoutSec || DEFAULT_ESCALATION_SECONDS,
       quiet: { enabled: household.quietEnabled, startHour: household.quietStartHour, endHour: household.quietEndHour },
       expected,
@@ -266,6 +268,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       plannedMode: 'helper',
       cases: [],
       offline: false,
+      dbHealthy: false,
       timeoutSec: DEFAULT_ESCALATION_SECONDS,
       quiet: { enabled: false, startHour: 22, endHour: 6 },
       expected: [],
@@ -501,6 +504,7 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
     emergencyNumber: household.emergencyNumber,
     timeoutSec:  state.timeoutSec,
     offline:     state.offline || anyDeviceOffline(state),
+    dbHealthy:   state.dbHealthy,
     helpers:     memberships.map(m => pub(m, resident)),
     current:     resident ? currentForResident : cur,
     history:     resident ? [] : state.cases.slice(0, 10),
@@ -1112,6 +1116,16 @@ export async function tick(householdId?: string) {
 
     const now = Date.now()
     state.lastTickAt = now
+
+    // Check database connectivity during tick
+    try {
+      await getDb().$queryRaw`SELECT 1`
+      state.dbHealthy = true
+    } catch (e) {
+      state.dbHealthy = false
+      console.error('[TICK] Database connectivity check failed for household', householdId, e)
+    }
+
     warnIfAlertsFailing(state, now)
 
     for (const c of state.cases) {
@@ -1177,6 +1191,16 @@ export async function getHealth() {
   // "ready" means the app is running and has at least one household loaded.
   // It does NOT require an active case — that was wrong and caused constant 503s.
   const householdsLoaded = states.length
+
+  // Check database connectivity
+  let dbHealthy = true
+  try {
+    await getDb().$queryRaw`SELECT 1`
+  } catch (e) {
+    dbHealthy = false
+    console.error('[HEALTH] Database connectivity check failed', e)
+  }
+
   return {
     tickAgeMs:        states.length > 0 ? now - Math.max(...states.map(s => s.lastTickAt)) : null,
     ready:            true,   // app is alive; householdsLoaded tells you how many are in memory
@@ -1184,6 +1208,7 @@ export async function getHealth() {
     anyDeviceOffline: states.some(s => anyDeviceOffline(s)),
     openCases:        states.reduce((sum, s) => sum + s.cases.filter(c => c.status === 'waiting').length, 0),
     alerts:           alertStatus(now),
+    dbHealthy,
   }
 }
 

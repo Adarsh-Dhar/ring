@@ -50,15 +50,16 @@ export default function PairPage() {
         <form onSubmit={handlePair} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Enter the 6-digit code from your guardian
+              Enter the 6-character code from your guardian
             </label>
             <input
               type="text"
               value={code}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
               maxLength={6}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-2xl tracking-widest uppercase"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-center text-2xl tracking-widest uppercase font-mono"
               placeholder="ABC123"
+              autoComplete="off"
             />
           </div>
           <button

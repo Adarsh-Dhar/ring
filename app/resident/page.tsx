@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
+import { useRealtime } from '../hooks/useRealtime'
 import LiveView from '../helper/LiveView'
 import RegularApprovals from './RegularApprovals'
 
@@ -9,6 +10,48 @@ import RegularApprovals from './RegularApprovals'
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
 
 export default function ResidentPage() {
+  // Try SSE for realtime updates, fall back to polling
+  const [householdId, setHouseholdId] = useState<string | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+
+  // Extract householdId from session on mount
+  useEffect(() => {
+    const fetchSession = async () => {
+      try {
+        const res = await fetch('/api/session')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.kind === 'resident') {
+            setHouseholdId(data.householdId)
+            // Use the device cookie as token for SSE
+            const cookies = document.cookie.split(';')
+            const deviceCookie = cookies.find(c => c.trim().startsWith('device='))
+            if (deviceCookie) {
+              setToken(deviceCookie.split('=')[1])
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[RESIDENT] Failed to get session for SSE:', e)
+      }
+    }
+    fetchSession()
+  }, [])
+
+  // SSE connection (if householdId is available)
+  const { state: realtimeState, connected: sseConnected, error: sseError } = useRealtime({
+    householdId: householdId || '',
+    token: token || '',
+    onHeartbeatLost: () => {
+      console.warn('[RESIDENT] SSE heartbeat lost, falling back to polling')
+    },
+    onStateChange: (state) => {
+      console.log('[RESIDENT] SSE state update received:', state)
+      // Could integrate SSE state with polling state here
+    },
+  })
+
+  // Primary polling (always running, used when SSE is down or unavailable)
   const { snap, error, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
   const [, force] = useState(0)
   const [sound, setSound] = useState(false) // read aloud + beeps. Turning it on is also the tap browsers need for audio.
@@ -55,6 +98,8 @@ export default function ResidentPage() {
     screen = { icon: '🔒', title: 'Not paired', sub: 'Enter the pairing code to connect your device.', bg: 'bg-amber-700', alarm: true }
   } else if (stale || (error && !snap)) {
     screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
+  } else if (snap && !snap.dbHealthy) {
+    screen = { icon: '⚠️', title: "Can't be sure", sub: 'Keep the door closed. Call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.ready) {
     screen = { icon: '🛠️', title: 'Not ready yet', sub: 'Nobody can be alerted. Keep the door closed and call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap?.offline) {

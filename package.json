@@ -15,18 +15,30 @@
     "db:studio": "prisma studio",
     "gen:vapid": "node scripts/gen-vapid.mjs",
     "stress": "tsx tools/stress.ts",
-    "manual-tests": "tsx tools/manual-tests.ts"
+    "manual-tests": "tsx tools/manual-tests.ts",
+    "load-test": "tsx tools/load-test.ts",
+    "chaos-tests": "tsx tools/chaos-tests.ts",
+    "worker": "tsx workers/timer-worker.ts",
+    "worker:once": "tsx workers/timer-worker.ts --once"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.10",
     "@prisma/client": "^5.22.0",
+    "@sentry/node": "^11.4.0",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
+    "@simplewebauthn/types": "^12.0.0",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@vladmandic/face-api": "1.7.15",
     "dotenv": "^16.4.7",
+    "ioredis": "^6.0.0",
     "next": "15.5.18",
+    "pg-boss": "^12.36.0",
+    "qrcode": "^1.5.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
+    "resend": "^6.32.0",
     "web-push": "^3.6.7",
     "zod": "^4.3.6"
   },
@@ -39,8 +51,8 @@
     "postcss": "8.5.10",
     "prisma": "^5.22.0",
     "tailwindcss": "3.4.0",
+    "tsx": "^4.19.2",
     "typescript": "5.6.3",
-    "vitest": "^2.1.9",
-    "tsx": "^4.19.2"
+    "vitest": "^2.1.9"
   }
 }

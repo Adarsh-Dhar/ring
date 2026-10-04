@@ -15,10 +15,10 @@ export async function GET() {
     ? (h.tickAgeMs === null || h.tickAgeMs < 120_000)
     : (h.tickAgeMs !== null && h.tickAgeMs < 10_000)
 
-  // The app is healthy when it is alive and the tick loop is running.
+  // The app is healthy when it is alive, the tick loop is running, and the database is reachable.
   // We no longer require an open case ("ready" previously meant that, which
   // caused constant 503s when nobody was at the door).
-  const ok = tickOk && !h.anyDeviceOffline
+  const ok = tickOk && !h.anyDeviceOffline && h.dbHealthy
 
   return NextResponse.json(h, { status: ok ? 200 : 503 })
 }
