@@ -66,7 +66,8 @@ export function computeResidentView(state: StateInfo, household: Household): Res
   const householdTime = getHouseholdTime(now, household.timezone)
 
   // Priority 1: Night lock (highest priority - keeps door closed)
-  if (household.quietEnabled && isInQuietHours(householdTime, household.quietStartHour, household.quietEndHour)) {
+  if (state.nightLockActive || (household.quietEnabled &&
+    isInQuietHours(householdTime, household.quietStartHour, household.quietEndHour))) {
     return {
       state: 'CLOSED_KEEP_SHUT',
       message: 'Night lock active - keep door closed',
@@ -80,7 +81,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
 
   // Priority 2: Connection lost (no heartbeat in 30 seconds)
   const HEARTBEAT_TIMEOUT_MS = 30 * 1000
-  if (state.lastHeartbeat && (now.getTime() - state.lastHeartbeat.getTime() > HEARTBEAT_TIMEOUT_MS)) {
+  if (!state.lastHeartbeat || now.getTime() - state.lastHeartbeat.getTime() > HEARTBEAT_TIMEOUT_MS) {
     return {
       state: 'CLOSED_KEEP_SHUT',
       message: 'Connection lost - keep door closed',
@@ -107,7 +108,8 @@ export function computeResidentView(state: StateInfo, household: Household): Res
 
   // Priority 4: Active cases
   const activeCases = state.cases.filter(c =>
-    c.status === 'waiting' || c.status === 'open' || c.status === 'answered'
+    c.status === 'waiting' || c.status === 'open' || c.status === 'helper_checking' ||
+    c.status === 'answered' || c.status === 'no_response'
   )
 
   if (activeCases.length > 0) {
@@ -145,7 +147,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
       }
     }
 
-    if (activeCase.answer === 'call') {
+    if (activeCase.answer === 'call' || activeCase.answer === 'call_me') {
       return {
         state: 'HELPER_CHECKING',
         message: `${activeCase.answeredBy || 'Helper'} is calling you`,
@@ -171,6 +173,21 @@ export function computeResidentView(state: StateInfo, household: Household): Res
         showFaces: true,
         canOpen: false,
         helperName: activeCase.answeredBy,
+        timeSince: formatTimeSince(activeCase.createdAt),
+        caseId: activeCase.id,
+      }
+    }
+
+    // Nobody answered - fail closed
+    if (activeCase.status === 'no_response' && !activeCase.answer) {
+      return {
+        state: 'CLOSED_KEEP_SHUT',
+        message: 'Nobody answered. Keep door closed and call your helper',
+        backgroundColor: '#2d1b1b',
+        textColor: '#ffffff',
+        showVideo: false,
+        showFaces: false,
+        canOpen: false,
         timeSince: formatTimeSince(activeCase.createdAt),
         caseId: activeCase.id,
       }
@@ -211,9 +228,12 @@ export function computeResidentView(state: StateInfo, household: Household): Res
  * Get current time in household timezone
  */
 function getHouseholdTime(date: Date, timezone: string): Date {
-  // Simple timezone handling - in production would use luxon or similar
-  // For now, just return the date (assumes server is in same timezone)
-  return date
+  let hour = date.getHours()
+  try {
+    const h = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: timezone }).format(date)
+    hour = parseInt(h, 10) % 24
+  } catch {}
+  const d = new Date(date); d.setHours(hour); return d
 }
 
 /**
@@ -221,14 +241,9 @@ function getHouseholdTime(date: Date, timezone: string): Date {
  */
 function isInQuietHours(date: Date, startHour: number, endHour: number): boolean {
   const hour = date.getHours()
-
-  if (startHour < endHour) {
-    // Same day, e.g., 22:00 - 06:00
-    return hour >= startHour || hour < endHour
-  } else {
-    // Overnight, e.g., 22:00 - 06:00 (next day)
-    return hour >= startHour || hour < endHour
-  }
+  if (startHour === endHour) return false
+  if (startHour < endHour) return hour >= startHour && hour < endHour
+  return hour >= startHour || hour < endHour
 }
 
 /**

@@ -5,25 +5,19 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-
-export interface ResidentState {
-  cases: any[]
-  deviceOnline: boolean
-  lastHeartbeat: Date | null
-  household: any
-}
+import type { ResidentView } from '@/lib/state/resident-view'
 
 export interface UseRealtimeOptions {
   householdId: string
   token: string
   onHeartbeatLost?: () => void
-  onStateChange?: (state: any) => void
+  onStateChange?: (state: ResidentView) => void
 }
 
 export function useRealtime(options: UseRealtimeOptions) {
   const { householdId, token, onHeartbeatLost, onStateChange } = options
 
-  const [state, setState] = useState<ResidentState | null>(null)
+  const [state, setState] = useState<ResidentView | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -80,6 +74,7 @@ export function useRealtime(options: UseRealtimeOptions) {
     eventSource.addEventListener('state', (event) => {
       try {
         const data = JSON.parse(event.data)
+        // data.view is the ResidentView object
         setState(data.view)
         onStateChange?.(data.view)
       } catch (error) {

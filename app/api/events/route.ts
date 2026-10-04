@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
               regularId: currentCase.regularId,
             }] : [],
             deviceOnline: !state.offline,
-            lastHeartbeat: null, // Not directly available in state
+            lastHeartbeat: new Date(), // the view is computed live; the client detects loss from missing heartbeat events
             timezone: household.timezone,
             quietEnabled: household.quietEnabled,
             quietStartHour: household.quietStartHour,

@@ -44,15 +44,21 @@ export default function ResidentPage() {
     token: token || '',
     onHeartbeatLost: () => {
       console.warn('[RESIDENT] SSE heartbeat lost, showing fail-closed state')
-      // Force refresh to get latest state via polling
+      setSseLost(true)
       refresh()
     },
     onStateChange: (state) => {
       console.log('[RESIDENT] SSE state update received:', state?.state)
       // Could integrate SSE state with polling state here
-      // For now, we keep polling as the primary source for safety
     },
   })
+
+  // Clear sseLost when SSE reconnects
+  useEffect(() => {
+    if (sseConnected) {
+      setSseLost(false)
+    }
+  }, [sseConnected])
 
   // Primary polling (always running, used when SSE is down or unavailable)
   const { snap, error, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -60,6 +66,7 @@ export default function ResidentPage() {
   const [sound, setSound] = useState(false) // read aloud + beeps. Turning it on is also the tap browsers need for audio.
   const [showVideo, setShowVideo] = useState(false) // toggle to show/hide video feed
   const [vibrate, setVibrate] = useState(true) // the person can turn buzzing off; remembered on this device
+  const [sseLost, setSseLost] = useState(false) // SSE connection lost
   useEffect(() => { try { if (localStorage.getItem('resident.vibrate') === '0') setVibrate(false) } catch {} }, [])
   const toggleVibrate = () => setVibrate((v) => { try { localStorage.setItem('resident.vibrate', v ? '0' : '1') } catch {} return !v })
   const audio = useRef<AudioContext | null>(null)
@@ -101,6 +108,8 @@ export default function ResidentPage() {
     screen = { icon: '🔒', title: 'Not paired', sub: 'Enter the pairing code to connect your device.', bg: 'bg-amber-700', alarm: true }
   } else if (stale || (error && !snap)) {
     screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
+  } else if (sseLost || (realtimeState?.state === 'CLOSED_KEEP_SHUT' && realtimeState?.canOpen === false)) {
+    screen = { icon: '⚠️', title: 'Keep the door closed', sub: `Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.dbHealthy) {
     screen = { icon: '⚠️', title: "Can't be sure", sub: 'Keep the door closed. Call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.ready) {
