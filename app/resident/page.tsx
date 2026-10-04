@@ -196,7 +196,7 @@ export default function ResidentPage() {
         )}
         {showVideo && c && c.deviceId && (
           <div className="w-full max-w-md mt-4">
-            <LiveView caseId={c.id} />
+            <LiveView caseId={c.id} deviceId={c.deviceId} />
           </div>
         )}
       </div>

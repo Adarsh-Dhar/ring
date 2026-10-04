@@ -130,7 +130,7 @@ export default function HelperPage() {
 
           {c.kind === 'sos' ? (
             c.deviceId ? (
-              <LiveView caseId={c.id} />
+              <LiveView caseId={c.id} deviceId={c.deviceId} />
             ) : (
               <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
                 No Ring device connected for this case.

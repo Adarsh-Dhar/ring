@@ -236,7 +236,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true })
 
       case 'createDevice': {
-        const code   = crypto.randomBytes(3).toString('base64url').toUpperCase().slice(0, 6)
+        // Generate a 6-character uppercase alphanumeric code (no ambiguous chars like 0/O, 1/I).
+        // Uses crypto.randomInt for uniform distribution across the alphabet.
+        const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  // 32 chars — no 0/O/1/I
+        const code = Array.from({ length: 6 }, () => ALPHABET[crypto.randomInt(ALPHABET.length)]).join('')
         const device = await createResidentDevice(householdId, code)
         return NextResponse.json({ ok: true, code, deviceId: device.id })
       }

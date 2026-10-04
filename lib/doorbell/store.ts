@@ -510,6 +510,7 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
     checkin:   { doneToday: checkedInToday(state, now, tz), dueHour: CHECKIN_HOUR },
     quietNow:  isQuiet(state, now),
     alerts:    resident ? null : alertStatus(now),
+    devices:   state.devices,
   }
 }
 
@@ -645,7 +646,7 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   if (existing && existing.status === 'waiting') {
     addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
     await updateCase(existing.id, existing)
-    return existing
+    return null  // Return null to indicate the event was merged into an existing case
   }
 
   return openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)

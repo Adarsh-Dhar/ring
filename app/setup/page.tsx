@@ -207,7 +207,14 @@ export default function SetupPage() {
     <main className="mx-auto min-h-screen max-w-2xl p-4 text-white">
       <header className="mb-4 flex items-center justify-between">
         <h1 className="text-xl font-bold">Setup</h1>
-        <button onClick={() => router.push('/login')} className="text-sm text-cyan-400">Logout</button>
+        <div className="flex items-center gap-3">
+          {process.env.NEXT_PUBLIC_DEMO_MODE === '1' && (
+            <a href="/sim" className="text-sm text-amber-400 hover:text-amber-300">
+              🎮 Simulator
+            </a>
+          )}
+          <button onClick={() => router.push('/login')} className="text-sm text-cyan-400">Logout</button>
+        </div>
       </header>
 
       {err  && <p className="mb-3 rounded-lg bg-red-900 p-3 text-sm">{err}</p>}

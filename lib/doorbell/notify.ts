@@ -91,6 +91,12 @@ export async function pushToMembership(membershipId: string, payload: PushPayloa
 }
 
 export async function sendSms(to: string, body: string, opts: { urgent?: boolean } = {}): Promise<boolean> {
+  // Demo mode: log instead of sending real SMS (avoids costs and texting real phones during demos)
+  if (process.env.DEMO_NO_SMS === '1') {
+    console.log(`[SMS DEMO] to=${to} body="${body}"`)
+    return true
+  }
+
   const sid = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from = process.env.TWILIO_FROM
