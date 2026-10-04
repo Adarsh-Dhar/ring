@@ -223,6 +223,11 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
   // Try v2 device session first
   const v2Session = await getV2DeviceSession(req)
   if (v2Session) {
+    // Visitor devices are only allowed on visitor-specific routes
+    if (v2Session.kind === 'visitor' && !allowed.includes('device')) {
+      return { ok: false as const, res: fail('Visitor devices cannot access this endpoint', 403) }
+    }
+
     // Convert v2 device session to old-style Session format for compatibility
     let role: 'guardian' | 'helper' | undefined
     if (v2Session.kind === 'guardian') role = 'guardian'

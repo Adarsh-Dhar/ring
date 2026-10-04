@@ -142,6 +142,15 @@ vi.mock('@/lib/db/client', () => {
     // helper in A only
     'mem-helper-A': { id: 'mem-helper-A', userId: 'user-helper', householdId: 'hh-A', role: 'helper', consent: 'approved', tokenEpoch: 1 },
   }
+  const v2Devices: Record<string, {
+    id: string; householdId: string; kind: string; memberId?: string
+    revokedAt: Date | null; lastSeenAt: Date
+  }> = {
+    'device-A-resident': { id: 'device-A-resident', householdId: 'hh-A', kind: 'resident', revokedAt: null, lastSeenAt: new Date() },
+    'device-A-helper': { id: 'device-A-helper', householdId: 'hh-A', kind: 'helper', memberId: 'mem-helper-A', revokedAt: null, lastSeenAt: new Date() },
+    'device-A-visitor': { id: 'device-A-visitor', householdId: 'hh-A', kind: 'visitor', revokedAt: null, lastSeenAt: new Date() },
+    'device-B-resident': { id: 'device-B-resident', householdId: 'hh-B', kind: 'resident', revokedAt: null, lastSeenAt: new Date() },
+  }
 
   return {
     getDb: () => ({
@@ -166,6 +175,18 @@ vi.mock('@/lib/db/client', () => {
       },
       residentDevice: {
         findUnique: () => Promise.resolve(null),
+      },
+      v2Device: {
+        findUnique: ({ where, include }: any) => {
+          const id = where.id
+          const d = v2Devices[id]
+          if (!d) return Promise.resolve(null)
+          return Promise.resolve({
+            ...d,
+            membership: d.memberId ? { ...memberships[d.memberId] } : null,
+            household: { id: d.householdId, ...households[d.householdId] },
+          })
+        },
       },
     }),
   }
