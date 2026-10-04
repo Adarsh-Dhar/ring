@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { generateMagicLinkToken, verifyMagicLinkToken, sendMagicLink } from '@/lib/auth/magic-link'
+import { verifyMagicLink, sendMagicLink } from '@/lib/auth/magic-link'
 import { getDb } from '@/lib/db/client'
 
 export const dynamic = 'force-dynamic'
@@ -17,33 +17,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const db = getDb()
-    const user = await db.user.findUnique({
-      where: { email },
-    })
+    // Generate magic link
+    const { loginUrl } = await sendMagicLink(email)
 
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Get user's household
-    const membership = await db.membership.findFirst({
-      where: { userId: user.id },
-      include: { household: true },
-    })
-
-    if (!membership) {
-      return NextResponse.json({ error: 'User not a member of any household' }, { status: 400 })
-    }
-
-    // Generate magic link token
-    const token = generateMagicLinkToken(user.id, membership.householdId, email, membership.id)
-    const magicLinkUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/magic-link/verify?token=${token}`
-
-    // Send magic link via email
-    await sendMagicLink(email, magicLinkUrl)
-
-    return NextResponse.json({ success: true, message: 'Magic link sent' })
+    return NextResponse.json({ success: true, loginUrl })
   } catch (error) {
     console.error('[MAGIC-LINK] Failed to send magic link:', error)
     return NextResponse.json({ error: 'Failed to send magic link' }, { status: 500 })
@@ -61,27 +38,38 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const tokenData = verifyMagicLinkToken(token)
+    const result = await verifyMagicLink(token)
 
-    if (!tokenData) {
+    if (!result.success || !result.userId) {
       return NextResponse.json({ error: 'Invalid or expired token' }, { status: 400 })
+    }
+
+    // Get user's household
+    const db = getDb()
+    const membership = await db.membership.findFirst({
+      where: { userId: result.userId },
+      include: { household: true },
+    })
+
+    if (!membership) {
+      return NextResponse.json({ error: 'User not a member of any household' }, { status: 400 })
     }
 
     // Create session token
     const { makeToken } = await import('@/lib/auth')
     const sessionToken = makeToken({
       kind: 'helper',
-      sub: tokenData.userId,
-      householdId: tokenData.householdId,
-      membershipId: tokenData.membershipId,
-      userId: tokenData.userId,
+      sub: membership.id,
+      householdId: membership.householdId,
+      membershipId: membership.id,
+      userId: result.userId,
       epoch: 1,
       exp: Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60), // 90 days
     })
 
     // Set cookie
     const response = NextResponse.json({ success: true })
-    response.cookies.set('session', sessionToken, {
+    response.cookies.set('db_session', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',

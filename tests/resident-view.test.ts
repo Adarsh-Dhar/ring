@@ -193,7 +193,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       cases: [
         {
           id: 'case1',
-          status: 'helper_checking',
+          status: 'answered',
           kind: 'doorbell',
           createdAt: new Date(),
           helperIndex: 0,
@@ -272,7 +272,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       cases: [
         {
           id: 'case1',
-          status: 'helper_checking',
+          status: 'answered',
           kind: 'doorbell',
           createdAt: new Date(),
           helperIndex: 0,
@@ -360,7 +360,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       cases: [
         {
           id: 'case1',
-          status: 'helper_checking',
+          status: 'answered',
           kind: 'doorbell',
           createdAt: new Date(),
           helperIndex: 0,

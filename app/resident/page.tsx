@@ -43,11 +43,14 @@ export default function ResidentPage() {
     householdId: householdId || '',
     token: token || '',
     onHeartbeatLost: () => {
-      console.warn('[RESIDENT] SSE heartbeat lost, falling back to polling')
+      console.warn('[RESIDENT] SSE heartbeat lost, showing fail-closed state')
+      // Force refresh to get latest state via polling
+      refresh()
     },
     onStateChange: (state) => {
-      console.log('[RESIDENT] SSE state update received:', state)
+      console.log('[RESIDENT] SSE state update received:', state?.state)
       // Could integrate SSE state with polling state here
+      // For now, we keep polling as the primary source for safety
     },
   })
 

@@ -17,7 +17,7 @@ export interface UseRealtimeOptions {
   householdId: string
   token: string
   onHeartbeatLost?: () => void
-  onStateChange?: (state: ResidentState) => void
+  onStateChange?: (state: any) => void
 }
 
 export function useRealtime(options: UseRealtimeOptions) {
@@ -51,8 +51,9 @@ export function useRealtime(options: UseRealtimeOptions) {
   }, [handleHeartbeatLost])
 
   useEffect(() => {
-    // Build SSE URL
-    const url = `/api/events?householdId=${householdId}`
+    // Build SSE URL - householdId is no longer in query string
+    // Server uses session to determine household
+    const url = `/api/events`
 
     // Create EventSource
     const eventSource = new EventSource(url, {
@@ -69,31 +70,22 @@ export function useRealtime(options: UseRealtimeOptions) {
       resetHeartbeatTimer()
     }
 
-    // Handle messages
-    eventSource.onmessage = (event) => {
-      // Heartbeat
-      if (event.data === ': heartbeat') {
-        lastHeartbeatRef.current = Date.now()
-        resetHeartbeatTimer()
-        return
-      }
+    // Handle heartbeat events
+    eventSource.addEventListener('heartbeat', (event) => {
+      lastHeartbeatRef.current = Date.now()
+      resetHeartbeatTimer()
+    })
 
-      // State update
+    // Handle state events
+    eventSource.addEventListener('state', (event) => {
       try {
         const data = JSON.parse(event.data)
-
-        if (data.error) {
-          console.error('[SSE] Server error:', data.error)
-          setError(data.error)
-          return
-        }
-
-        setState(data)
-        onStateChange?.(data)
+        setState(data.view)
+        onStateChange?.(data.view)
       } catch (error) {
-        console.error('[SSE] Failed to parse message:', error)
+        console.error('[SSE] Failed to parse state message:', error)
       }
-    }
+    })
 
     // Handle errors
     eventSource.onerror = (error) => {
@@ -113,7 +105,7 @@ export function useRealtime(options: UseRealtimeOptions) {
         clearTimeout(heartbeatTimeoutRef.current)
       }
     }
-  }, [householdId, onStateChange, resetHeartbeatTimer])
+  }, [onStateChange, resetHeartbeatTimer])
 
   return {
     state,

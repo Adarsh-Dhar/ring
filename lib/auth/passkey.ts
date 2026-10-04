@@ -1,45 +1,59 @@
 /**
- * WebAuthn passkey authentication library
- * Implements passkey registration and verification
+ * WebAuthn / Passkey authentication for v2 architecture
+ * Replaces OTP for most logins; OTP remains as fallback
  */
 
-import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server'
+import {
+  generateRegistrationOptions,
+  generateAuthenticationOptions,
+  verifyRegistrationResponse,
+  verifyAuthenticationResponse,
+} from '@simplewebauthn/server'
+import type {
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
+} from '@simplewebauthn/browser'
+
 import { getDb } from '@/lib/db/client'
 
-const RP_ID = process.env.NEXT_PUBLIC_APP_URL?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') || 'localhost'
+const RP_ID = process.env.APP_URL ? new URL(process.env.APP_URL).hostname : 'localhost'
 const RP_NAME = 'Doorbell Helper'
-const RP_ORIGIN = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+const ORIGIN = process.env.APP_URL || 'http://localhost:3000'
+
+/**
+ * Convert base64 string to Uint8Array
+ */
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = Buffer.from(base64, 'base64').toString('binary')
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes
+}
 
 /**
  * Generate WebAuthn registration options for a new passkey
  */
 export async function generatePasskeyRegistrationOptions(userId: string, userName: string) {
   const db = getDb()
-  const user = await db.user.findUnique({
-    where: { id: userId },
-  })
 
-  if (!user) {
-    throw new Error('User not found')
-  }
-
-  // Get existing passkeys to exclude
-  const passkeys = await db.passkey.findMany({
+  // Get existing passkeys for this user to exclude from credentials
+  const existingPasskeys = await db.passkey.findMany({
     where: { memberId: userId },
     select: { credentialId: true },
   })
 
-  const excludeCredentials = passkeys.map(pk => ({
-    id: pk.credentialId,
-    transports: ['internal', 'hybrid'] as ('internal' | 'hybrid')[],
-  }))
-
   const options = await generateRegistrationOptions({
-    rpID: RP_ID,
     rpName: RP_NAME,
-    userID: new TextEncoder().encode(userId),
-    userName: userName || user.name || 'User',
-    excludeCredentials,
+    rpID: RP_ID,
+    userID: userId as unknown as Uint8Array,
+    userName,
+    // Don't allow user to register the same device twice
+    excludeCredentials: existingPasskeys.map(pk => ({
+      id: pk.credentialId,
+      type: 'public-key',
+    })),
     authenticatorSelection: {
       authenticatorAttachment: 'platform',
       userVerification: 'preferred',
@@ -54,121 +68,142 @@ export async function generatePasskeyRegistrationOptions(userId: string, userNam
  */
 export async function verifyPasskeyRegistration(
   userId: string,
-  response: any,
+  response: RegistrationResponseJSON,
   expectedChallenge: string
 ) {
   const db = getDb()
-  const verification = await verifyRegistrationResponse({
-    response,
-    expectedChallenge,
-    expectedOrigin: RP_ORIGIN,
-    expectedRPID: RP_ID,
-  })
 
-  if (!verification.verified) {
-    throw new Error('Passkey registration verification failed')
+  try {
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: ORIGIN,
+      expectedRPID: RP_ID,
+    })
+
+    if (!verification.verified) {
+      return { verified: false, error: 'Passkey verification failed' }
+    }
+
+    const { registrationInfo } = verification
+    if (!registrationInfo) {
+      return { verified: false, error: 'No registration info' }
+    }
+
+    const { credential } = registrationInfo
+
+    // Save the passkey to the database
+    await db.passkey.create({
+      data: {
+        memberId: userId,
+        credentialId: credential.id,
+        publicKey: Buffer.from(credential.publicKey).toString('base64'),
+        counter: credential.counter,
+      },
+    })
+
+    return { verified: true }
+  } catch (error) {
+    console.error('[PASSKEY] Registration verification failed:', error)
+    return { verified: false, error: 'Verification failed' }
   }
-
-  const { registrationInfo } = verification
-
-  if (!registrationInfo) {
-    throw new Error('No registration info in verification')
-  }
-
-  // Save the passkey
-  await db.passkey.create({
-    data: {
-      memberId: userId,
-      credentialId: registrationInfo.credential?.id || '',
-      publicKey: JSON.stringify(registrationInfo.credential?.publicKey || ''),
-      counter: registrationInfo.credential?.counter || 0,
-    },
-  })
-
-  return verification
 }
 
 /**
- * Generate WebAuthn authentication options for an existing passkey
+ * Generate WebAuthn authentication options for login
  */
-export async function generatePasskeyAuthenticationOptions(userId: string) {
+export async function generatePasskeyAuthenticationOptions(userIdentifier: string) {
   const db = getDb()
+
+  // Find the user by email or phone
+  const user = await db.user.findFirst({
+    where: {
+      OR: [{ email: userIdentifier }, { phone: userIdentifier }],
+    },
+  })
+
+  if (!user) {
+    throw new Error('User not found')
+  }
+
+  // Get all passkeys for this user
   const passkeys = await db.passkey.findMany({
-    where: { memberId: userId },
-    select: { credentialId: true, publicKey: true, counter: true },
+    where: { memberId: user.id },
+    select: { credentialId: true },
   })
 
   if (passkeys.length === 0) {
-    throw new Error('No passkeys found for user')
+    throw new Error('No passkeys registered for this user')
   }
-
-  const allowCredentials = passkeys.map(pk => ({
-    id: pk.credentialId,
-    transports: ['internal', 'hybrid'] as ('internal' | 'hybrid')[],
-  }))
 
   const options = await generateAuthenticationOptions({
     rpID: RP_ID,
     userVerification: 'preferred',
-    allowCredentials,
+    allowCredentials: passkeys.map(pk => ({
+      id: pk.credentialId,
+      type: 'public-key',
+    })),
   })
 
-  return options
+  return { options, userId: user.id }
 }
 
 /**
  * Verify WebAuthn authentication response
  */
 export async function verifyPasskeyAuthentication(
-  response: any,
+  response: AuthenticationResponseJSON,
   expectedChallenge: string
 ) {
   const db = getDb()
-  
-  // Get the authenticator from the credential ID in the response
-  const authenticator = await db.passkey.findUnique({
-    where: { credentialId: response.id },
-    select: { credentialId: true, publicKey: true, counter: true, memberId: true },
-  })
-
-  if (!authenticator) {
-    throw new Error('Passkey not found')
-  }
 
   try {
+    const credentialID = response.id
+
+    // Find the passkey
+    const passkey = await db.passkey.findUnique({
+      where: { credentialId: credentialID },
+      include: { membership: true },
+    })
+
+    if (!passkey) {
+      return { verified: false, error: 'Passkey not found' }
+    }
+
     const verification = await verifyAuthenticationResponse({
       response,
       expectedChallenge,
-      expectedOrigin: RP_ORIGIN,
+      expectedOrigin: ORIGIN,
       expectedRPID: RP_ID,
       credential: {
-        id: authenticator.credentialId,
-        publicKey: JSON.parse(authenticator.publicKey),
-        counter: authenticator.counter,
-        transports: ['internal', 'hybrid'] as ('internal' | 'hybrid')[],
+        id: passkey.credentialId,
+        publicKey: new Uint8Array(Buffer.from(passkey.publicKey, 'base64')),
+        counter: passkey.counter,
       },
-      requireUserVerification: false,
     })
 
     if (!verification.verified) {
-      throw new Error('Passkey authentication verification failed')
+      return { verified: false, error: 'Authentication failed' }
     }
 
     const { authenticationInfo } = verification
-
     if (!authenticationInfo) {
-      throw new Error('No authentication info in verification')
+      return { verified: false, error: 'No authentication info' }
     }
 
-    // Update the passkey counter
-    await db.passkey.updateMany({
-      where: { credentialId: authenticationInfo.credentialID },
+    // Update the counter
+    await db.passkey.update({
+      where: { id: passkey.id },
       data: { counter: authenticationInfo.newCounter },
     })
 
-    return { verification, userId: authenticator.memberId }
+    return {
+      verified: true,
+      membershipId: passkey.membership.id,
+      householdId: passkey.membership.householdId,
+    }
   } catch (error) {
-    console.error('[PASSKEY] Verification error:', error)
-    throw new Error('Passkey authentication verification failed')
+    console.error('[PASSKEY] Authentication verification failed:', error)
+    return { verified: false, error: 'Verification failed' }
   }
 }

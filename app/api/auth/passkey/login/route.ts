@@ -46,38 +46,45 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const { verification, userId } = await verifyPasskeyAuthentication(response, expectedChallenge)
+    const result = await verifyPasskeyAuthentication(response, expectedChallenge)
     
-    // Get user's household and role
+    if (!result.verified) {
+      return NextResponse.json({ error: result.error || 'Authentication failed' }, { status: 400 })
+    }
+
+    if (!result.membershipId || !result.householdId) {
+      return NextResponse.json({ error: 'Invalid authentication result' }, { status: 400 })
+    }
+
+    // Get membership to get userId
     const db = getDb()
-    const membership = await db.membership.findFirst({
-      where: { userId },
-      include: { household: true },
+    const membership = await db.membership.findUnique({
+      where: { id: result.membershipId },
+      include: { user: true },
     })
 
     if (!membership) {
-      return NextResponse.json({ error: 'User not a member of any household' }, { status: 400 })
+      return NextResponse.json({ error: 'Membership not found' }, { status: 400 })
     }
 
     // Create session token
     const { makeToken } = await import('@/lib/auth')
     const sessionToken = makeToken({
       kind: 'helper',
-      sub: userId,
-      householdId: membership.householdId,
+      sub: membership.id,
+      householdId: result.householdId,
       membershipId: membership.id,
-      userId,
+      userId: membership.userId,
       epoch: 1,
       exp: Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60), // 90 days
     })
 
-    const result = NextResponse.json({ 
+    const responseResult = NextResponse.json({ 
       verified: true, 
       role: membership.role,
-      verification 
     })
     
-    result.cookies.set('session', sessionToken, {
+    responseResult.cookies.set('db_session', sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
@@ -85,7 +92,7 @@ export async function PUT(request: NextRequest) {
       path: '/',
     })
 
-    return result
+    return responseResult
   } catch (error) {
     console.error('[PASSKEY] Authentication verification failed:', error)
     return NextResponse.json({ error: 'Authentication failed' }, { status: 400 })

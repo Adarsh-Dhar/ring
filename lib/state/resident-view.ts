@@ -107,29 +107,14 @@ export function computeResidentView(state: StateInfo, household: Household): Res
 
   // Priority 4: Active cases
   const activeCases = state.cases.filter(c =>
-    c.status === 'waiting' || c.status === 'open' || c.status === 'helper_checking'
+    c.status === 'waiting' || c.status === 'open' || c.status === 'answered'
   )
 
   if (activeCases.length > 0) {
     // Get the most recent active case
     const activeCase = activeCases.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
 
-    // Case-specific states
-    if (activeCase.status === 'helper_checking') {
-      return {
-        state: 'HELPER_CHECKING',
-        message: `${activeCase.answeredBy || 'Helper'} is checking...`,
-        backgroundColor: '#ff9800',
-        textColor: '#000000',
-        showVideo: true,
-        showFaces: true,
-        canOpen: false,
-        helperName: activeCase.answeredBy,
-        timeSince: formatTimeSince(activeCase.createdAt),
-        caseId: activeCase.id,
-      }
-    }
-
+    // Case-specific states - explicit answer wins
     if (activeCase.answer === 'safe') {
       return {
         state: 'SAFE_CONFIRM',
@@ -151,6 +136,37 @@ export function computeResidentView(state: StateInfo, household: Household): Res
         message: `${activeCase.answeredBy || 'Helper'} confirmed: NOT SAFE`,
         backgroundColor: '#f44336',
         textColor: '#ffffff',
+        showVideo: true,
+        showFaces: true,
+        canOpen: false,
+        helperName: activeCase.answeredBy,
+        timeSince: formatTimeSince(activeCase.createdAt),
+        caseId: activeCase.id,
+      }
+    }
+
+    if (activeCase.answer === 'call') {
+      return {
+        state: 'HELPER_CHECKING',
+        message: `${activeCase.answeredBy || 'Helper'} is calling you`,
+        backgroundColor: '#2196f3',
+        textColor: '#ffffff',
+        showVideo: true,
+        showFaces: true,
+        canOpen: false,
+        helperName: activeCase.answeredBy,
+        timeSince: formatTimeSince(activeCase.createdAt),
+        caseId: activeCase.id,
+      }
+    }
+
+    // Helper acknowledged but hasn't answered yet
+    if (activeCase.status === 'answered' && !activeCase.answer) {
+      return {
+        state: 'HELPER_CHECKING',
+        message: `${activeCase.answeredBy || 'Helper'} is checking...`,
+        backgroundColor: '#ff9800',
+        textColor: '#000000',
         showVideo: true,
         showFaces: true,
         canOpen: false,

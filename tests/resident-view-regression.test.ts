@@ -25,29 +25,42 @@ describe('ResidentView - Regression Tests', () => {
     preset: 'standard',
   }
 
-  it('explicit safe answer shows OK to open (not all quiet)', () => {
-    const state = {
+  // Helper to create state with a single case
+  function makeCase(overrides: Partial<{
+    status: string
+    answer?: string
+    answeredBy?: string
+  }> = {}, stateOverrides: Partial<{
+    deviceOnline: boolean
+    lastHeartbeat: Date
+    quietEnabled: boolean
+    nightLockActive: boolean
+  }> = {}) {
+    return {
       cases: [
         {
           id: 'case1',
-          status: 'helper_checking',
+          status: overrides.status || 'answered',
           kind: 'doorbell',
           createdAt: new Date(),
           helperIndex: 0,
           deadlineAt: new Date(Date.now() + 30000),
-          answer: 'safe',
-          answeredBy: 'Helper',
+          answer: overrides.answer,
+          answeredBy: overrides.answeredBy,
         },
       ],
-      deviceOnline: true,
-      lastHeartbeat: new Date(),
+      deviceOnline: stateOverrides.deviceOnline ?? true,
+      lastHeartbeat: stateOverrides.lastHeartbeat ?? new Date(),
       timezone: 'Asia/Kolkata',
-      quietEnabled: false,
+      quietEnabled: stateOverrides.quietEnabled ?? false,
       quietStartHour: 22,
       quietEndHour: 6,
-      nightLockActive: false,
+      nightLockActive: stateOverrides.nightLockActive ?? false,
     }
+  }
 
+  it('explicit safe answer shows OK to open (not all quiet)', () => {
+    const state = makeCase({ status: 'answered', answer: 'safe', answeredBy: 'Helper' })
     const view = computeResidentView(state, household)
 
     expect(view.state).toBe('SAFE_CONFIRM')
@@ -56,28 +69,7 @@ describe('ResidentView - Regression Tests', () => {
   })
 
   it('explicit not_safe answer shows keep door closed', () => {
-    const state = {
-      cases: [
-        {
-          id: 'case1',
-          status: 'helper_checking',
-          kind: 'doorbell',
-          createdAt: new Date(),
-          helperIndex: 0,
-          deadlineAt: new Date(Date.now() + 30000),
-          answer: 'not_safe',
-          answeredBy: 'Helper',
-        },
-      ],
-      deviceOnline: true,
-      lastHeartbeat: new Date(),
-      timezone: 'Asia/Kolkata',
-      quietEnabled: false,
-      quietStartHour: 22,
-      quietEndHour: 6,
-      nightLockActive: false,
-    }
-
+    const state = makeCase({ status: 'answered', answer: 'not_safe', answeredBy: 'Helper' })
     const view = computeResidentView(state, household)
 
     expect(view.state).toBe('NOT_SAFE')
@@ -86,28 +78,7 @@ describe('ResidentView - Regression Tests', () => {
   })
 
   it('helper calling does not allow opening', () => {
-    const state = {
-      cases: [
-        {
-          id: 'case1',
-          status: 'helper_checking',
-          kind: 'doorbell',
-          createdAt: new Date(),
-          helperIndex: 0,
-          deadlineAt: new Date(Date.now() + 30000),
-          answer: 'call', // Helper chose to call
-          answeredBy: 'Helper',
-        },
-      ],
-      deviceOnline: true,
-      lastHeartbeat: new Date(),
-      timezone: 'Asia/Kolkata',
-      quietEnabled: false,
-      quietStartHour: 22,
-      quietEndHour: 6,
-      nightLockActive: false,
-    }
-
+    const state = makeCase({ status: 'answered', answer: 'call', answeredBy: 'Helper' })
     const view = computeResidentView(state, household)
 
     expect(view.canOpen).toBe(false)
@@ -151,28 +122,10 @@ describe('ResidentView - Regression Tests', () => {
   })
 
   it('missing heartbeat fails closed within timeout', () => {
-    const state = {
-      cases: [
-        {
-          id: 'case1',
-          status: 'helper_checking',
-          kind: 'doorbell',
-          createdAt: new Date(),
-          helperIndex: 0,
-          deadlineAt: new Date(Date.now() + 30000),
-          answer: 'safe',
-          answeredBy: 'Helper',
-        },
-      ],
-      deviceOnline: true,
-      lastHeartbeat: new Date(Date.now() - 35000), // 35 seconds ago > 30s timeout
-      timezone: 'Asia/Kolkata',
-      quietEnabled: false,
-      quietStartHour: 22,
-      quietEndHour: 6,
-      nightLockActive: false,
-    }
-
+    const state = makeCase(
+      { status: 'answered', answer: 'safe', answeredBy: 'Helper' },
+      { lastHeartbeat: new Date(Date.now() - 35000) } // 35 seconds ago > 30s timeout
+    )
     const view = computeResidentView(state, household)
 
     expect(view.state).toBe('CLOSED_KEEP_SHUT')
@@ -188,28 +141,10 @@ describe('ResidentView - Regression Tests', () => {
       quietEndHour: 6,
     }
 
-    const state = {
-      cases: [
-        {
-          id: 'case1',
-          status: 'helper_checking',
-          kind: 'doorbell',
-          createdAt: new Date(),
-          helperIndex: 0,
-          deadlineAt: new Date(Date.now() + 30000),
-          answer: 'safe',
-          answeredBy: 'Helper',
-        },
-      ],
-      deviceOnline: true,
-      lastHeartbeat: new Date(),
-      timezone: 'Asia/Kolkata',
-      quietEnabled: true,
-      quietStartHour: 22,
-      quietEndHour: 6,
-      nightLockActive: true,
-    }
-
+    const state = makeCase(
+      { status: 'answered', answer: 'safe', answeredBy: 'Helper' },
+      { quietEnabled: true, nightLockActive: true }
+    )
     const view = computeResidentView(state, householdNight)
 
     expect(view.state).toBe('CLOSED_KEEP_SHUT')
@@ -218,32 +153,23 @@ describe('ResidentView - Regression Tests', () => {
   })
 
   it('device offline overrides safe answer', () => {
-    const state = {
-      cases: [
-        {
-          id: 'case1',
-          status: 'helper_checking',
-          kind: 'doorbell',
-          createdAt: new Date(),
-          helperIndex: 0,
-          deadlineAt: new Date(Date.now() + 30000),
-          answer: 'safe',
-          answeredBy: 'Helper',
-        },
-      ],
-      deviceOnline: false,
-      lastHeartbeat: new Date(),
-      timezone: 'Asia/Kolkata',
-      quietEnabled: false,
-      quietStartHour: 22,
-      quietEndHour: 6,
-      nightLockActive: false,
-    }
-
+    const state = makeCase(
+      { status: 'answered', answer: 'safe', answeredBy: 'Helper' },
+      { deviceOnline: false }
+    )
     const view = computeResidentView(state, household)
 
     expect(view.state).toBe('CLOSED_KEEP_SHUT')
     expect(view.canOpen).toBe(false)
     expect(view.message).toContain('Device offline')
+  })
+
+  it('helper acknowledged but has not answered yet', () => {
+    const state = makeCase({ status: 'answered', answeredBy: 'Helper' })
+    const view = computeResidentView(state, household)
+
+    expect(view.state).toBe('HELPER_CHECKING')
+    expect(view.canOpen).toBe(false)
+    expect(view.message).toContain('checking')
   })
 })
