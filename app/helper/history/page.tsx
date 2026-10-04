@@ -40,7 +40,7 @@ export default function HistoryPage() {
             <details>
               <summary className="flex cursor-pointer justify-between gap-3">
                 <span>
-                  {c.kind === 'sos' ? '🆘 SOS' : c.recurringId ? `${c.visitIcon ?? '👤'} ${c.visitLabel ?? 'Expected visit'}` : '🚪 Visitor'} · {new Date(c.createdAt).toLocaleString()}
+                  {c.kind === 'sos' ? '🆘 SOS' : c.recurringId ? `${c.visitIcon ?? '👤'} ${c.visitLabel ?? 'Expected visit'}` : c.regularId ? `${c.visitIcon ?? '🙂'} Regular visitor: ${c.visitLabel ?? ''}` : '🚪 Visitor'} · {new Date(c.createdAt).toLocaleString()}
                 </span>
                 <span>
                   {label(c)}

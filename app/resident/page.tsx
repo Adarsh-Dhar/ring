@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDoorbell } from '../hooks/useDoorbell'
 import LiveView from '../helper/LiveView'
+import RegularApprovals from './RegularApprovals'
 
 // calm = no vibration and no beep. Used while a helper is checking, so a visitor never startles the resident.
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
@@ -202,6 +203,7 @@ export default function ResidentPage() {
       </div>
 
       <div className="w-full max-w-md flex flex-col gap-4">
+        {trusted && !c && <RegularApprovals />}
         {showCheck && (
           <div className="grid grid-cols-2 gap-4">
             <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: true })} className="rounded-3xl bg-white py-6 text-2xl font-bold text-emerald-900">

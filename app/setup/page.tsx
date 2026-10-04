@@ -1,7 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import RegularVisitorsAdmin from './RegularVisitorsAdmin'
 
 interface Member {
   id: string
@@ -54,7 +55,7 @@ const RING_ERRORS: Record<string, string> = {
   server_error:               'A server error occurred during Ring linking.',
 }
 
-export default function SetupPage() {
+function SetupPage() {
   const router       = useRouter()
   const searchParams = useSearchParams()
 
@@ -497,6 +498,8 @@ export default function SetupPage() {
         <p className="text-xs text-slate-400 mb-4">The resident only sees requests a helper has already approved.</p>
       )}
 
+      <RegularVisitorsAdmin registerUrl={visitLinkUrl ? `${visitLinkUrl}/register` : undefined} />
+
       {/* ── Face Recognition ───────────────────────────────────────────── */}
       <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">Face Recognition</h2>
       <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
@@ -597,4 +600,9 @@ export default function SetupPage() {
       </div>
     </main>
   )
+}
+
+// useSearchParams() needs a Suspense boundary or `next build` fails while prerendering /setup.
+export default function SetupPageWithSuspense() {
+  return <Suspense fallback={null}><SetupPage /></Suspense>
 }

@@ -91,6 +91,7 @@ export interface DoorCase {
   checkCodeEndsAt?: number // resident snapshot only — when the code changes next
   expectedId?:   string    // ExpectedVisit that matched (null for recurring or unplanned)
   selfVerifiedAt?: number  // set when resident confirms the passphrase
+  regularId?:    string    // RegularVisitor whose face the door camera matched (a hint for the helper, never permission)
 }
 
 /** Match result from matchPlanned() */
@@ -178,6 +179,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       checkAttempts: (c as any).checkAttempts ?? 0,
       expectedId:    (c as any).expectedId    || undefined,
       selfVerifiedAt: (c as any).selfVerifiedAt ? new Date((c as any).selfVerifiedAt).getTime() : undefined,
+      regularId:     (c as any).regularId     || undefined,
     }))
 
     const approved = await getApprovedMemberships(householdId)
@@ -651,6 +653,25 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
   void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
+  return c
+}
+
+/**
+ * The door camera recognised an approved regular visitor. Tag the open case so the helper sees who it probably is.
+ * This changes what the helper SEES. It does not answer the case, skip the helper, or open anything.
+ */
+export async function noteRegularVisitor(
+  householdId: string,
+  caseId: string,
+  r: { id: string; name: string; icon: string; strength: 'strong' | 'ok' }
+): Promise<DoorCase | null> {
+  const state = await getOrCreateState(householdId)
+  const c = state.cases.find(x => x.id === caseId)
+  if (!c || c.kind !== 'visitor' || c.regularId || c.status !== 'waiting') return null
+  c.regularId  = r.id
+  if (c.lane !== 'expected') { c.visitIcon = r.icon; c.visitLabel = r.name }
+  addLog(c, `Door camera: looks like regular visitor ${r.name} (${r.strength} match). The helper still decides.`)
+  await updateCase(c.id, c)
   return c
 }
 

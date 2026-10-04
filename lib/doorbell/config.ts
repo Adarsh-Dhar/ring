@@ -53,3 +53,16 @@ export const VISIT_LIMITS = {
   ttlHours:       Number(process.env.VISIT_REQ_TTL_H            || 48),
   resendMax:      Number(process.env.VISIT_REQ_RESEND_MAX       || 5),
 }
+
+/** Limits for the public "register as a regular visitor" page (all optional env overrides). */
+export const REGULAR_LIMITS = {
+  perIpHour:     Number(process.env.REGULAR_PER_IP_HOUR      || 3),
+  perContactDay: Number(process.env.REGULAR_PER_CONTACT_DAY  || 2),
+  perLinkDay:    Number(process.env.REGULAR_PER_LINK_DAY     || 20),
+  maxPending:    Number(process.env.REGULAR_MAX_PENDING      || 15),
+  ttlHours:      Number(process.env.REGULAR_TTL_H            || 72),
+  /** Largest photo we keep while a registration waits for approval (bytes, after the browser shrinks it). */
+  maxPhotoBytes: Number(process.env.REGULAR_MAX_PHOTO_BYTES  || 400_000),
+  /** Camera matches at or above this strength tag the door case as "regular visitor". 'strong' | 'ok' */
+  tagStrength:   (process.env.REGULAR_TAG_STRENGTH === 'ok' ? 'ok' : 'strong') as 'strong' | 'ok',
+}

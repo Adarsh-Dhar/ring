@@ -4,6 +4,7 @@ import { findActiveLink, revokeActiveLinks, createLink } from '@/lib/db/visit-re
 import { getHousehold } from '@/lib/db/households'
 import { notifyVisitor, msgs, firstName } from '@/lib/visitor-notify'
 import { newToken, hashToken } from '@/lib/visit-tokens'
+import { cancelPendingRegistrations } from '@/lib/doorbell/regular'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
 
   let cancelled: any[]
   try {
+    await cancelPendingRegistrations(hid)
     cancelled = await revokeActiveLinks(hid)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -87,6 +89,7 @@ export async function DELETE(req: NextRequest) {
 
   let cancelled: any[]
   try {
+    await cancelPendingRegistrations(hid)
     cancelled = await revokeActiveLinks(hid)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

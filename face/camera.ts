@@ -23,6 +23,14 @@ export async function fetchRingSnapshot(householdId: string, deviceId: string): 
   return null
 }
 
+/** Count a recognised regular visitor on the open case. Lives outside /face because it touches the door store. */
+export async function tagRegular(householdId: string, caseId: string | null | undefined, sighting: { faces: any[] }) {
+  try {
+    const { annotateCaseFromSighting } = await import('@/lib/doorbell/regular')
+    await annotateCaseFromSighting(householdId, caseId, sighting)
+  } catch (e) { console.error('[FACE] regular tag failed', e) }
+}
+
 export async function onCameraEvent(
   householdId: string,
   ev: { caseId?: string | null; deviceId?: string | null; image?: ImageInput; source?: string }
@@ -37,7 +45,9 @@ export async function onCameraEvent(
       source = 'ring'
       if (!image) return null
     }
-    return await recordSighting(householdId, image, { caseId: ev.caseId, deviceId: ev.deviceId, source })
+    const sighting = await recordSighting(householdId, image, { caseId: ev.caseId, deviceId: ev.deviceId, source })
+    await tagRegular(householdId, ev.caseId, sighting)
+    return sighting
   } catch (e) {
     console.error('[FACE] camera event failed', e)
     return null

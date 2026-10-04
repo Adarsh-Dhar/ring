@@ -77,6 +77,9 @@ export default function VisitRequestPage({ params }: { params: Promise<{ token: 
       <header className="mb-6">
         <h1 className="text-2xl font-bold">Ask to visit {resident}</h1>
         <p className="text-slate-400 mt-1">Fill in the details below. A helper will review and let you know.</p>
+        <a href={`/visit/${token}/register`} className="mt-3 inline-block text-sm text-cyan-400">
+          Visit often? Register your face as a regular visitor →
+        </a>
       </header>
 
       <form onSubmit={submit} className="space-y-5">

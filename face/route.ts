@@ -13,7 +13,7 @@ import { z } from 'zod'
 import { authorize, fail, parse } from '@/lib/guard'
 import { hit } from '@/lib/ratelimit'
 import { FACE } from './config'
-import { enrollFace, matchFace, listFaces, deleteFace, deleteGuest, faceStatus, FaceError, recordSighting, listSightings, deleteSightings } from './index'
+import { enrollFace, matchFace, listFaces, deleteFace, deleteGuest, faceStatus, FaceError, recordSighting, listSightings, deleteSightings, tagRegular } from './index'
 
 const image = z.string().min(100).max(8_000_000)
 
@@ -59,7 +59,11 @@ export async function POST(req: NextRequest) {
   try {
     if (b.action === 'enroll') return NextResponse.json({ ok: true, face: await enrollFace(householdId, { name: b.name, image: b.image, consent: b.consent, ref: b.ref, createdBy: userId }) })
     if (b.action === 'match')  return NextResponse.json({ ok: true, result: await matchFace(householdId, b.image, { ref: b.ref, name: b.name }) })
-    if (b.action === 'sighting')  return NextResponse.json({ ok: true, sighting: strip(await recordSighting(householdId, b.image, { caseId: b.caseId, deviceId: b.deviceId, source: 'upload' })) })
+    if (b.action === 'sighting') {
+      const sighting = await recordSighting(householdId, b.image, { caseId: b.caseId, deviceId: b.deviceId, source: 'upload' })
+      await tagRegular(householdId, b.caseId, sighting)
+      return NextResponse.json({ ok: true, sighting: strip(sighting) })
+    }
     if (b.action === 'sightings') return NextResponse.json({ ok: true, sightings: await listSightings(householdId, { caseId: b.caseId, limit: b.limit }) })
     if (b.action === 'deleteSightings') return NextResponse.json({ ok: true, removed: await deleteSightings(householdId, { caseId: b.caseId, all: b.all }) })
     // delete

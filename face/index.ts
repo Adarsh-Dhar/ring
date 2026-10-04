@@ -18,7 +18,7 @@ export { FaceError } from './types'
 export type { MatchResult, StoredFace, DetectedFace, Box } from './types'
 export { warmUp, setFaceStore, memoryFaceStore }
 export * from './sightings'
-export { onCameraEvent, fetchRingSnapshot } from './camera'
+export { onCameraEvent, fetchRingSnapshot, tagRegular } from './camera'
 
 export type ImageInput = string | Buffer
 
@@ -42,25 +42,44 @@ export function readImage(input: ImageInput): Buffer {
 
 export const faceStatus = () => ({ enabled: FACE.enabled, modelsLoaded: isLoaded(), threshold: FACE.threshold })
 
+/** Check that the picture holds exactly one clear face and return its 128 numbers. Same rules as enrollFace. */
+export async function extractDescriptor(image: ImageInput): Promise<number[]> {
+  const faces = await detectFaces(readImage(image))
+  if (faces.length === 0) throw new FaceError('no_face', 'No face found. Use a clear, front-facing photo.', 422)
+  if (faces.length > 1) throw new FaceError('multiple_faces', 'More than one face in the photo. Use a photo of one person.', 422)
+  const f = faces[0]
+  if (f.box.w < FACE.minFaceWidth) throw new FaceError('face_too_small', 'The face is too small. Move closer.', 422)
+  return f.descriptor
+}
+
+/** Save an already extracted descriptor (consent must have been recorded by the caller). */
+export async function enrollDescriptor(
+  householdId: string,
+  input: { name: string; descriptor: number[]; consentAt: Date; ref?: string; createdBy?: string }
+): Promise<{ id: string; name: string }> {
+  const name = input.name.trim()
+  if (!name) throw new FaceError('name_required', 'Name is required.', 400)
+  const store = faceStore()
+  if ((await store.count(householdId)) >= FACE.maxPerHousehold) throw new FaceError('limit', 'Too many saved faces. Delete one first.', 409)
+  const saved = await store.add({ householdId, name, ref: input.ref ?? null, descriptor: input.descriptor, consentAt: input.consentAt, createdBy: input.createdBy ?? null })
+  return { id: saved.id, name: saved.name }
+}
+
+/** Compare one descriptor with every saved guest in the household (no image needed). */
+export async function matchDescriptor(householdId: string, descriptor: number[]) {
+  return bestGuest(await faceStore().list(householdId), descriptor)
+}
+
 /** Save one consented photo of one guest. Only the 128 numbers are kept, never the picture. */
 export async function enrollFace(
   householdId: string,
   input: { name: string; image: ImageInput; consent: boolean; ref?: string; createdBy?: string }
 ): Promise<{ id: string; name: string }> {
   if (input.consent !== true) throw new FaceError('consent_required', 'The guest must agree before their face is saved.', 400)
-  const name = input.name.trim()
-  if (!name) throw new FaceError('name_required', 'Name is required.', 400)
-  const store = faceStore()
-  if ((await store.count(householdId)) >= FACE.maxPerHousehold) throw new FaceError('limit', 'Too many saved faces. Delete one first.', 409)
-
-  const faces = await detectFaces(readImage(input.image))
-  if (faces.length === 0) throw new FaceError('no_face', 'No face found. Use a clear, front-facing photo.', 422)
-  if (faces.length > 1) throw new FaceError('multiple_faces', 'More than one face in the photo. Use a photo of one person.', 422)
-  const f = faces[0]
-  if (f.box.w < FACE.minFaceWidth) throw new FaceError('face_too_small', 'The face is too small. Move closer.', 422)
-
-  const saved = await store.add({ householdId, name, ref: input.ref ?? null, descriptor: f.descriptor, consentAt: new Date(), createdBy: input.createdBy ?? null })
-  return { id: saved.id, name: saved.name }
+  if (!input.name.trim()) throw new FaceError('name_required', 'Name is required.', 400)
+  if ((await faceStore().count(householdId)) >= FACE.maxPerHousehold) throw new FaceError('limit', 'Too many saved faces. Delete one first.', 409)
+  const descriptor = await extractDescriptor(input.image)
+  return enrollDescriptor(householdId, { name: input.name, descriptor, consentAt: new Date(), ref: input.ref, createdBy: input.createdBy })
 }
 
 /**

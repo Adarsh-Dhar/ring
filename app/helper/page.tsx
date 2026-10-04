@@ -8,6 +8,7 @@ import EnableAlerts from './EnableAlerts'
 import ExpectedForm from './ExpectedForm'
 import LiveView from './LiveView'
 import VisitRequests from './VisitRequests'
+import RegularVisitors from './RegularVisitors'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -61,7 +62,7 @@ export default function HelperPage() {
           <button
             key={v}
             onClick={() => setVisitor(v)}
-            className={`rounded-xl py-3 font-semibold ${visitor === v ? 'bg-cyan-500 text-black' : 'bg-slate-700'}`}
+            className={`rounded-xl py-3 font-semibold ${visitor === v ? 'bg-cyan-500 text-black' : 'bg-slate-700'} ${v === 'known' && c?.regularId && visitor !== 'known' ? 'ring-2 ring-emerald-400' : ''}`}
           >
             {t}
           </button>
@@ -147,6 +148,12 @@ export default function HelperPage() {
           )}
           {c.ackedAt && <p className="mt-3 text-sm text-emerald-300">Seen by {snap.helpers.find((h) => h.id === c.ackedBy)?.name}.</p>}
 
+          {c.regularId && c.lane !== 'expected' && (
+            <p className="mb-3 rounded-xl bg-emerald-900 p-3 text-sm">
+              {c.visitIcon ?? '🙂'} Door camera: looks like regular visitor <b>{c.visitLabel}</b>. Check the person before you answer.
+            </p>
+          )}
+
           {(snap.expectedNow.length > 0 || snap.recurringNow.length > 0) && (
             <p className="mb-2 text-sm text-amber-300">Expected now: {[...snap.expectedNow, ...snap.recurringNow].map((e) => `${e.icon} ${e.label}`).join(', ')}</p>
           )}
@@ -168,6 +175,7 @@ export default function HelperPage() {
       )}
 
       <VisitRequests requireResidentOk={!!(snap as any).requireResidentOk} />
+      <RegularVisitors />
       <ExpectedForm items={snap.expected} onChange={refresh} />
 
       <section className="mt-6">

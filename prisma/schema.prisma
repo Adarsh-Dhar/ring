@@ -40,6 +40,7 @@ model Household {
   invites           Invite[]
   memberships       Membership[]
   recurringVisits   RecurringVisit[]
+  regularVisitors   RegularVisitor[]
   residentDevices   ResidentDevice[]
   ringConnections   RingConnection[]
   visitRequests     VisitRequest[]
@@ -138,6 +139,7 @@ model Case {
   checkAttempts  Int       @default(0)
   checkMode      String?
   expectedId     String?
+  regularId      String?
   household      Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
@@ -255,6 +257,7 @@ model VisitRequestLink {
   createdAt       DateTime       @default(now())
   revokedAt       DateTime?
   requests        VisitRequest[]
+  regularVisitors RegularVisitor[]
   household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
@@ -320,4 +323,37 @@ model FaceSighting {
 
   @@index([householdId, capturedAt])
   @@index([caseId])
+}
+
+/// A person who registered their face through the public link to become a "regular visitor".
+/// pending -> approved (a helper OR the resident said yes) | declined | cancelled | expired | removed.
+/// While pending we keep an encrypted thumbnail so the approver can SEE who it is; it is erased on any decision.
+/// On approval the descriptor is copied into GuestFace (ref = "reg:<id>"), which the camera matcher already reads.
+model RegularVisitor {
+  id          String           @id @default(cuid())
+  householdId String
+  linkId      String
+  name        String
+  purpose     String
+  note        String?
+  contact     String
+  contactKind String
+  status      String           @default("pending")
+  embedding   String?
+  photoEnc    String?
+  consentAt   DateTime
+  decidedBy   String?
+  decidedAt   DateTime?
+  faceId      String?
+  statusToken String           @unique
+  ip          String?
+  createdAt   DateTime         @default(now())
+  expiresAt   DateTime
+  household   Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  link        VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+  @@index([ip, createdAt])
+  @@index([linkId, createdAt])
+  @@index([householdId, contact, createdAt])
 }

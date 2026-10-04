@@ -34,7 +34,7 @@ const deviceTokenFrom = (req: NextRequest) => {
  */
 export async function getSession(req: NextRequest): Promise<Session | null> {
   const t = verifyToken(tokenFrom(req))
-  if (t.ok === false) return null
+  if (t.ok === false) return residentFromDevice(req)
 
   const data = t.data
 
@@ -67,6 +67,20 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
   }
 
   return null
+}
+
+/**
+ * A paired resident screen only has the db_device cookie (POST /api/session). Treat it as a resident session,
+ * so /api/doorbell/state, /verify and the regular-visitor approvals work from that screen.
+ * The token's epoch is the household's residentEpoch (that is what /api/session signs), and the device row must still exist.
+ */
+async function residentFromDevice(req: NextRequest): Promise<Session | null> {
+  const t = verifyToken(deviceTokenFrom(req))
+  if (t.ok === false || t.data.kind !== 'device') return null
+  const device = await getDb().residentDevice.findUnique({ where: { id: t.data.sub }, select: { householdId: true } })
+  if (!device || device.householdId !== t.data.householdId) return null
+  if (t.data.epoch !== (await getResidentEpoch(device.householdId))) return null
+  return { kind: 'resident', userId: t.data.sub, householdId: device.householdId }
 }
 
 /**
