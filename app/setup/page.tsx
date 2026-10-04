@@ -73,6 +73,11 @@ export default function SetupPage() {
   const [visitLinkCreatedAt, setVisitLinkCreatedAt] = useState<number | null>(null)
   const [pairingCode,        setPairingCode]        = useState('')
   const [loading,            setLoading]            = useState(false)
+  const [faceName,           setFaceName]           = useState('')
+  const [faceImage,          setFaceImage]          = useState<File | null>(null)
+  const [enrolledFaces,      setEnrolledFaces]      = useState<any[]>([])
+  const [faceStatus,         setFaceStatus]         = useState<{ enabled: boolean; modelsLoaded: boolean } | null>(null)
+  const [sightings,          setSightings]          = useState<any[]>([])
 
   // ── Handle Ring OAuth callback result from URL params ──────────────────────
   useEffect(() => {
@@ -114,6 +119,33 @@ export default function SetupPage() {
     setRequireResidentOk(d.requireResidentOk ?? false)
     setVisitLinkActive(d.visitLink?.active ?? false)
     setVisitLinkCreatedAt(d.visitLink?.createdAt ?? null)
+
+    // Load face recognition status and enrolled faces
+    try {
+      const fr = await fetch('/api/face', { cache: 'no-store' })
+      if (fr.ok) {
+        const fd = await fr.json()
+        setFaceStatus({ enabled: fd.enabled, modelsLoaded: fd.modelsLoaded })
+        setEnrolledFaces(fd.faces ?? [])
+      }
+    } catch {
+      // Face recognition may be disabled
+    }
+
+    // Load recent sightings
+    try {
+      const sr = await fetch('/api/face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sightings', limit: 10 }),
+      })
+      if (sr.ok) {
+        const sd = await sr.json()
+        setSightings(sd.sightings ?? [])
+      }
+    } catch {
+      // Sightings may fail
+    }
   }, [router])
 
   useEffect(() => { load(); loadRing() }, [load, loadRing])
@@ -199,6 +231,63 @@ export default function SetupPage() {
   const toggleResidentOk = async (v: boolean) => {
     setRequireResidentOk(v)
     await act('/api/household', { action: 'requireResidentOk', value: v })
+  }
+
+  const enrollFace = async () => {
+    if (!faceName || !faceImage) {
+      setErr('Name and photo are required')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const dataUrl = reader.result as string
+      const r = await fetch('/api/face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'enroll', name: faceName, image: dataUrl, consent: true }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setErr(j.error || 'Failed to enroll face')
+      } else {
+        setNote(`✅ Face enrolled: ${faceName}`)
+        setFaceName('')
+        setFaceImage(null)
+        load()
+      }
+    }
+    reader.readAsDataURL(faceImage)
+  }
+
+  const loadSightings = async () => {
+    try {
+      const sr = await fetch('/api/face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sightings', limit: 10 }),
+      })
+      if (sr.ok) {
+        const sd = await sr.json()
+        setSightings(sd.sightings ?? [])
+      }
+    } catch {
+      setErr('Failed to load sightings')
+    }
+  }
+
+  const deleteFace = async (id: string) => {
+    if (!confirm('Delete this face?')) return
+    const r = await fetch('/api/face', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id }),
+    })
+    if (r.ok) {
+      setNote('Face deleted')
+      load()
+    } else {
+      setErr('Failed to delete face')
+    }
   }
 
   if (!data) return <main className="p-6 text-slate-400">Loading…</main>
@@ -407,6 +496,105 @@ export default function SetupPage() {
       {requireResidentOk && (
         <p className="text-xs text-slate-400 mb-4">The resident only sees requests a helper has already approved.</p>
       )}
+
+      {/* ── Face Recognition ───────────────────────────────────────────── */}
+      <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">Face Recognition</h2>
+      <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
+        {faceStatus === null ? (
+          <p className="text-sm text-slate-400">Loading face recognition status…</p>
+        ) : !faceStatus.enabled ? (
+          <p className="text-sm text-slate-400">Face recognition is disabled. Set FACE_ENABLED=1 in .env to enable it.</p>
+        ) : (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">
+                {faceStatus.modelsLoaded ? '✅ Models loaded' : '⏳ Models loading…'}
+              </span>
+            </div>
+
+            {/* Enroll new face */}
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Enroll a face</h3>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  placeholder="Name (e.g., Adarsh)"
+                  value={faceName}
+                  onChange={(e) => setFaceName(e.target.value)}
+                  className={input}
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setFaceImage(e.target.files?.[0] ?? null)}
+                  className="text-xs text-slate-400"
+                />
+                <button
+                  onClick={enrollFace}
+                  disabled={loading || !faceName || !faceImage}
+                  className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-black disabled:opacity-50"
+                >
+                  Enroll
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">Use a clear, front-facing photo of one person. Only the face descriptor is stored, not the photo.</p>
+            </div>
+
+            {/* Enrolled faces list */}
+            {enrolledFaces.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Enrolled faces ({enrolledFaces.length})</h3>
+                <ul className="space-y-2">
+                  {enrolledFaces.map((f) => (
+                    <li key={f.id} className="flex items-center justify-between rounded-lg bg-slate-700 px-3 py-2">
+                      <span className="text-sm">
+                        {f.name} {f.ref && <span className="text-slate-400 text-xs ml-1">(ref: {f.ref})</span>}
+                      </span>
+                      <button
+                        onClick={() => deleteFace(f.id)}
+                        className="text-xs text-red-300 hover:text-red-200"
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Recent sightings */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Recent camera sightings</h3>
+                <button onClick={loadSightings} className="text-xs text-cyan-400 hover:text-cyan-300">Refresh</button>
+              </div>
+              {sightings.length === 0 ? (
+                <p className="text-xs text-slate-400">No sightings yet. Trigger a doorbell event or use the simulator to test.</p>
+              ) : (
+                <ul className="space-y-2 max-h-48 overflow-y-auto">
+                  {sightings.map((s) => (
+                    <li key={s.id} className="rounded-lg bg-slate-700 px-3 py-2 text-xs">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-slate-400">{new Date(s.capturedAt).toLocaleString()}</span>
+                        <span className="text-slate-400">{s.source}</span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {s.faces.map((f: any, i: number) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <span className={f.status === 'known' ? 'text-emerald-400' : f.status === 'ambiguous' ? 'text-amber-400' : 'text-slate-400'}>
+                              {f.status === 'known' ? '✓' : f.status === 'ambiguous' ? '?' : '?'} {f.name || 'Unknown'}
+                            </span>
+                            {f.distance && <span className="text-slate-500">({f.distance})</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </main>
   )
 }

@@ -649,7 +649,9 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
     return null  // Return null to indicate the event was merged into an existing case
   }
 
-  return openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
+  const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
+  void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
+  return c
 }
 
 export async function raiseSos(householdId: string): Promise<DoorCase> {

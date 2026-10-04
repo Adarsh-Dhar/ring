@@ -31,3 +31,15 @@ export type MatchResult = {
 export class FaceError extends Error {
   constructor(public code: string, message: string, public status = 400) { super(message) }
 }
+
+export type SightingFace = {
+  i: number; box: Box; score: number
+  status: 'known' | 'unknown' | 'ambiguous'
+  name?: string; ref?: string | null; faceId?: string
+  distance?: number; strength?: 'strong' | 'ok'
+  embedding?: string            // sealed (encrypted); never returned by the list API
+}
+export type Sighting = {
+  id: string; householdId: string; caseId?: string | null; deviceId?: string | null
+  source: string; capturedAt: Date; faceCount: number; faces: SightingFace[]
+}

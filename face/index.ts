@@ -8,7 +8,7 @@
  * Treat a match as supporting evidence, never as the only thing that opens a door.
  */
 import { FACE } from './config'
-import { distance } from './math'
+import { bestGuest } from './match'
 import { detectFaces, isLoaded, warmUp } from './engine'
 import { faceStore, setFaceStore, memoryFaceStore } from './store'
 import { FaceError, type MatchResult, type StoredFace } from './types'
@@ -17,6 +17,8 @@ export { FACE } from './config'
 export { FaceError } from './types'
 export type { MatchResult, StoredFace, DetectedFace, Box } from './types'
 export { warmUp, setFaceStore, memoryFaceStore }
+export * from './sightings'
+export { onCameraEvent, fetchRingSnapshot } from './camera'
 
 export type ImageInput = string | Buffer
 
@@ -79,26 +81,11 @@ export async function matchFace(
   if (opts.name) pool = pool.filter((p) => p.name === opts.name)
   if (pool.length === 0) return { faces: faces.length, matched: false, reason: 'no_enrolled' }
 
-  // Best (smallest) distance per guest. A guest is identified by name + ref.
-  const best = new Map<string, { face: StoredFace; d: number }>()
-  for (const p of pool) {
-    const d = distance(primary.descriptor, p.descriptor)
-    const key = `${p.name}\u0000${p.ref ?? ''}`
-    const cur = best.get(key)
-    if (!cur || d < cur.d) best.set(key, { face: p, d })
-  }
-  const ranked = [...best.values()].sort((a, b) => a.d - b.d)
-  const top = ranked[0]
-  const d = Math.round(top.d * 1000) / 1000
-
-  if (top.d > FACE.threshold) return { faces: faces.length, matched: false, reason: 'too_far', distance: d }
-  if (ranked.length > 1 && ranked[1].d - top.d < FACE.ambiguityMargin && ranked[1].d <= FACE.threshold) {
-    return { faces: faces.length, matched: false, reason: 'ambiguous', distance: d }
-  }
+  const pick = bestGuest(pool, primary.descriptor)
+  if (pick.reason !== 'match') return { faces: faces.length, matched: false, reason: pick.reason, distance: pick.distance }
   return {
-    faces: faces.length, matched: true, reason: 'match', distance: d,
-    strength: top.d <= FACE.strongThreshold ? 'strong' : 'ok',
-    guest: { name: top.face.name, ref: top.face.ref, faceId: top.face.id },
+    faces: faces.length, matched: true, reason: 'match', distance: pick.distance, strength: pick.strength,
+    guest: { name: pick.guest!.name, ref: pick.guest!.ref, faceId: pick.guest!.id },
   }
 }
 

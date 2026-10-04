@@ -15,12 +15,12 @@ export interface FaceStore {
   removeGuest(householdId: string, by: { name?: string; ref?: string }): Promise<number>
 }
 
-const seal = (d: number[]) => {
+export const seal = (d: number[]) => {
   const json = JSON.stringify(d.map((n) => Math.round(n * 1e6) / 1e6))
   const e = encrypt(json)
   return e ? 'enc:' + e : 'raw:' + json
 }
-const open = (s: string): number[] | null => {
+export const open = (s: string): number[] | null => {
   try {
     if (s.startsWith('enc:')) { const p = decrypt(s.slice(4)); return p ? JSON.parse(p) : null }
     if (s.startsWith('raw:')) return JSON.parse(s.slice(4))

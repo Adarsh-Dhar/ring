@@ -127,6 +127,7 @@ export default function SimPage() {
   const [passphrase,  setPassphrase]  = useState('')
   const [visitMins,   setVisitMins]   = useState(10)
   const [timeoutVal,  setTimeoutVal]  = useState(10)
+  const [faceImage,   setFaceImage]   = useState<File | null>(null)
 
   const logRef = useRef<HTMLUListElement>(null)
 
@@ -362,7 +363,48 @@ export default function SimPage() {
             </div>
           </section>
 
-          {/* F. Scenario presets */}
+          {/* F. Face recognition (sim doorbell upload) */}
+          <section className={SECTION}>
+            <h2 className={H2}>F. Face recognition (sim upload)</h2>
+            <div className="mb-2">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={e => setFaceImage(e.target.files?.[0] ?? null)}
+                className="text-xs text-slate-400"
+              />
+            </div>
+            <button
+              disabled={busy || !faceImage || !caseId}
+              onClick={async () => {
+                if (!faceImage) return
+                setBusy(true)
+                const reader = new FileReader()
+                reader.onload = async () => {
+                  const dataUrl = reader.result as string
+                  const r = await fetch('/api/face', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'sighting', image: dataUrl, caseId, deviceId: 'sim-doorbell' }),
+                  }).catch(() => null)
+                  if (r?.ok) {
+                    const d = await r.json().catch(() => ({}))
+                    const faces = d.sighting?.faces ?? []
+                    const faceInfo = faces.map((f: any) => f.status === 'known' ? f.name : 'unknown').join(', ')
+                    add(`Face sighting: ${faceInfo || 'no faces'}`, true)
+                  } else {
+                    add('Face sighting failed', false)
+                  }
+                  setBusy(false)
+                }
+                reader.readAsDataURL(faceImage)
+              }}
+              className={BTN}>
+              📷 Upload for face check
+            </button>
+          </section>
+
+          {/* G. Scenario presets */}
           <section className={SECTION}>
             <h2 className={H2}>F. Scenario presets</h2>
             <div className="space-y-2">
@@ -392,7 +434,7 @@ export default function SimPage() {
         {/* ── RIGHT COLUMN — live state panel ──────────────────────────────── */}
         <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
 
-          {/* G. Current case */}
+          {/* H. Current case */}
           <section>
             <h2 className={H2}>G. Live state <span className="normal-case font-normal text-slate-500">(auto-refreshes every 2 s)</span></h2>
             {!liveState ? (
@@ -467,7 +509,7 @@ export default function SimPage() {
 
           {/* Helpers */}
           <section>
-            <h2 className={H2}>Helpers</h2>
+            <h2 className={H2}>I. Helpers</h2>
             <ul className="space-y-1">
               {(liveState?.helpers ?? []).map((h, i) => (
                 <li key={h.id} className="flex items-center gap-2 text-sm">
@@ -483,7 +525,7 @@ export default function SimPage() {
 
           {/* Devices */}
           <section>
-            <h2 className={H2}>Devices</h2>
+            <h2 className={H2}>J. Devices</h2>
             {Object.keys(liveState?.devices ?? {}).length === 0
               ? <p className="text-slate-500 text-sm">No devices seen yet</p>
               : (
@@ -502,7 +544,7 @@ export default function SimPage() {
           {/* Settings summary */}
           {liveState && (
             <section>
-              <h2 className={H2}>Current settings</h2>
+              <h2 className={H2}>K. Current settings</h2>
               <ul className="text-xs text-slate-400 space-y-0.5">
                 <li>Timeout: <strong className="text-slate-200">{liveState.timeoutSec}s</strong></li>
                 <li>Planned mode: <strong className="text-slate-200">{liveState.plannedMode}</strong></li>
@@ -513,7 +555,7 @@ export default function SimPage() {
 
           {/* Action log */}
           <section>
-            <h2 className={H2}>Action log</h2>
+            <h2 className={H2}>L. Action log</h2>
             <ul ref={logRef} className="space-y-0.5 max-h-52 overflow-y-auto text-xs">
               {log.length === 0 && <li className="text-slate-500">Nothing sent yet.</li>}
               {log.map((entry, i) => (

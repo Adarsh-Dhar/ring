@@ -35,6 +35,8 @@ model Household {
   cases             Case[]
   devices           Device[]
   expectedVisits    ExpectedVisit[]
+  guestFaces        GuestFace[]
+  faceSightings     FaceSighting[]
   invites           Invite[]
   memberships       Membership[]
   recurringVisits   RecurringVisit[]
@@ -288,4 +290,34 @@ model VisitRequest {
   @@index([ip, createdAt])
   @@index([linkId, createdAt])
   @@index([householdId, contact, createdAt])
+}
+
+model GuestFace {
+  id          String    @id @default(cuid())
+  householdId String
+  name        String
+  ref         String?
+  embedding   String
+  consentAt   DateTime
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([householdId, ref])
+}
+
+model FaceSighting {
+  id          String    @id @default(cuid())
+  householdId String
+  caseId      String?
+  deviceId    String?
+  source      String
+  capturedAt  DateTime  @default(now())
+  faceCount   Int
+  faces       Json      @default("[]")
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, capturedAt])
+  @@index([caseId])
 }

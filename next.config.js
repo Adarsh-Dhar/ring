@@ -9,6 +9,8 @@ const tunnelHosts = (process.env.TUNNEL_HOST || '')
   .filter(Boolean)
 
 module.exports = {
+  serverExternalPackages: ['@vladmandic/face-api', '@tensorflow/tfjs', '@tensorflow/tfjs-backend-wasm', '@napi-rs/canvas'],
+  outputFileTracingIncludes: { '/api/face': ['./node_modules/@vladmandic/face-api/model/**'] },
   allowedDevOrigins: ['*.pinggy.link', '*.pinggy.io', '*.ngrok-free.app', '*.ngrok.app', '*.ngrok.io', '*.trycloudflare.com', '*.loca.lt', ...tunnelHosts],
   async headers() {
     return [

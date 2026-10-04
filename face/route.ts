@@ -13,7 +13,7 @@ import { z } from 'zod'
 import { authorize, fail, parse } from '@/lib/guard'
 import { hit } from '@/lib/ratelimit'
 import { FACE } from './config'
-import { enrollFace, matchFace, listFaces, deleteFace, deleteGuest, faceStatus, FaceError } from './index'
+import { enrollFace, matchFace, listFaces, deleteFace, deleteGuest, faceStatus, FaceError, recordSighting, listSightings, deleteSightings } from './index'
 
 const image = z.string().min(100).max(8_000_000)
 
@@ -21,6 +21,9 @@ const Body = z.discriminatedUnion('action', [
   z.object({ action: z.literal('enroll'), name: z.string().trim().min(1).max(60), image, consent: z.literal(true), ref: z.string().max(80).optional() }),
   z.object({ action: z.literal('match'),  image, ref: z.string().max(80).optional(), name: z.string().max(60).optional() }),
   z.object({ action: z.literal('delete'), id: z.string().max(80).optional(), name: z.string().max(60).optional(), ref: z.string().max(80).optional() }),
+  z.object({ action: z.literal('sighting'),  image, caseId: z.string().max(80).optional(), deviceId: z.string().max(120).optional() }),
+  z.object({ action: z.literal('sightings'), caseId: z.string().max(80).optional(), limit: z.number().int().min(1).max(100).optional() }),
+  z.object({ action: z.literal('deleteSightings'), caseId: z.string().max(80).optional(), all: z.boolean().optional() }),
 ])
 
 const off = () => fail('Face recognition is turned off.', 503)
@@ -48,12 +51,17 @@ export async function POST(req: NextRequest) {
   const { householdId, userId, role } = a.session
   const b = p.data
 
-  if (b.action !== 'match' && role !== 'guardian') return fail('Only a guardian can do that', 403)
-  if (!hit(`face:${householdId}:${b.action}`, b.action === 'match' ? 30 : 10, 60_000)) return fail('Too many requests', 429)
+  const strip = (s: { faces: any[] }) => ({ ...s, faces: s.faces.map(({ embedding, ...rest }) => rest) })
+
+  if (!['match', 'sighting', 'sightings'].includes(b.action) && role !== 'guardian') return fail('Only a guardian can do that', 403)
+  if (!hit(`face:${householdId}:${b.action}`, b.action === 'match' || b.action === 'sighting' ? 30 : 10, 60_000)) return fail('Too many requests', 429)
 
   try {
     if (b.action === 'enroll') return NextResponse.json({ ok: true, face: await enrollFace(householdId, { name: b.name, image: b.image, consent: b.consent, ref: b.ref, createdBy: userId }) })
     if (b.action === 'match')  return NextResponse.json({ ok: true, result: await matchFace(householdId, b.image, { ref: b.ref, name: b.name }) })
+    if (b.action === 'sighting')  return NextResponse.json({ ok: true, sighting: strip(await recordSighting(householdId, b.image, { caseId: b.caseId, deviceId: b.deviceId, source: 'upload' })) })
+    if (b.action === 'sightings') return NextResponse.json({ ok: true, sightings: await listSightings(householdId, { caseId: b.caseId, limit: b.limit }) })
+    if (b.action === 'deleteSightings') return NextResponse.json({ ok: true, removed: await deleteSightings(householdId, { caseId: b.caseId, all: b.all }) })
     // delete
     const removed = b.id ? await deleteFace(householdId, b.id) : await deleteGuest(householdId, { name: b.name, ref: b.ref })
     return NextResponse.json({ ok: true, removed })
