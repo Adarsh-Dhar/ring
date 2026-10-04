@@ -9,113 +9,150 @@ import crypto from 'crypto'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-const MAX_ATTEMPTS = 5   // wrong guesses before the code is burnt
+const MAX_ATTEMPTS = 5
 
 function hashOtp(code: string): string {
   return crypto.createHash('sha256').update(code).digest('hex')
 }
 
-/**
- * POST { email | phone, otp }
- *
- * Verifies the OTP and issues a short-lived "pending" session token.
- * The pending token carries no householdId; the caller must then either:
- *   - POST /api/auth/select-household   (existing user with memberships)
- *   - POST /api/household { action:'create', ... }  (new user / first household)
- *
- * Brute-force protection: each wrong guess increments `attempts` on the
- * OtpCode row.  After MAX_ATTEMPTS wrong guesses the code is marked used
- * and the same generic "Invalid code" response is returned.
- */
 export async function POST(req: NextRequest) {
   const p = await parse(req, z.object({
     email: z.string().email().optional(),
     phone: z.string().min(7).max(20).optional(),
-    otp:   z.string().length(6).regex(/^\d{6}$/),
+    otp:   z.string().length(6).regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
   }))
   if (p.ok === false) return p.res
 
   if (!p.data.email && !p.data.phone) {
-    return fail('Email or phone required', 400)
+    return fail('Please provide either an email address or a phone number', 400)
   }
 
-  const db  = getDb()
-  const now = new Date()
+  let db
+  try {
+    db = getDb()
+  } catch (e) {
+    console.error('[VERIFY-OTP] Failed to get database connection', e)
+    return fail('Database is unavailable. Please try again shortly.', 503)
+  }
 
-  // Normalise to the same canonical form used when the code was sent
+  const now   = new Date()
   const phone = p.data.phone ? normalizePhone(p.data.phone) : null
   const email = p.data.email ? normalizeEmail(p.data.email) : null
-  if (p.data.phone && !phone) return fail('Invalid code', 401)
-
-  // Resolve user — same generic error whether address unknown or code wrong
-  let userId: string | null = null
-  if (email) {
-    const u = await db.user.findUnique({ where: { email }, select: { id: true } })
-    userId = u?.id ?? null
-  } else if (phone) {
-    const u = await db.user.findUnique({ where: { phone }, select: { id: true } })
-    userId = u?.id ?? null
+  if (p.data.phone && !phone) {
+    return fail(`"${p.data.phone}" is not a valid phone number`, 400)
   }
 
-  if (!userId) return fail('Invalid code', 401)
+  let userId: string | null = null
+  try {
+    if (email) {
+      const u = await db.user.findUnique({ where: { email }, select: { id: true } })
+      userId = u?.id ?? null
+    } else if (phone) {
+      const u = await db.user.findUnique({ where: { phone }, select: { id: true } })
+      userId = u?.id ?? null
+    }
+  } catch (e) {
+    console.error('[VERIFY-OTP] Failed to look up user', e)
+    return fail('Unable to verify sign-in code. Please try again.', 503)
+  }
 
-  // Find the most recent valid (unexpired, unused, under attempt limit) code
-  const otpRecord = await db.otpCode.findFirst({
-    where: {
-      userId,
-      used:      false,
-      expiresAt: { gt: now },
-      attempts:  { lt: MAX_ATTEMPTS },
-    },
-    orderBy: { createdAt: 'desc' },
-  })
+  // Use a generic message — never reveal whether the address is registered
+  if (!userId) return fail('Incorrect or expired sign-in code', 401)
 
-  if (!otpRecord) return fail('Invalid code', 401)
+  let otpRecord: { id: string; codeHash: string; attempts: number } | null = null
+  try {
+    otpRecord = await db.otpCode.findFirst({
+      where: {
+        userId,
+        used:      false,
+        expiresAt: { gt: now },
+        attempts:  { lt: MAX_ATTEMPTS },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  } catch (e) {
+    console.error('[VERIFY-OTP] Failed to look up OTP record', e)
+    return fail('Unable to verify sign-in code. Please try again.', 503)
+  }
+
+  if (!otpRecord) {
+    return fail('Sign-in code has expired or has already been used. Please request a new one.', 401)
+  }
 
   const codeHash = hashOtp(p.data.otp)
 
   if (otpRecord.codeHash !== codeHash) {
-    // Wrong guess — increment attempts; burn the code if limit reached
     const newAttempts = otpRecord.attempts + 1
-    await db.otpCode.update({
-      where: { id: otpRecord.id },
-      data: {
-        attempts: newAttempts,
-        used:     newAttempts >= MAX_ATTEMPTS,   // burn on final attempt
-      },
-    })
-    return fail('Invalid code', 401)
+    const remaining   = MAX_ATTEMPTS - newAttempts
+
+    try {
+      await db.otpCode.update({
+        where: { id: otpRecord.id },
+        data: {
+          attempts: newAttempts,
+          used:     newAttempts >= MAX_ATTEMPTS,
+        },
+      })
+    } catch (e) {
+      console.error('[VERIFY-OTP] Failed to increment attempt count', e)
+    }
+
+    if (newAttempts >= MAX_ATTEMPTS) {
+      return fail('Too many incorrect attempts. Please request a new sign-in code.', 401)
+    }
+    return fail(
+      `Incorrect sign-in code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`,
+      401
+    )
   }
 
-  // ── Correct code — mark used immediately ─────────────────────────────────
-  await db.otpCode.update({
-    where: { id: otpRecord.id },
-    data:  { used: true },
-  })
+  try {
+    await db.otpCode.update({
+      where: { id: otpRecord.id },
+      data:  { used: true },
+    })
+  } catch (e) {
+    console.error('[VERIFY-OTP] Failed to mark OTP as used', e)
+    return fail('Unable to complete sign-in. Please try again.', 503)
+  }
 
-  // Load memberships for the household-selection screen
-  const user = await db.user.findUnique({
-    where:  { id: userId },
-    select: {
-      id:   true,
-      name: true,
-      memberships: {
-        where:   { consent: 'approved' },
-        select: {
-          id:          true,
-          householdId: true,
-          role:        true,
-          household:   { select: { residentName: true } },
+  let user: {
+    id: string
+    name: string | null
+    memberships: {
+      id: string
+      householdId: string
+      role: string
+      household: { residentName: string }
+    }[]
+  } | null = null
+
+  try {
+    user = await db.user.findUnique({
+      where:  { id: userId },
+      select: {
+        id:   true,
+        name: true,
+        memberships: {
+          where:  { consent: 'approved' },
+          select: {
+            id:          true,
+            householdId: true,
+            role:        true,
+            household:   { select: { residentName: true } },
+          },
         },
       },
-    },
-  })
+    })
+  } catch (e) {
+    console.error('[VERIFY-OTP] Failed to load user memberships', e)
+    return fail('Sign-in succeeded but could not load your account. Please try again.', 503)
+  }
 
-  if (!user) return fail('Invalid code', 401)   // shouldn't happen, but be safe
+  if (!user) {
+    return fail('Account not found. Please contact support.', 404)
+  }
 
-  // ── Issue a short-lived pending token ─────────────────────────────────────
-  // kind='pending', sub=userId, no householdId.
-  // Valid for 15 minutes and only accepted by select-household and household create.
   const token = makeToken({
     kind:        'pending',
     sub:         user.id,
@@ -124,7 +161,9 @@ export async function POST(req: NextRequest) {
     exp:         Math.floor(Date.now() / 1000) + 60 * 15,
   })
 
-  if (!token) return fail('Failed to create session', 500)
+  if (!token) {
+    return fail('Failed to create session token. Check that AUTH_SECRET is set.', 500)
+  }
 
   const res = NextResponse.json({
     ok:          true,

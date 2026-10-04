@@ -18,36 +18,53 @@ export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
-  const setup = await getSetup(householdId)
-  if (!setup) return fail('Household not found', 404)
-  const { getHousehold } = await import('@/lib/db/households')
-  const hh = await getHousehold(householdId)
-  const link = await findActiveLink(householdId)
+
+  let setup: Awaited<ReturnType<typeof getSetup>>
+  try {
+    setup = await getSetup(householdId)
+  } catch (e) {
+    console.error('[HOUSEHOLD GET] Failed to load household setup', e)
+    return fail('Unable to load household settings. Please try again.', 503)
+  }
+
+  if (!setup) return fail('Household not found. It may have been deleted.', 404)
+
+  let hh: any
+  let link: any
+  try {
+    const { getHousehold } = await import('@/lib/db/households')
+    hh   = await getHousehold(householdId)
+    link = await findActiveLink(householdId)
+  } catch (e) {
+    console.error('[HOUSEHOLD GET] Failed to load household details or visit link', e)
+    return fail('Unable to load household details. Please try again.', 503)
+  }
+
   return NextResponse.json({
     ...setup,
     requireResidentOk: !!(hh as any)?.requireResidentOk,
-    visitLink: link ? { active: true, createdAt: link.createdAt.getTime() } : { active: false, createdAt: null },
+    visitLink: link
+      ? { active: true,  createdAt: link.createdAt.getTime() }
+      : { active: false, createdAt: null },
   })
 }
 
 const Body = z.discriminatedUnion('action', [
-  // ── Onboarding: create the first household (pending token) ────────────────
   z.object({
-    action:       z.literal('create'),
-    residentName: z.string().trim().min(1).max(60),
-    guardianName: z.string().trim().min(1).max(60),
-    guardianPhone: z.string().trim().min(7).max(20).optional(),  // normalised in handler
+    action:        z.literal('create'),
+    residentName:  z.string().trim().min(1).max(60),
+    guardianName:  z.string().trim().min(1).max(60),
+    guardianPhone: z.string().trim().min(7).max(20).optional(),
     guardianEmail: z.string().email().optional(),
-    timezone:     z.string().optional(),
+    timezone:      z.string().optional(),
   }),
-  // ── Existing-household settings (guardian session) ────────────────────────
   z.object({ action: z.literal('quiet'), enabled: z.boolean(), startHour: hour, endHour: hour }),
   z.object({ action: z.literal('timeout'), value: z.number().finite() }),
   z.object({ action: z.literal('createDevice') }),
   z.object({
-    action:        z.literal('updateSettings'),
-    residentName:  z.string().trim().min(1).max(30),
-    timezone:      z.string().optional(),
+    action:          z.literal('updateSettings'),
+    residentName:    z.string().trim().min(1).max(30),
+    timezone:        z.string().optional(),
     emergencyNumber: z.string().optional(),
   }),
   z.object({
@@ -62,71 +79,125 @@ export async function POST(req: NextRequest) {
   if (p.ok === false) return p.res
   const b = p.data
 
-  // ── Household creation — the only action that accepts a pending token ──────
+  // ── Household creation ─────────────────────────────────────────────────────
   if (b.action === 'create') {
-    // Accept either a pending token (new user / first login) or a full
-    // guardian session (guardian adding a second household — future use).
     const pendingUserId = await getPendingUserId(req)
     let guardianUserId: string | null = pendingUserId
 
     if (!guardianUserId) {
-      // Maybe they already have a full session (e.g. adding a second household)
       const a = await authorize(req, 'guardian')
-      if (a.ok === false) return fail('Not signed in', 401)
+      if (a.ok === false) return fail('You must be signed in to create a household.', 401)
       guardianUserId = a.session!.userId
     }
 
     if (!b.guardianPhone && !b.guardianEmail) {
-      return fail('Guardian phone or email is required', 400)
+      return fail('Guardian phone number or email address is required.', 400)
     }
 
-    // Normalise contact info to the same canonical form used at login
     const guardianPhone = b.guardianPhone ? normalizePhone(b.guardianPhone) : null
     const guardianEmail = b.guardianEmail ? normalizeEmail(b.guardianEmail) : null
-    if (b.guardianPhone && !guardianPhone) return fail('Invalid phone number', 400)
 
-    const db = getDb()
-
-    // Update the user's name (and normalised contact) if they just provided it
-    await db.user.update({
-      where: { id: guardianUserId },
-      data: {
-        ...(b.guardianName                  ? { name:  b.guardianName }  : {}),
-        ...(guardianPhone                   ? { phone: guardianPhone }   : {}),
-        ...(guardianEmail && !guardianPhone ? { email: guardianEmail }   : {}),
-      },
-    })
-
-    // Make sure this user doesn't already have a household as guardian
-    const existingGuardian = await db.membership.findFirst({
-      where: { userId: guardianUserId, role: 'guardian' },
-    })
-    if (existingGuardian) {
-      return fail('You are already a guardian of a household', 400)
+    if (b.guardianPhone && !guardianPhone) {
+      return fail(`"${b.guardianPhone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
     }
 
-    const household = await createHousehold({
-      residentName: b.residentName,
-      timezone:     b.timezone,
-    })
+    let db
+    try {
+      db = getDb()
+    } catch (e) {
+      console.error('[HOUSEHOLD CREATE] Failed to get database connection', e)
+      return fail('Database is unavailable. Please try again shortly.', 503)
+    }
 
-    // Get current member count (should be 0, but be safe)
-    const memberCount = await db.membership.count({ where: { householdId: household.id } })
+    // Load the current user to avoid unique-constraint errors when the
+    // phone/email was already captured at OTP sign-in.
+    let currentUser: { name: string | null; phone: string | null; email: string | null } | null = null
+    try {
+      currentUser = await db.user.findUnique({
+        where:  { id: guardianUserId },
+        select: { name: true, phone: true, email: true },
+      })
+    } catch (e) {
+      console.error('[HOUSEHOLD CREATE] Failed to load current user', e)
+      return fail('Unable to load your account. Please try again.', 503)
+    }
 
-    const membership = await db.membership.create({
-      data: {
-        userId:      guardianUserId,
-        householdId: household.id,
-        role:        'guardian',
-        consent:     'approved',
-        consentAt:   new Date(),
-        position:    memberCount,
-        tokenEpoch:  1,
-        emoji:       '👤',
-      },
-    })
+    if (!currentUser) {
+      return fail('Your account was not found. Please sign in again.', 401)
+    }
 
-    // Issue a full guardian session token
+    // Only write a field if it is not already set — prevents P2002 unique constraint
+    // errors when the user already has this phone/email from OTP sign-in.
+    const profileUpdate: Record<string, string> = {}
+    if (b.guardianName && b.guardianName !== currentUser.name) {
+      profileUpdate.name = b.guardianName
+    }
+    if (guardianPhone && guardianPhone !== currentUser.phone) {
+      profileUpdate.phone = guardianPhone
+    }
+    if (guardianEmail && !guardianPhone && guardianEmail !== currentUser.email) {
+      profileUpdate.email = guardianEmail
+    }
+
+    if (Object.keys(profileUpdate).length > 0) {
+      try {
+        await db.user.update({ where: { id: guardianUserId }, data: profileUpdate })
+      } catch (e: any) {
+        // P2002 = unique constraint — the phone/email belongs to another account
+        if (e?.code === 'P2002') {
+          const field = (e?.meta?.target as string[] | undefined)?.join(', ') ?? 'phone or email'
+          return fail(`That ${field} is already registered to another account.`, 409)
+        }
+        console.error('[HOUSEHOLD CREATE] Failed to update user profile', e)
+        return fail('Unable to update your profile. Please try again.', 503)
+      }
+    }
+
+    let existingGuardian: any
+    try {
+      existingGuardian = await db.membership.findFirst({
+        where: { userId: guardianUserId, role: 'guardian' },
+      })
+    } catch (e) {
+      console.error('[HOUSEHOLD CREATE] Failed to check existing guardianship', e)
+      return fail('Unable to check existing households. Please try again.', 503)
+    }
+
+    if (existingGuardian) {
+      return fail('You are already a guardian of a household. Each account can only manage one household.', 400)
+    }
+
+    let household: Awaited<ReturnType<typeof createHousehold>>
+    try {
+      household = await createHousehold({
+        residentName: b.residentName,
+        timezone:     b.timezone,
+      })
+    } catch (e) {
+      console.error('[HOUSEHOLD CREATE] Failed to create household', e)
+      return fail('Unable to create household. Please try again.', 503)
+    }
+
+    let membership: any
+    try {
+      const memberCount = await db.membership.count({ where: { householdId: household.id } })
+      membership = await db.membership.create({
+        data: {
+          userId:      guardianUserId,
+          householdId: household.id,
+          role:        'guardian',
+          consent:     'approved',
+          consentAt:   new Date(),
+          position:    memberCount,
+          tokenEpoch:  1,
+          emoji:       '👤',
+        },
+      })
+    } catch (e) {
+      console.error('[HOUSEHOLD CREATE] Failed to create guardian membership', e)
+      return fail('Household was created but failed to assign your guardian role. Please contact support.', 503)
+    }
+
     const token = makeToken({
       kind:        'helper',
       sub:         membership.id,
@@ -134,7 +205,7 @@ export async function POST(req: NextRequest) {
       epoch:       membership.tokenEpoch,
       exp:         Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
     })
-    if (!token) return fail('Failed to create session', 500)
+    if (!token) return fail('Failed to create session token. Check that AUTH_SECRET is set.', 500)
 
     const res = NextResponse.json({
       ok:          true,
@@ -151,30 +222,44 @@ export async function POST(req: NextRequest) {
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
 
-  switch (b.action) {
-    case 'quiet':
-      await setQuiet(householdId, { enabled: b.enabled, startHour: b.startHour, endHour: b.endHour })
-      return NextResponse.json({ ok: true })
-    case 'timeout':
-      await setTimeoutSec(householdId, b.value)
-      return NextResponse.json({ ok: true })
-    case 'createDevice': {
-      const code   = crypto.randomBytes(3).toString('base64url').toUpperCase().slice(0, 6)
-      const device = await createResidentDevice(householdId, code)
-      return NextResponse.json({ ok: true, code, deviceId: device.id })
+  try {
+    switch (b.action) {
+      case 'quiet':
+        await setQuiet(householdId, { enabled: b.enabled, startHour: b.startHour, endHour: b.endHour })
+        return NextResponse.json({ ok: true })
+
+      case 'timeout':
+        if (b.value < 10 || b.value > 600) {
+          return fail('Timeout must be between 10 and 600 seconds.', 400)
+        }
+        await setTimeoutSec(householdId, b.value)
+        return NextResponse.json({ ok: true })
+
+      case 'createDevice': {
+        const code   = crypto.randomBytes(3).toString('base64url').toUpperCase().slice(0, 6)
+        const device = await createResidentDevice(householdId, code)
+        return NextResponse.json({ ok: true, code, deviceId: device.id })
+      }
+
+      case 'updateSettings':
+        await updateHousehold(householdId, {
+          residentName:    b.residentName,
+          timezone:        b.timezone,
+          emergencyNumber: b.emergencyNumber,
+        })
+        return NextResponse.json({ ok: true })
+
+      case 'plannedMode':
+        await setPlannedMode(householdId, b.mode as any)
+        return NextResponse.json({ ok: true })
+
+      case 'requireResidentOk':
+        await updateHousehold(householdId, { requireResidentOk: b.value })
+        return NextResponse.json({ ok: true })
     }
-    case 'updateSettings':
-      await updateHousehold(householdId, {
-        residentName:    b.residentName,
-        timezone:        b.timezone,
-        emergencyNumber: b.emergencyNumber,
-      })
-      return NextResponse.json({ ok: true })
-    case 'plannedMode':
-      await setPlannedMode(householdId, b.mode as any)
-      return NextResponse.json({ ok: true })
-    case 'requireResidentOk':
-      await updateHousehold(householdId, { requireResidentOk: b.value })
-      return NextResponse.json({ ok: true })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[HOUSEHOLD POST action=${b.action}]`, e)
+    return fail(`Failed to update household settings: ${msg}`, 503)
   }
 }

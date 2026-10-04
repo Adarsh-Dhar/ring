@@ -23,21 +23,13 @@ async function sendOtpSms(to: string, code: string): Promise<boolean> {
   const sid   = process.env.TWILIO_ACCOUNT_SID
   const token = process.env.TWILIO_AUTH_TOKEN
   const from  = process.env.TWILIO_FROM
-  if (!sid || !token || !from) return false
+  if (!sid || !token || !from) {
+    console.error('[OTP SMS] Missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_FROM env vars')
+    return false
+  }
 
-  // Support two Twilio modes:
-  //   • Production accounts: plain Body text.
-  //   • Trial accounts / pre-approved templates: Body = template name from
-  //     TWILIO_TEMPLATE_NAME, or ContentSid + ContentVariables.
-  //
-  // TWILIO_OTP_BODY (optional): message template with {{code}} placeholder.
-  //   Default: "Your doorbell-helper code: {{code}}. It expires in 10 minutes."
-  //
-  // TWILIO_CONTENT_SID (optional): if set, use the Twilio Content API instead
-  //   of a plain Body.  The {{code}} value goes into ContentVariables slot "1".
-  const tpl  = process.env.TWILIO_OTP_BODY ?? 'Your doorbell-helper code: {{code}}. It expires in 10 minutes.'
+  const tpl      = process.env.TWILIO_OTP_BODY ?? 'Your doorbell-helper code: {{code}}. It expires in 10 minutes.'
   const bodyText = tpl.replace('{{code}}', code)
-
   const contentSid = process.env.TWILIO_CONTENT_SID
 
   const params: Record<string, string> = { To: to, From: from }
@@ -62,19 +54,23 @@ async function sendOtpSms(to: string, code: string): Promise<boolean> {
       }
     )
     if (!res.ok) {
-      console.error('[OTP SMS] Twilio error', res.status, await res.text())
+      const body = await res.text()
+      console.error('[OTP SMS] Twilio returned an error', res.status, body)
       return false
     }
     return true
   } catch (e) {
-    console.error('[OTP SMS] Twilio request failed', e)
+    console.error('[OTP SMS] Network request to Twilio failed', e)
     return false
   }
 }
 
 async function sendOtpEmail(to: string, code: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY
-  if (!apiKey) return false
+  if (!apiKey) {
+    console.error('[OTP EMAIL] RESEND_API_KEY is not set')
+    return false
+  }
 
   const fromEmail = process.env.RESEND_FROM ?? 'noreply@' + (process.env.DOMAIN ?? 'example.com')
   try {
@@ -94,27 +90,19 @@ async function sendOtpEmail(to: string, code: string): Promise<boolean> {
       signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) {
-      console.error('[OTP EMAIL] Resend error', res.status, await res.text())
+      const body = await res.text()
+      console.error('[OTP EMAIL] Resend returned an error', res.status, body)
       return false
     }
     return true
   } catch (e) {
-    console.error('[OTP EMAIL] Resend request failed', e)
+    console.error('[OTP EMAIL] Network request to Resend failed', e)
     return false
   }
 }
 
 // ── Route ──────────────────────────────────────────────────────────────────
 
-/**
- * POST { email?, phone?, name? }
- *
- * Signup and login share the same endpoint.  A new address creates an account;
- * a known one reuses it.  The response is always { ok: true } regardless of
- * whether the address was new, whether it was rate-limited, or whether
- * delivery succeeded — callers must not be able to enumerate accounts or probe
- * rate-limit status.
- */
 export async function POST(req: NextRequest) {
   const p = await parse(req, z.object({
     email: z.string().email().optional(),
@@ -124,78 +112,100 @@ export async function POST(req: NextRequest) {
   if (p.ok === false) return p.res
 
   if (!p.data.email && !p.data.phone) {
-    return fail('Email or phone required', 400)
+    return fail('Please provide either an email address or a phone number', 400)
   }
 
-  // ── Normalise inputs ───────────────────────────────────────────────────────
   const phone = p.data.phone ? normalizePhone(p.data.phone) : null
   const email = p.data.email ? normalizeEmail(p.data.email) : null
 
-  if (p.data.phone && !phone) return fail('Invalid phone number', 400)
-  // email normalisation can't fail (zod already validated it), but guard anyway
-  if (p.data.email && !email) return fail('Invalid email address', 400)
+  if (p.data.phone && !phone) {
+    return fail(`"${p.data.phone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
+  }
+  if (p.data.email && !email) {
+    return fail(`"${p.data.email}" is not a valid email address`, 400)
+  }
 
-  const db = getDb()
+  let db
+  try {
+    db = getDb()
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to get database connection', e)
+    return fail('Database is unavailable. Please try again shortly.', 503)
+  }
 
-  // ── IP-based rate-limit (checked before upsert to limit account creation) ──
-  // Trust the first value in X-Forwarded-For, which Caddy sets to the real
-  // client IP.  Do NOT trust this header if the app is directly Internet-facing
-  // without a proxy.
   const ip          = (req.headers.get('x-forwarded-for')?.split(',')[0] ?? '').trim() || 'unknown'
   const windowStart = new Date(Date.now() - OTP_TTL_MS)
 
-  const ipCount = await db.otpCode.count({
-    where: { ip, createdAt: { gte: windowStart } },
-  })
-  if (ipCount >= OTP_MAX_PER_IP) {
-    return NextResponse.json({ ok: true })
+  try {
+    const ipCount = await db.otpCode.count({
+      where: { ip, createdAt: { gte: windowStart } },
+    })
+    if (ipCount >= OTP_MAX_PER_IP) {
+      // Intentionally vague to the caller — don't reveal rate limit details
+      return NextResponse.json({ ok: true })
+    }
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to check IP rate limit', e)
+    return fail('Unable to process request. Please try again.', 503)
   }
 
-  // ── Upsert user (signup = login) ───────────────────────────────────────────
-  // `name` only written on INSERT to prevent a caller from renaming others.
   let user: { id: string }
-  if (email) {
-    user = await db.user.upsert({
-      where:  { email },
-      update: {},
-      create: { email, name: p.data.name ?? null },
-      select: { id: true },
-    })
-  } else {
-    user = await db.user.upsert({
-      where:  { phone: phone! },
-      update: {},
-      create: { phone: phone!, name: p.data.name ?? null },
-      select: { id: true },
-    })
+  try {
+    if (email) {
+      user = await db.user.upsert({
+        where:  { email },
+        update: {},
+        create: { email, name: p.data.name ?? null },
+        select: { id: true },
+      })
+    } else {
+      user = await db.user.upsert({
+        where:  { phone: phone! },
+        update: {},
+        create: { phone: phone!, name: p.data.name ?? null },
+        select: { id: true },
+      })
+    }
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to upsert user', e)
+    return fail('Unable to create or find your account. Please try again.', 503)
   }
 
-  // ── Per-user rate-limit (counts ALL codes, not just unused ones) ───────────
-  // Counting used codes too means an attacker who keeps requesting codes just
-  // to burn them with wrong guesses can't escape the per-user window.
-  const recent = await db.otpCode.count({
-    where: { userId: user.id, createdAt: { gte: windowStart } },
-  })
-  if (recent >= OTP_MAX_PER_USER) {
-    return NextResponse.json({ ok: true })
+  try {
+    const recent = await db.otpCode.count({
+      where: { userId: user.id, createdAt: { gte: windowStart } },
+    })
+    if (recent >= OTP_MAX_PER_USER) {
+      return NextResponse.json({ ok: true })
+    }
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to check per-user rate limit', e)
+    return fail('Unable to process request. Please try again.', 503)
   }
 
-  // Invalidate all previous unused codes — only the latest one is valid
-  await db.otpCode.updateMany({
-    where: { userId: user.id, used: false },
-    data:  { used: true },
-  })
+  try {
+    await db.otpCode.updateMany({
+      where: { userId: user.id, used: false },
+      data:  { used: true },
+    })
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to invalidate previous OTP codes', e)
+    return fail('Unable to process request. Please try again.', 503)
+  }
 
-  // ── Generate and persist ───────────────────────────────────────────────────
   const code      = crypto.randomInt(100_000, 999_999).toString()
   const codeHash  = hashOtp(code)
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
 
-  await db.otpCode.create({
-    data: { userId: user.id, codeHash, expiresAt, attempts: 0, ip },
-  })
+  try {
+    await db.otpCode.create({
+      data: { userId: user.id, codeHash, expiresAt, attempts: 0, ip },
+    })
+  } catch (e) {
+    console.error('[SEND-OTP] Failed to store OTP code', e)
+    return fail('Unable to generate sign-in code. Please try again.', 503)
+  }
 
-  // ── Deliver ────────────────────────────────────────────────────────────────
   if (!IS_PROD) {
     console.log(`[OTP DEV] ${email ?? phone} → ${code}`)
   } else {
@@ -205,10 +215,9 @@ export async function POST(req: NextRequest) {
     if (!delivered && email) delivered = await sendOtpEmail(email, code)
 
     if (!delivered) {
-      console.error(
-        '[OTP] Failed to deliver code to', email ?? phone,
-        '— check TWILIO_* and RESEND_API_KEY env vars'
-      )
+      console.error('[OTP] Delivery failed for', email ?? phone,
+        '— check TWILIO_* and RESEND_API_KEY env vars')
+      // Still return ok:true — we never confirm or deny delivery to callers
     }
   }
 

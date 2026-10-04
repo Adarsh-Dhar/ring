@@ -122,7 +122,29 @@ export function sameOrigin(req: NextRequest) {
   try { return new URL(o).host === req.headers.get('host') } catch { return false }
 }
 
+/** Wrap an async route handler so unhandled exceptions return a 500 instead of crashing silently. */
+export function withErrorHandling(
+  handler: (req: NextRequest, ctx?: any) => Promise<NextResponse | Response>
+) {
+  return async (req: NextRequest, ctx?: any) => {
+    try {
+      return await handler(req, ctx)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'An unexpected error occurred'
+      console.error('[API ERROR]', req.method, req.nextUrl.pathname, e)
+      return fail(`Server error: ${message}`, 500)
+    }
+  }
+}
+
 export const fail = (error: string, status = 400) => NextResponse.json({ error }, { status })
+
+/** Format zod issues into a single human-readable string, e.g. "email: Invalid email; otp: Required" */
+function formatZodErrors(issues: { path: (string | number | symbol)[]; message: string }[]): string {
+  return issues
+    .map(i => (i.path.length ? `${i.path.map(String).join('.')}: ${i.message}` : i.message))
+    .join('; ')
+}
 
 export type Auth = { ok: true; session: Session } | { ok: false; res: NextResponse }
 export type ParseResult<T> = { ok: true; data: T } | { ok: false; res: NextResponse }
@@ -137,7 +159,7 @@ export function isParseOk<T>(p: ParseResult<T>): p is { ok: true; data: T } { re
  */
 export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Auth> {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) {
-    return { ok: false as const, res: fail('bad origin', 403) }
+    return { ok: false as const, res: fail('Cross-origin requests are not allowed', 403) }
   }
 
   const session = await getSession(req)
@@ -176,9 +198,12 @@ export async function authorizeResident(req: NextRequest): Promise<{ ok: true; h
  */
 export async function parse<T extends z.ZodTypeAny>(req: NextRequest, schema: T): Promise<{ ok: true; data: z.infer<T> } | { ok: false; res: NextResponse }> {
   let raw: unknown
-  try { raw = await req.json() } catch { return { ok: false as const, res: fail('invalid JSON') } }
+  try { raw = await req.json() } catch { return { ok: false as const, res: fail('Request body must be valid JSON') } }
   const r = schema.safeParse(raw)
-  if (!r.success) return { ok: false as const, res: fail('invalid request') }
+  if (!r.success) {
+    const msg = formatZodErrors(r.error.issues)
+    return { ok: false as const, res: fail(`Validation error: ${msg}`) }
+  }
   return { ok: true as const, data: r.data }
 }
 

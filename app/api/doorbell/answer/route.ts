@@ -7,21 +7,36 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const Body = z.object({
-  caseId: z.string().max(80),
-  answer: z.enum(['safe', 'not_safe', 'call_me']),
+  caseId:  z.string().min(1).max(80),
+  answer:  z.enum(['safe', 'not_safe', 'call_me']),
   visitor: z.enum(['known', 'delivery', 'unknown']).optional(),
 })
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
+
   const p = await parse(req, Body)
   if (p.ok === false) return p.res
+
   const { caseId, answer, visitor } = p.data
-  if (answer === 'safe' && visitor !== 'known' && visitor !== 'delivery') return fail('Say who is at the door before marking safe')
-  const householdId = a.session!.householdId
+
+  if (answer === 'safe' && visitor !== 'known' && visitor !== 'delivery') {
+    return fail('Please identify who is at the door (known person or delivery) before marking as safe.', 400)
+  }
+
+  const householdId  = a.session!.householdId
   const membershipId = a.session!.membershipId!
-  const r = await answerCase(householdId, caseId, membershipId, answer, visitor)
+
+  let r: Awaited<ReturnType<typeof answerCase>>
+  try {
+    r = await answerCase(householdId, caseId, membershipId, answer, visitor)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[DOORBELL ANSWER]', e)
+    return fail(`Failed to submit answer: ${msg}`, 503)
+  }
+
   if (r.ok === false) return fail(r.error, r.status)
   return NextResponse.json({ ok: true })
 }

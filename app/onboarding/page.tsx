@@ -1,270 +1,341 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 const steps = ['create-household', 'connect-ring', 'invite-helpers', 'pair-device'] as const
 
+type MessageKind = 'error' | 'info' | 'success'
+interface Message { text: string; kind: MessageKind }
+
+function Alert({ message }: { message: Message }) {
+  const styles: Record<MessageKind, string> = {
+    error:   'bg-red-50 border border-red-200 text-red-700',
+    info:    'bg-blue-50 border border-blue-200 text-blue-700',
+    success: 'bg-green-50 border border-green-200 text-green-700',
+  }
+  return (
+    <div className={`mb-4 p-3 rounded text-sm ${styles[message.kind]}`} role="alert">
+      {message.text}
+    </div>
+  )
+}
+
+async function apiError(res: Response): Promise<string> {
+  try {
+    const data = await res.json()
+    if (typeof data?.error === 'string' && data.error.length > 0) return data.error
+  } catch {}
+  switch (res.status) {
+    case 400: return 'Bad request — please check your input and try again.'
+    case 401: return 'You are not signed in. Please sign in and try again.'
+    case 403: return 'Access denied.'
+    case 409: return 'Conflict — this action cannot be completed.'
+    case 500: return 'Server error — please try again later.'
+    case 503: return 'Service unavailable — please try again shortly.'
+    default:  return `Unexpected error (HTTP ${res.status}) — please try again.`
+  }
+}
+
 export default function OnboardingPage() {
-  const router = useRouter()
-  const [step, setStep] = useState<(typeof steps)[number]>('create-household')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [householdName, setHouseholdName] = useState('')
-  const [memberName, setMemberName] = useState('')
-  const [memberPhone, setMemberPhone] = useState('')
-  const [memberEmail, setMemberEmail] = useState('')
+  const router   = useRouter()
+  const inFlight = useRef(false)
+
+  const [step,        setStep]        = useState<(typeof steps)[number]>('create-household')
+  const [loading,     setLoading]     = useState(false)
+  const [message,     setMessage]     = useState<Message | null>(null)
+  const [residentName, setResidentName] = useState('')
+  const [guardianName, setGuardianName] = useState('')
+  const [guardianPhone, setGuardianPhone] = useState('')
+  const [guardianEmail, setGuardianEmail] = useState('')
+  const [helperName,   setHelperName]   = useState('')
+  const [helperContact, setHelperContact] = useState('')
 
   const createHousehold = async () => {
-    if (!householdName || !memberName) {
-      setError('Please fill in all fields')
+    if (!residentName.trim()) {
+      setMessage({ text: 'Please enter the resident\'s name.', kind: 'error' })
       return
     }
+    if (!guardianName.trim()) {
+      setMessage({ text: 'Please enter your name.', kind: 'error' })
+      return
+    }
+    if (!guardianPhone.trim() && !guardianEmail.trim()) {
+      setMessage({ text: 'Please enter either your phone number or email address.', kind: 'error' })
+      return
+    }
+
+    if (inFlight.current) return
+    inFlight.current = true
     setLoading(true)
-    setError('')
+    setMessage(null)
+
     try {
       const res = await fetch('/api/household', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'create',
-          residentName: householdName,
-          guardianName: memberName,
-          guardianPhone: memberPhone,
-          guardianEmail: memberEmail,
+          action:        'create',
+          residentName:  residentName.trim(),
+          guardianName:  guardianName.trim(),
+          // Only send fields that were actually filled in — empty string would fail validation
+          guardianPhone: guardianPhone.trim() || undefined,
+          guardianEmail: guardianEmail.trim() || undefined,
         }),
       })
-      if (res.ok === false) {
-        const data = await res.json()
-        setError(data.error || 'Failed to create household')
+
+      if (!res.ok) {
+        setMessage({ text: await apiError(res), kind: 'error' })
         return
       }
+
+      setMessage({ text: 'Household created successfully!', kind: 'success' })
       setStep('connect-ring')
-    } catch (err) {
-      setError('Network error')
+    } catch {
+      setMessage({ text: 'Network error — please check your connection and try again.', kind: 'error' })
     } finally {
+      inFlight.current = false
       setLoading(false)
     }
   }
 
-  const connectRing = async () => {
-    // Redirect to Ring OAuth flow
-    const nonce = Math.random().toString(36).substring(7)
-    const time = Date.now()
-    const url = `https://oauth.ring.com/oauth/authorize?client_id=${process.env.NEXT_PUBLIC_RING_CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(process.env.NEXT_PUBLIC_APP_URL + '/api/ring/link')}&state=${nonce}&time=${time}`
-    window.location.href = url
-  }
-
-  const skipRing = () => {
-    setStep('invite-helpers')
+  const connectRing = () => {
+    // Ring Partner API uses a Ring-driven one-way linking flow.
+    // Linking is initiated from the Ring AppStore/portal, not from a browser redirect.
+    window.open('https://developer.amazon.com/ring/console/apps', '_blank', 'noopener')
   }
 
   const inviteHelper = async () => {
-    if (!memberName || (!memberPhone && !memberEmail)) {
-      setError('Name and either phone or email are required')
+    if (!helperName.trim()) {
+      setMessage({ text: 'Please enter the helper\'s name.', kind: 'error' })
       return
     }
+    if (!helperContact.trim()) {
+      setMessage({ text: 'Please enter the helper\'s phone number or email address.', kind: 'error' })
+      return
+    }
+
+    if (inFlight.current) return
+    inFlight.current = true
     setLoading(true)
-    setError('')
+    setMessage(null)
+
+    const isEmail = helperContact.includes('@')
+
     try {
       const res = await fetch('/api/household/members', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'invite',
-          name: memberName,
-          phone: memberPhone,
-          email: memberEmail,
-          role: 'helper',
+          name:   helperName.trim(),
+          role:   'helper',
+          ...(isEmail
+            ? { email: helperContact.trim() }
+            : { phone: helperContact.trim() }),
         }),
       })
-      if (res.ok === false) {
-        const data = await res.json()
-        setError(data.error || 'Failed to invite helper')
+
+      if (!res.ok) {
+        setMessage({ text: await apiError(res), kind: 'error' })
         return
       }
-      setMemberName('')
-      setMemberPhone('')
-      setMemberEmail('')
-      setError('Invitation sent')
-    } catch (err) {
-      setError('Network error')
+
+      setHelperName('')
+      setHelperContact('')
+      setMessage({ text: `${helperName.trim()} has been invited as a helper.`, kind: 'success' })
+    } catch {
+      setMessage({ text: 'Network error — please check your connection and try again.', kind: 'error' })
     } finally {
+      inFlight.current = false
       setLoading(false)
     }
-  }
-
-  const finishOnboarding = () => {
-    router.push('/setup')
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
       <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
-        <h1 className="text-2xl font-bold text-center mb-6">Welcome to Doorbell Helper</h1>
+        <h1 className="text-2xl font-bold text-center mb-2">Welcome to Doorbell Helper</h1>
 
-        {error && (
-          <div className="mb-4 p-3 rounded bg-red-50 text-red-700 text-sm">
-            {error}
-          </div>
-        )}
+        {/* Step indicator */}
+        <div className="flex justify-center gap-2 mb-6">
+          {steps.map((s, i) => (
+            <div
+              key={s}
+              className={`h-1.5 rounded-full flex-1 transition-colors ${
+                steps.indexOf(step) >= i ? 'bg-blue-500' : 'bg-gray-200'
+              }`}
+            />
+          ))}
+        </div>
 
+        {message && <Alert message={message} />}
+
+        {/* ── Step 1: Create household ─────────────────────────────────── */}
         {step === 'create-household' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">Create your household</h2>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Resident name
+                Resident name <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
-                value={householdName}
-                onChange={(e) => setHouseholdName(e.target.value)}
+                value={residentName}
+                onChange={e => setResidentName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Who lives here?"
+                placeholder="Who lives here? e.g. Grandma Rita"
               />
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Your name (guardian)
+                Your name (guardian) <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
-                value={memberName}
-                onChange={(e) => setMemberName(e.target.value)}
+                value={guardianName}
+                onChange={e => setGuardianName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Your name"
+                placeholder="Your full name"
               />
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Your phone (optional)
+                Your phone
               </label>
               <input
                 type="tel"
-                value={memberPhone}
-                onChange={(e) => setMemberPhone(e.target.value)}
+                value={guardianPhone}
+                onChange={e => setGuardianPhone(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="+919876543210"
+                autoComplete="tel"
               />
+              <p className="mt-1 text-xs text-gray-400">Include country code, e.g. +91 for India, +1 for US</p>
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Your email (optional)
+                Your email
               </label>
               <input
                 type="email"
-                value={memberEmail}
-                onChange={(e) => setMemberEmail(e.target.value)}
+                value={guardianEmail}
+                onChange={e => setGuardianEmail(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="you@example.com"
+                autoComplete="email"
               />
             </div>
+
+            <p className="text-xs text-gray-400">* Phone or email is required (at least one).</p>
+
             <button
               onClick={createHousehold}
               disabled={loading}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Creating...' : 'Continue'}
+              {loading ? 'Creating…' : 'Continue'}
             </button>
           </div>
         )}
 
+        {/* ── Step 2: Connect Ring ─────────────────────────────────────── */}
         {step === 'connect-ring' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">Connect your Ring doorbell</h2>
             <p className="text-sm text-gray-600">
-              Connect your Ring account to receive doorbell events and view live video.
+              Connect your Ring account to receive doorbell events and live video.
+              Linking is done from the Ring AppStore — click below to open the portal.
             </p>
             <button
               onClick={connectRing}
               disabled={loading}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 transition-colors"
             >
-              Connect Ring Account
+              Open Ring Developer Portal →
             </button>
             <button
-              onClick={skipRing}
+              onClick={() => { setMessage(null); setStep('invite-helpers') }}
               disabled={loading}
-              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300"
+              className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-200 transition-colors"
             >
               Skip for now
             </button>
           </div>
         )}
 
+        {/* ── Step 3: Invite helpers ───────────────────────────────────── */}
         {step === 'invite-helpers' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">Invite helpers</h2>
             <p className="text-sm text-gray-600">
-              Add trusted friends or family who can help when someone is at the door.
+              Add trusted friends or family who can respond when someone rings. You can add more from the settings page.
             </p>
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Helper name
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Helper's name</label>
               <input
                 type="text"
-                value={memberName}
-                onChange={(e) => setMemberName(e.target.value)}
+                value={helperName}
+                onChange={e => setHelperName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Helper's name"
+                placeholder="e.g. Raj"
               />
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Phone or email
               </label>
               <input
                 type="text"
-                value={memberPhone || memberEmail}
-                onChange={(e) => {
-                  if (e.target.value.includes('@')) {
-                    setMemberEmail(e.target.value)
-                    setMemberPhone('')
-                  } else {
-                    setMemberPhone(e.target.value)
-                    setMemberEmail('')
-                  }
-                }}
+                value={helperContact}
+                onChange={e => setHelperContact(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="+919876543210 or email@example.com"
+                placeholder="+919876543210 or raj@example.com"
               />
             </div>
+
             <button
               onClick={inviteHelper}
               disabled={loading}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400"
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
-              {loading ? 'Inviting...' : 'Invite Helper'}
+              {loading ? 'Inviting…' : 'Send Invite'}
             </button>
+
             <button
-              onClick={finishOnboarding}
+              onClick={() => { setMessage(null); router.push('/setup') }}
               disabled={loading}
-              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300"
+              className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-200 transition-colors"
             >
-              Skip for now
+              Skip — go to settings
             </button>
           </div>
         )}
 
+        {/* ── Step 4: Pair device ──────────────────────────────────────── */}
         {step === 'pair-device' && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold">Pair resident device</h2>
+            <h2 className="text-lg font-semibold">Pair the resident's device</h2>
             <p className="text-sm text-gray-600">
-              On the resident's phone or tablet, open this app and enter the pairing code shown on the setup page.
+              On the resident's phone or tablet, open this app and enter the pairing code shown on the settings page.
             </p>
             <button
               onClick={() => router.push('/pair')}
-              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700"
+              className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
             >
-              Go to Pairing Page
+              Go to pairing page
             </button>
             <button
-              onClick={finishOnboarding}
-              className="w-full bg-gray-200 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-300"
+              onClick={() => router.push('/setup')}
+              className="w-full bg-gray-100 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-200 transition-colors"
             >
-              Skip for now
+              Skip — go to settings
             </button>
           </div>
         )}

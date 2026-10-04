@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { createMembership, deleteMembership, updateMembership, moveMembership, setMembershipConsent, reorderMemberships, getMembershipsForHousehold } from '@/lib/db/memberships'
+import {
+  createMembership,
+  deleteMembership,
+  updateMembership,
+  moveMembership,
+  setMembershipConsent,
+  reorderMemberships,
+  getMembershipsForHousehold,
+} from '@/lib/db/memberships'
 import { createInvite, getInvitesForHousehold, deleteInvite } from '@/lib/db/invites'
 import { authorize, fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
@@ -14,8 +22,17 @@ export async function GET(req: NextRequest) {
   const a = await authorize(req, 'guardian')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
-  const memberships = await getMembershipsForHousehold(householdId)
-  const invites = await getInvitesForHousehold(householdId)
+
+  let memberships: Awaited<ReturnType<typeof getMembershipsForHousehold>>
+  let invites: Awaited<ReturnType<typeof getInvitesForHousehold>>
+  try {
+    memberships = await getMembershipsForHousehold(householdId)
+    invites     = await getInvitesForHousehold(householdId)
+  } catch (e) {
+    console.error('[MEMBERS GET] Failed to load members or invites', e)
+    return fail('Unable to load household members. Please try again.', 503)
+  }
+
   return NextResponse.json({
     members: memberships.map(m => ({
       id:       m.id,
@@ -34,17 +51,24 @@ export async function GET(req: NextRequest) {
       status:    i.status,
       expiresAt: i.expiresAt,
       createdBy: i.createdBy?.name ?? null,
-    }))
+    })),
   })
 }
 
 const Body = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('invite'), email: z.string().email().optional(), phone: z.string().trim().regex(/^\+\d{8,15}$/).optional(), name: z.string().trim().min(1).max(30), role: z.enum(['guardian', 'helper']), emoji: z.string().max(8).default('🙂') }),
-  z.object({ action: z.literal('remove'), id: z.string().max(80) }),
-  z.object({ action: z.literal('move'), id: z.string().max(80), dir: z.union([z.literal(-1), z.literal(1)]) }),
+  z.object({
+    action: z.literal('invite'),
+    email:  z.string().email().optional(),
+    phone:  z.string().trim().regex(/^\+\d{8,15}$/, 'Phone must be in E.164 format, e.g. +919876543210').optional(),
+    name:   z.string().trim().min(1).max(30),
+    role:   z.enum(['guardian', 'helper']),
+    emoji:  z.string().max(8).default('🙂'),
+  }),
+  z.object({ action: z.literal('remove'),  id: z.string().max(80) }),
+  z.object({ action: z.literal('move'),    id: z.string().max(80), dir: z.union([z.literal(-1), z.literal(1)]) }),
   z.object({ action: z.literal('consent'), id: z.string().max(80), consent: z.enum(['approved', 'declined', 'pending']) }),
   z.object({ action: z.literal('reorder'), ids: z.array(z.string().max(80)) }),
-  z.object({ action: z.literal('revoke'), id: z.string().max(80) }),
+  z.object({ action: z.literal('revoke'),  id: z.string().max(80) }),
   z.object({ action: z.literal('createInvite'), role: z.enum(['guardian', 'helper']) }),
   z.object({ action: z.literal('deleteInvite'), id: z.string().max(80) }),
 ])
@@ -53,85 +77,141 @@ export async function POST(req: NextRequest) {
   const a = await authorize(req, 'guardian')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
+
   const p = await parse(req, Body)
   if (p.ok === false) return p.res
   const b = p.data
 
-  switch (b.action) {
-    case 'invite': {
-      if (!b.email && !b.phone) return fail('Email or phone required')
+  let db
+  try {
+    db = getDb()
+  } catch (e) {
+    console.error('[MEMBERS POST] Failed to get database connection', e)
+    return fail('Database is unavailable. Please try again shortly.', 503)
+  }
 
-      // Normalise to canonical form so inviting "98765 43210" finds the same
-      // user as an existing "+919876543210" account.
-      const phone = b.phone ? normalizePhone(b.phone) : null
-      const email = b.email ? normalizeEmail(b.email) : null
-      if (b.phone && !phone) return fail('Invalid phone number', 400)
+  try {
+    switch (b.action) {
+      case 'invite': {
+        if (!b.email && !b.phone) {
+          return fail('An email address or phone number is required to invite a member.', 400)
+        }
 
-      // Find or create user using the normalised address
-      let user
-      if (email) {
-        user = await getDb().user.upsert({
-          where:  { email },
-          update: {},
-          create: { email, name: b.name },
+        const phone = b.phone ? normalizePhone(b.phone) : null
+        const email = b.email ? normalizeEmail(b.email) : null
+        if (b.phone && !phone) {
+          return fail(`"${b.phone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
+        }
+
+        let user: { id: string; name: string | null; email: string | null; phone: string | null }
+        if (email) {
+          user = await db.user.upsert({
+            where:  { email },
+            update: {},
+            create: { email, name: b.name },
+          })
+        } else {
+          user = await db.user.upsert({
+            where:  { phone: phone! },
+            update: {},
+            create: { phone: phone!, name: b.name },
+          })
+        }
+
+        // Check if they're already a member
+        const existing = await db.membership.findUnique({
+          where: { userId_householdId: { userId: user.id, householdId } },
         })
-      } else {
-        user = await getDb().user.upsert({
-          where:  { phone: phone! },
-          update: {},
-          create: { phone: phone!, name: b.name },
+        if (existing) {
+          return fail(`${b.name} is already a member of this household.`, 409)
+        }
+
+        const currentMembers = await getMembershipsForHousehold(householdId)
+        const maxPosition    = currentMembers.length > 0
+          ? Math.max(...currentMembers.map(m => m.position))
+          : -1
+
+        const membership = await createMembership({
+          userId: user.id,
+          householdId,
+          role:     b.role,
+          position: maxPosition + 1,
+          emoji:    b.emoji,
+        })
+
+        return NextResponse.json({
+          ok: true,
+          membership: { id: membership.id, name: user.name, email: user.email, phone: user.phone },
         })
       }
 
-      // Get current max position
-      const currentMembers = await getMembershipsForHousehold(householdId)
-      const maxPosition = currentMembers.length > 0 ? Math.max(...currentMembers.map(m => m.position)) : -1
+      case 'remove': {
+        const membership = await db.membership.findUnique({ where: { id: b.id } })
+        if (!membership) return fail('Member not found. They may have already been removed.', 404)
+        if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await deleteMembership(b.id)
+        return NextResponse.json({ ok: true })
+      }
 
-      const membership = await createMembership({
-        userId: user.id,
-        householdId,
-        role: b.role,
-        position: maxPosition + 1,
-        emoji: b.emoji,
-      })
+      case 'move': {
+        const membership = await db.membership.findUnique({ where: { id: b.id } })
+        if (!membership) return fail('Member not found.', 404)
+        if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await moveMembership(b.id, b.dir)
+        return NextResponse.json({ ok: true })
+      }
 
-      return NextResponse.json({ ok: true, membership: { id: membership.id, name: user.name, email: user.email, phone: user.phone } })
+      case 'consent': {
+        const membership = await db.membership.findUnique({ where: { id: b.id } })
+        if (!membership) return fail('Member not found.', 404)
+        if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await setMembershipConsent(b.id, b.consent)
+        return NextResponse.json({ ok: true })
+      }
+
+      case 'reorder': {
+        if (b.ids.length === 0) return fail('No member IDs provided for reordering.', 400)
+        await reorderMemberships(householdId, b.ids)
+        return NextResponse.json({ ok: true })
+      }
+
+      case 'revoke': {
+        const membership = await db.membership.findUnique({ where: { id: b.id } })
+        if (!membership) return fail('Member not found.', 404)
+        if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await setMembershipConsent(b.id, 'pending')
+        await db.membership.update({
+          where: { id: b.id },
+          data:  { tokenEpoch: { increment: 1 } },
+        })
+        return NextResponse.json({ ok: true })
+      }
+
+      case 'createInvite': {
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        const invite    = await createInvite({
+          householdId,
+          role:            b.role,
+          createdByUserId: a.session!.userId,
+          expiresAt,
+        })
+        return NextResponse.json({
+          ok:     true,
+          invite: { code: invite.code, role: invite.role, expiresAt: invite.expiresAt },
+        })
+      }
+
+      case 'deleteInvite': {
+        const invite = await db.invite.findUnique({ where: { id: b.id } })
+        if (!invite) return fail('Invite not found. It may have already been deleted.', 404)
+        if (invite.householdId !== householdId) return fail('This invite does not belong to your household.', 403)
+        await deleteInvite(b.id)
+        return NextResponse.json({ ok: true })
+      }
     }
-    case 'remove':
-      await deleteMembership(b.id)
-      return NextResponse.json({ ok: true })
-    case 'move':
-      await moveMembership(b.id, b.dir)
-      return NextResponse.json({ ok: true })
-    case 'consent':
-      await setMembershipConsent(b.id, b.consent)
-      return NextResponse.json({ ok: true })
-    case 'reorder':
-      await reorderMemberships(householdId, b.ids)
-      return NextResponse.json({ ok: true })
-    case 'revoke': {
-      await setMembershipConsent(b.id, 'pending')
-      // Rotate epoch to invalidate all tokens
-      await getDb().membership.update({
-        where: { id: b.id },
-        data: { tokenEpoch: { increment: 1 } }
-      })
-      return NextResponse.json({ ok: true })
-    }
-    case 'createInvite': {
-      const db = getDb()
-      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
-      const invite = await createInvite({
-        householdId,
-        role: b.role,
-        createdByUserId: a.session!.userId,
-        expiresAt,
-      })
-      return NextResponse.json({ ok: true, invite: { code: invite.code, role: invite.role, expiresAt: invite.expiresAt } })
-    }
-    case 'deleteInvite': {
-      await deleteInvite(b.id)
-      return NextResponse.json({ ok: true })
-    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`[MEMBERS POST action=${b.action}]`, e)
+    return fail(`Failed to update members: ${msg}`, 503)
   }
 }
