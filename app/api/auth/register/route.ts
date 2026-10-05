@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
         email: user.email,
         name: user.name,
       },
+      // Include household info for auto-redirect
+      hasHousehold: false,
+      householdId: null,
     })
 
     res.cookies.set(COOKIE, token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 7 })

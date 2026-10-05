@@ -37,8 +37,13 @@ export default function LoginPage() {
 
       const data = await res.json()
 
-      // Redirect to role selection
-      router.push('/select-role')
+      // If user has a household, go directly to workspace (residents only have one)
+      if (data.hasHousehold && data.householdId) {
+        router.push(`/workspace/${data.householdId}`)
+      } else {
+        // Otherwise, go to role selection
+        router.push('/select-role')
+      }
     } catch {
       setError('Network error. Please try again.')
     } finally {

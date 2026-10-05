@@ -94,6 +94,9 @@ export async function POST(req: NextRequest) {
         role: m.role,
         residentName: m.household.residentName,
       })),
+      // Include household info for auto-redirect
+      hasHousehold: user.memberships.length > 0,
+      householdId: user.memberships.length > 0 ? user.memberships[0].householdId : null,
     })
 
     res.cookies.set(COOKIE, token, { ...cookieOpts, maxAge: 60 * 60 * 24 * 7 })

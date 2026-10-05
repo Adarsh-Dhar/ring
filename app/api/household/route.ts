@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { setQuiet, setTimeoutSec, getSetup, setPlannedMode, PLANNED_MODES } from '@/lib/doorbell/store'
 import { updateHousehold, createResidentDevice, createHousehold } from '@/lib/db/households'
-import { authorize, fail, parse, COOKIE, cookieOpts, getPendingUserId } from '@/lib/guard'
+import { authorize, fail, parse, getPendingUserId } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import { getDb } from '@/lib/db/client'
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     let guardianUserId: string | null = pendingUserId
 
     if (!guardianUserId) {
-      const a = await authorize(req, 'guardian')
+      const a = await authorize(req, 'user')
       if (a.ok === false) return fail('You must be signed in to create a household.', 401)
       guardianUserId = a.session!.userId
     }
@@ -239,23 +239,15 @@ export async function POST(req: NextRequest) {
       return fail('Household was created but failed to assign your guardian role. Please contact support.', 503)
     }
 
-    const token = makeToken({
-      kind:        'helper',
-      sub:         membership.id,
-      householdId: household.id,
-      epoch:       membership.tokenEpoch,
-      exp:         Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
-    })
-    if (!token) return fail('Failed to create session token. Check that AUTH_SECRET is set.', 500)
+    // Don't change the session - keep the user's existing 'user' session
+    // The user now has a household and can access it via their user session
 
-    const res = NextResponse.json({
+    return NextResponse.json({
       ok:          true,
       householdId: household.id,
       role:        'guardian',
       residentName: household.residentName,
     })
-    res.cookies.set(COOKIE, token, cookieOpts)
-    return res
   }
 
   // ── All other actions require a guardian session ───────────────────────────

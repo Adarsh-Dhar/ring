@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'user')
+  const a = await authorize(req, 'any')
   if (a.ok === false) return a.res
 
   const userId = a.session!.userId

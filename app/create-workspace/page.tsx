@@ -44,7 +44,12 @@ export default function CreateWorkspacePage() {
         return
       }
 
-      router.push('/workspaces')
+      const data = await res.json()
+      if (data.householdId) {
+        router.push(`/workspace/${data.householdId}`)
+      } else {
+        router.push('/workspaces')
+      }
     } catch {
       setError('Network error. Please try again.')
     } finally {
