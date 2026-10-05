@@ -1,7 +1,8 @@
 import ResidentPage from '@/app/resident/page'
+import WorkspaceShell from '@/components/workspace-shell'
 
 export default function ResidentWorkspacePage() {
-  return <ResidentPage />
+  return <WorkspaceShell role="resident"><ResidentPage /></WorkspaceShell>
 }
 
 export const metadata = {
