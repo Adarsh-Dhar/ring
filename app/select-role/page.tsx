@@ -2,115 +2,120 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 
 export default function SelectRolePage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
 
-  const selectRole = async (role: 'resident' | 'helper') => {
+  const selectResident = () => {
     setLoading(true)
-    setMessage(null)
-
-    try {
-      const res = await fetch('/api/auth/select-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
+    // Check if user already has a household
+    fetch('/api/user/households')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.memberships && data.memberships.length > 0) {
+          // User has households, go to workspace list
+          router.push('/workspaces')
+        } else {
+          // No household, go to create household
+          router.push('/create-workspace')
+        }
       })
+      .catch(() => {
+        router.push('/create-workspace')
+      })
+      .finally(() => setLoading(false))
+  }
 
-      if (!res.ok) {
-        const data = await res.json()
-        setMessage(data.error || 'Failed to select role')
-        setLoading(false)
-        return
-      }
-
-      if (role === 'resident') {
-        router.push('/workspace/resident/create')
-      } else {
-        router.push('/workspace/helper/waiting')
-      }
-    } catch {
-      setMessage('Network error. Please try again.')
-      setLoading(false)
-    }
+  const selectHelper = () => {
+    setLoading(true)
+    router.push('/workspaces')
   }
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-950 to-slate-900 text-white p-4">
-      <div className="max-w-4xl mx-auto flex flex-col justify-center min-h-screen">
-        <div className="mb-12 text-center">
-          <div className="inline-flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center text-lg">
-              🔔
-            </div>
-            <span className="text-2xl font-bold">Ring Safe</span>
-          </div>
-          <h1 className="text-4xl font-bold mb-3">Welcome! What&apos;s your role?</h1>
-          <p className="text-xl text-slate-400">Choose how you want to use Ring Safe</p>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="max-w-2xl w-full">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Choose Your Role</h1>
+          <p className="text-gray-600">How do you want to use Doorbell Helper?</p>
         </div>
 
-        {message && (
-          <div className="mb-6 p-4 bg-red-900/20 border border-red-700 text-red-200 rounded-lg text-center">
-            {message}
-          </div>
-        )}
-
-        <div className="grid md:grid-cols-2 gap-8 mb-8">
+        <div className="grid md:grid-cols-2 gap-6">
           {/* Resident Card */}
           <button
-            onClick={() => selectRole('resident')}
+            onClick={selectResident}
             disabled={loading}
-            className="group bg-slate-800/50 border-2 border-slate-700 rounded-2xl p-8 hover:border-cyan-500 hover:bg-slate-800 transition disabled:opacity-50"
+            className="bg-white p-8 rounded-lg shadow-md hover:shadow-lg transition-shadow text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <div className="text-6xl mb-4">🏠</div>
-            <h2 className="text-2xl font-bold mb-3">Resident</h2>
-            <p className="text-slate-300 mb-6 text-left">
-              You live at the home and need help managing who comes to your door. Create a workspace and invite helpers to keep you safe.
-            </p>
-            <ul className="space-y-2 text-left text-sm text-slate-400 mb-8">
-              <li>✓ Get instant doorbell alerts</li>
-              <li>✓ Verify visitors with helpers</li>
-              <li>✓ Schedule planned visits</li>
-              <li>✓ Control who can help</li>
-            </ul>
-            <div className="inline-block px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-lg font-semibold group-hover:from-cyan-600 group-hover:to-blue-700 transition">
-              {loading ? 'Loading...' : 'Create Workspace'}
+            <div className="w-16 h-16 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
             </div>
+            <h2 className="text-xl font-semibold text-gray-900 mb-2">Resident</h2>
+            <p className="text-gray-600 mb-4">
+              I live here and want to connect my Ring doorbell. I'll add helpers and manage visitors.
+            </p>
+            <ul className="text-sm text-gray-600 space-y-1">
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Connect Ring doorbell
+              </li>
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Add trusted helpers
+              </li>
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Approve visitor passes
+              </li>
+            </ul>
           </button>
 
           {/* Helper Card */}
           <button
-            onClick={() => selectRole('helper')}
+            onClick={selectHelper}
             disabled={loading}
-            className="group bg-slate-800/50 border-2 border-slate-700 rounded-2xl p-8 hover:border-emerald-500 hover:bg-slate-800 transition disabled:opacity-50"
+            className="bg-white p-8 rounded-lg shadow-md hover:shadow-lg transition-shadow text-left disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <div className="text-6xl mb-4">👥</div>
-            <h2 className="text-2xl font-bold mb-3">Helper</h2>
-            <p className="text-slate-300 mb-6 text-left">
-              You help a resident by verifying visitors at their door. A resident must invite and approve you before you can help.
-            </p>
-            <ul className="space-y-2 text-left text-sm text-slate-400 mb-8">
-              <li>✓ Receive doorbell alerts</li>
-              <li>✓ Verify visitors in real-time</li>
-              <li>✓ See visitor history</li>
-              <li>✓ Manage planned visits</li>
-            </ul>
-            <div className="inline-block px-6 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 rounded-lg font-semibold group-hover:from-emerald-600 group-hover:to-teal-700 transition">
-              {loading ? 'Loading...' : 'Waiting for Invite'}
+            <div className="w-16 h-16 bg-green-100 rounded-lg flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
             </div>
+            <h2 className="text-xl font-semibold text-gray-900 mb-2">Helper</h2>
+            <p className="text-gray-600 mb-4">
+              I help someone who lives here. I'll respond to doorbell alerts and manage visitors.
+            </p>
+            <ul className="text-sm text-gray-600 space-y-1">
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Respond to alerts
+              </li>
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                Add visitor passes
+              </li>
+              <li className="flex items-center">
+                <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+                View live video
+              </li>
+            </ul>
           </button>
         </div>
-
-        <div className="text-center">
-          <p className="text-slate-400 mb-4">You can change your role later in your account settings.</p>
-          <Link href="/" className="text-sm text-slate-400 hover:text-white transition">
-            Back to home
-          </Link>
-        </div>
       </div>
-    </main>
+    </div>
   )
 }

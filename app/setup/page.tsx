@@ -83,8 +83,6 @@ function SetupPage() {
   const [enrolledFaces,      setEnrolledFaces]      = useState<any[]>([])
   const [faceStatus,         setFaceStatus]         = useState<{ enabled: boolean; modelsLoaded: boolean } | null>(null)
   const [sightings,          setSightings]          = useState<any[]>([])
-  const [passkeys,           setPasskeys]           = useState<any[]>([])
-  const [registeringPasskey, setRegisteringPasskey] = useState(false)
 
   // ── Handle Ring OAuth callback result from URL params ──────────────────────
   useEffect(() => {
@@ -152,17 +150,6 @@ function SetupPage() {
       }
     } catch {
       // Sightings may fail
-    }
-
-    // Load passkeys
-    try {
-      const pr = await fetch('/api/auth/passkey', { cache: 'no-store' })
-      if (pr.ok) {
-        const pd = await pr.json()
-        setPasskeys(pd.passkeys ?? [])
-      }
-    } catch {
-      // Passkeys may fail
     }
   }, [router])
 
@@ -239,73 +226,6 @@ function SetupPage() {
     setPairingCode('loading')
     // Redirect to QR pairing page
     router.push('/pair-qr')
-  }
-
-  // ── Passkey helpers ─────────────────────────────────────────────────────
-  const registerPasskey = async () => {
-    setErr('')
-    setRegisteringPasskey(true)
-    try {
-      // Get guardian's membership from current data
-      const guardian = data?.members.find((m: Member) => m.role === 'guardian')
-      if (!guardian) { setErr('Could not find guardian'); return }
-
-      const optionsRes = await fetch('/api/auth/passkey/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: guardian.id, userName: guardian.name }),
-      })
-      if (!optionsRes.ok) {
-        const err = await optionsRes.json().catch(() => ({}))
-        setErr(err.error || 'Failed to get registration options')
-        return
-      }
-      const options = await optionsRes.json()
-
-      // Use WebAuthn to register
-      const { startRegistration } = await import('@simplewebauthn/browser')
-      const regResp = await startRegistration(options)
-
-      // Verify with server
-      const verifyRes = await fetch('/api/auth/passkey/register/verify', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: guardian.id,
-          response: regResp,
-          expectedChallenge: options.challenge,
-        }),
-      })
-      if (!verifyRes.ok) {
-        const err = await verifyRes.json().catch(() => ({}))
-        setErr(err.error || 'Registration verification failed')
-        return
-      }
-
-      setNote('Passkey registered successfully!')
-      load() // Reload passkeys
-    } catch (error: any) {
-      setErr(error?.message || 'Passkey registration failed')
-    } finally {
-      setRegisteringPasskey(false)
-    }
-  }
-
-  const deletePasskey = async (id: string) => {
-    if (!confirm('Remove this passkey?')) return
-    setErr('')
-    try {
-      const r = await fetch('/api/auth/passkey', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      })
-      if (!r.ok) { setErr('Failed to delete passkey'); return }
-      setNote('Passkey removed')
-      load()
-    } catch {
-      setErr('Failed to delete passkey')
-    }
   }
 
   const createVisitLink = async () => {
@@ -507,39 +427,6 @@ function SetupPage() {
         <button onClick={createDevice} disabled={loading} className={btn}>Generate QR code</button>
       </div>
       <p className="mb-6 text-sm text-slate-400">Scan the QR code with the resident device to pair it. The device stays signed in.</p>
-
-      {/* ── Passkeys ───────────────────────────────────────────────────── */}
-      <h2 className="mb-2 text-sm uppercase tracking-wide text-slate-400">Passkeys</h2>
-      <p className="mb-2 text-sm text-slate-400">Use Face ID, Touch ID, or a security key to sign in without a code.</p>
-      <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
-        <button
-          onClick={registerPasskey}
-          disabled={registeringPasskey || loading}
-          className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-black disabled:opacity-50"
-        >
-          {registeringPasskey ? 'Registering…' : 'Register new passkey'}
-        </button>
-        {passkeys.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold">Registered passkeys ({passkeys.length})</h3>
-            <ul className="space-y-2">
-              {passkeys.map((p: any) => (
-                <li key={p.id} className="flex items-center justify-between rounded-lg bg-slate-700 px-3 py-2">
-                  <span className="text-sm">
-                    Added {new Date(p.createdAt).toLocaleDateString()}
-                  </span>
-                  <button
-                    onClick={() => deletePasskey(p.id)}
-                    className="text-xs text-red-300 hover:text-red-200"
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
 
       {/* ── Timeout ───────────────────────────────────────────────────── */}
       <h2 className="mb-2 text-sm uppercase tracking-wide text-slate-400">Time each member has to answer</h2>

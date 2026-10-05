@@ -9,14 +9,14 @@ export const COOKIE = 'db_session'
 export const DEVICE_COOKIE = 'db_device'
 
 export type Session = {
-  kind: 'helper' | 'resident' | 'device'
+  kind: 'helper' | 'resident' | 'device' | 'user'
   userId: string
   householdId: string
   membershipId?: string
   role?: 'guardian' | 'helper'
 }
 
-type Who = 'helper' | 'resident' | 'device' | 'guardian'
+type Who = 'helper' | 'resident' | 'device' | 'guardian' | 'any' | 'user'
 
 const tokenFrom = (req: NextRequest) => {
   const b = req.headers.get('authorization')
@@ -41,6 +41,15 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
   // Pending tokens (issued by verify-otp, before household selection) are
   // intentionally rejected here – they are only valid for select-household.
   if (data.kind === 'pending') return null
+
+  // New simple user session (for email/password auth without household)
+  if (data.kind === 'user') {
+    return {
+      kind: 'user',
+      userId: data.sub,
+      householdId: data.householdId || '',
+    }
+  }
 
   if (data.kind === 'resident') {
     const epoch = await getResidentEpoch(data.householdId)
@@ -255,6 +264,8 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
 
     // Check role authorization
     let roleOk = false
+    if (allowed.includes('any')) roleOk = true
+    if (allowed.includes('user') && session.kind === 'user') roleOk = true
     if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
     if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
     if (allowed.includes('resident') && session.kind === 'resident') roleOk = true
@@ -275,6 +286,8 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
 
   // Check role authorization
   let roleOk = false
+  if (allowed.includes('any')) roleOk = true
+  if (allowed.includes('user') && session.kind === 'user') roleOk = true
   if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
   if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
   if (allowed.includes('resident') && session.kind === 'resident') roleOk = true

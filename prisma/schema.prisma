@@ -9,14 +9,14 @@ datasource db {
 
 model User {
   id              String       @id @default(cuid())
-  email           String?      @unique
-  phone           String?      @unique
+  email           String       @unique
+  passwordHash    String
   name            String?
+  phone           String?      @unique
   createdAt       DateTime     @default(now())
   acceptedInvites Invite[]     @relation("AcceptedInvites")
   createdInvites  Invite[]     @relation("CreatedInvites")
   memberships     Membership[]
-  otpCodes        OtpCode[]
 }
 
 model Household {
@@ -66,7 +66,6 @@ model Membership {
   household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   pushSubscriptions PushSubscription[]
-  passkeys          Passkey[]          // v2: WebAuthn passkeys
   v2Devices         V2Device[]         // v2: devices belonging to this member
 
   @@unique([userId, householdId])
@@ -214,21 +213,6 @@ model WebhookEvent {
 
   @@index([householdId])
   @@index([requestId])
-}
-
-model OtpCode {
-  id        String   @id @default(cuid())
-  userId    String
-  codeHash  String
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  attempts  Int      @default(0)
-  ip        String?
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt])
-  @@index([ip, createdAt])
 }
 
 model RingNonce {
@@ -380,19 +364,6 @@ model V2Device {
 
   @@unique([householdId, kind, revokedAt]) // At most one active device per kind per household
   @@index([householdId])
-  @@index([memberId])
-}
-
-// v2: WebAuthn passkeys
-model Passkey {
-  id           String     @id @default(cuid())
-  memberId     String
-  credentialId String     @unique
-  publicKey    String
-  counter      Int        @default(0)
-  createdAt    DateTime   @default(now())
-  membership   Membership @relation(fields: [memberId], references: [id], onDelete: Cascade)
-
   @@index([memberId])
 }
 
