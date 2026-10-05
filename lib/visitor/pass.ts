@@ -1,9 +1,12 @@
 /**
  * Visitor pass service
- * Manages visitor pass creation, validation, and audit logging
+ * Creation, listing, revocation and the Prisma-backed store for device binding.
+ * The secret/binding rules themselves live in ./binding (no database imports, unit-tested).
  */
 
 import { getDb } from '@/lib/db/client'
+import { newSecret } from '@/lib/visit-tokens'
+import { sha256, type PassStore } from './binding'
 
 export interface CreatePassOptions {
   householdId: string
@@ -11,9 +14,9 @@ export interface CreatePassOptions {
   windowStart: Date
   windowEnd: Date
   recurrence?: any
-  deviceId?: string
 }
 
+/** What clients may see. Never includes secretHash or boundDeviceHash. */
 export interface PassWithEvents {
   id: string
   householdId: string
@@ -21,140 +24,95 @@ export interface PassWithEvents {
   windowStart: Date
   windowEnd: Date
   recurrence: any
-  deviceId: string | null
+  bound: boolean
+  boundAt: Date | null
   revokedAt: Date | null
   createdAt: Date
-  events: {
-    id: string
-    passId: string
-    type: 'created' | 'used' | 'revoked'
-    deviceId: string | null
-    at: Date
-  }[]
+  events?: { id: string; passId: string; type: string; at: Date }[]
 }
 
-/**
- * Create a new visitor pass
- */
-export async function createPass(options: CreatePassOptions): Promise<PassWithEvents> {
-  const db = getDb()
+const PUBLIC_SELECT = {
+  id: true, householdId: true, visitorName: true, windowStart: true, windowEnd: true,
+  recurrence: true, boundDeviceHash: true, boundAt: true, revokedAt: true, createdAt: true,
+} as const
 
-  const pass = await db.pass.create({
+function toPublic<T extends { boundDeviceHash: string | null }>(row: T): Omit<T, 'boundDeviceHash'> & { bound: boolean } {
+  const { boundDeviceHash, ...rest } = row
+  return { ...rest, bound: !!boundDeviceHash }
+}
+
+/** Create a pass. The returned `secret` is shown once (it goes into the visitor link); only its hash is stored. */
+export async function createPass(options: CreatePassOptions): Promise<{ pass: PassWithEvents; secret: string }> {
+  const db = getDb()
+  const secret = newSecret()
+
+  const row = await db.pass.create({
     data: {
       householdId: options.householdId,
       visitorName: options.visitorName,
       windowStart: options.windowStart,
       windowEnd: options.windowEnd,
-      recurrence: options.recurrence || null,
-      deviceId: options.deviceId || null,
+      recurrence: options.recurrence ?? undefined,
+      secretHash: sha256(secret),
     },
+    select: PUBLIC_SELECT,
   })
 
-  // Audit log: created
-  await db.passEvent.create({
-    data: {
-      passId: pass.id,
-      type: 'created',
-      deviceId: options.deviceId || null,
-    },
-  })
-
-  return pass as PassWithEvents
+  await db.passEvent.create({ data: { passId: row.id, type: 'created', deviceId: null } })
+  return { pass: toPublic(row) as PassWithEvents, secret }
 }
 
-/**
- * Get all passes for a household
- */
 export async function getPassesForHousehold(householdId: string): Promise<PassWithEvents[]> {
-  const db = getDb()
-
-  const passes = await db.pass.findMany({
+  const rows = await getDb().pass.findMany({
     where: { householdId },
-    include: {
-      events: {
-        orderBy: { id: 'desc' },
-      },
-    },
-    orderBy: { id: 'desc' },
+    select: { ...PUBLIC_SELECT, events: { orderBy: { at: 'desc' }, select: { id: true, passId: true, type: true, at: true } } },
+    orderBy: { createdAt: 'desc' },
   })
-
-  return passes as PassWithEvents[]
+  return rows.map(toPublic) as PassWithEvents[]
 }
 
-/**
- * Get a specific pass by ID
- */
 export async function getPassById(passId: string, householdId: string): Promise<PassWithEvents | null> {
-  const db = getDb()
-
-  const pass = await db.pass.findFirst({
-    where: {
-      id: passId,
-      householdId,
-    },
-    include: {
-      events: {
-        orderBy: { id: 'desc' },
-      },
-    },
+  const row = await getDb().pass.findFirst({
+    where: { id: passId, householdId },
+    select: { ...PUBLIC_SELECT, events: { orderBy: { at: 'desc' }, select: { id: true, passId: true, type: true, at: true } } },
   })
-
-  return pass as PassWithEvents | null
+  return row ? (toPublic(row) as PassWithEvents) : null
 }
 
-/**
- * Revoke a pass
- */
-export async function revokePass(passId: string, householdId: string): Promise<PassWithEvents> {
+/** Revoke a pass that belongs to this household. Returns null if there is no such pass here. */
+export async function revokePass(passId: string, householdId: string): Promise<PassWithEvents | null> {
   const db = getDb()
-
-  const pass = await db.pass.update({
-    where: { id: passId },
-    data: { revokedAt: new Date() },
-  })
-
-  // Audit log: revoked
-  await db.passEvent.create({
-    data: {
-      passId: pass.id,
-      type: 'revoked',
-      deviceId: null,
-    },
-  })
-
-  return pass as PassWithEvents
-}
-
-/**
- * Validate if a pass is currently valid
- */
-export function isPassValid(pass: PassWithEvents): boolean {
-  const now = new Date()
-
-  // Check if revoked
-  if (pass.revokedAt) {
-    return false
+  const r = await db.pass.updateMany({ where: { id: passId, householdId, revokedAt: null }, data: { revokedAt: new Date() } })
+  if (r.count === 0) {
+    // Already revoked is fine (idempotent); wrong household or unknown id is not.
+    return getPassById(passId, householdId)
   }
-
-  // Check time window
-  if (now < pass.windowStart || now > pass.windowEnd) {
-    return false
-  }
-
-  return true
+  await db.passEvent.create({ data: { passId, type: 'revoked', deviceId: null } })
+  return getPassById(passId, householdId)
 }
 
-/**
- * Record a pass usage event
- */
-export async function recordPassUsage(passId: string, deviceId: string): Promise<void> {
-  const db = getDb()
-
-  await db.passEvent.create({
-    data: {
-      passId,
-      type: 'used',
-      deviceId,
-    },
-  })
+/** Prisma implementation of the store used by useVisitorPass(). */
+export const prismaPassStore: PassStore = {
+  async findBySecretHash(secretHash) {
+    return getDb().pass.findUnique({
+      where: { secretHash },
+      select: { id: true, householdId: true, windowStart: true, windowEnd: true, revokedAt: true, boundDeviceHash: true },
+    })
+  },
+  async bindIfUnbound(passId, deviceHash) {
+    const r = await getDb().pass.updateMany({
+      where: { id: passId, boundDeviceHash: null },
+      data:  { boundDeviceHash: deviceHash, boundAt: new Date() },
+    })
+    return r.count === 1
+  },
+  async boundHash(passId) {
+    const p = await getDb().pass.findUnique({ where: { id: passId }, select: { boundDeviceHash: true } })
+    return p?.boundDeviceHash ?? null
+  },
+  async recordEvent(passId, type, deviceHash) {
+    // Only a short fingerprint is kept in the audit log, never the full hash.
+    await getDb().passEvent.create({ data: { passId, type, deviceId: deviceHash ? deviceHash.slice(0, 12) : null } })
+  },
 }
+

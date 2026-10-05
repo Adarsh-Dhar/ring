@@ -115,3 +115,46 @@ export async function deleteAllCasesForHousehold(householdId: string) {
     where: { householdId }
   })
 }
+
+/**
+ * Atomically move a waiting case to its next escalation step.
+ *
+ * The WHERE clause only matches if nobody has moved the case since the caller read it
+ * (same helperIndex, deadline and lane, still 'waiting'). Postgres runs this as one
+ * UPDATE, so of any number of callers racing for the same step exactly one gets count = 1.
+ * That caller, and only that caller, may send the alert for the step.
+ */
+export async function claimEscalationStep(
+  caseId: string,
+  expect: { helperIndex: number; deadlineAt: number; lane?: string | null },
+  change: { helperIndex: number; deadlineAt: number; status: 'waiting' | 'no_response'; lane?: string | null; resolvedAt?: number },
+  log: { t: number; msg: string }[],
+): Promise<boolean> {
+  const r = await getDb().case.updateMany({
+    where: {
+      id:          caseId,
+      status:      'waiting',
+      helperIndex: expect.helperIndex,
+      deadlineAt:  new Date(expect.deadlineAt),
+      lane:        expect.lane ?? null,
+    },
+    data: {
+      helperIndex: change.helperIndex,
+      deadlineAt:  new Date(change.deadlineAt),
+      status:      change.status,
+      lane:        change.lane ?? null,
+      resolvedAt:  change.resolvedAt !== undefined ? new Date(change.resolvedAt) : undefined,
+      log:         log as unknown as Prisma.JsonArray,
+    },
+  })
+  return r.count === 1
+}
+
+/** Waiting cases whose deadline passed more than `graceMs` ago (used by the worker sweep). */
+export async function getOverdueCases(graceMs: number, limit = 100) {
+  return getDb().case.findMany({
+    where:   { status: 'waiting', deadlineAt: { lt: new Date(Date.now() - graceMs) } },
+    orderBy: { deadlineAt: 'asc' },
+    take:    limit,
+  })
+}

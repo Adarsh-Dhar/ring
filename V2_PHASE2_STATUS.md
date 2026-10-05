@@ -1,3 +1,5 @@
+> **Correction:** the sections below describe the intended design. Before the escalation fix, `tick()` did not save escalation steps and no worker handled deadlines. See `docs/STATUS_AND_CHECKLIST.md` for what is actually verified.
+
 # Phase 2 Status: Durable Timers
 
 ## Current Status: Implementation Complete

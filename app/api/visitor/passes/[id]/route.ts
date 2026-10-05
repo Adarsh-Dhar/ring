@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth'
+import { authorize, isAuthOk } from '@/lib/guard'
 import { getPassById, revokePass } from '@/lib/visitor/pass'
 
 export const dynamic = 'force-dynamic'
@@ -12,18 +12,11 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const a = await authorize(request, 'guardian')
+  if (!isAuthOk(a)) return a.res
   try {
     const { id } = await params
-
-    // Verify session
-    const session = request.cookies.get('session')?.value
-    const token = verifyToken(session)
-
-    if (!token.ok || !token.data.householdId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const pass = await getPassById(id, token.data.householdId)
+    const pass = await getPassById(id, a.session.householdId)
 
     if (!pass) {
       return NextResponse.json({ error: 'Pass not found' }, { status: 404 })
@@ -43,18 +36,11 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const a = await authorize(request, 'guardian')
+  if (!isAuthOk(a)) return a.res
   try {
     const { id } = await params
-
-    // Verify session
-    const session = request.cookies.get('session')?.value
-    const token = verifyToken(session)
-
-    if (!token.ok || !token.data.householdId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const pass = await revokePass(id, token.data.householdId)
+    const pass = await revokePass(id, a.session.householdId)
 
     if (!pass) {
       return NextResponse.json({ error: 'Pass not found' }, { status: 404 })

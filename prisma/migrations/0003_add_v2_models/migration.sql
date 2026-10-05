@@ -8,14 +8,14 @@ ALTER TABLE "Household" ADD COLUMN "preset" TEXT DEFAULT 'standard' CHECK ("pres
 
 -- Create V2Device table (replaces cookies, pairing codes, visitor tokens)
 CREATE TABLE "V2Device" (
-  id TEXT NOT NULL,
-  householdId TEXT NOT NULL,
-  memberId TEXT,
-  kind TEXT NOT NULL,
-  publicKey TEXT NOT NULL,
-  lastSeenAt TIMESTAMP NOT NULL DEFAULT NOW(),
-  revokedAt TIMESTAMP,
-  createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+  "id" TEXT NOT NULL,
+  "householdId" TEXT NOT NULL,
+  "memberId" TEXT,
+  "kind" TEXT NOT NULL,
+  "publicKey" TEXT NOT NULL,
+  "lastSeenAt" TIMESTAMP(3) NOT NULL DEFAULT NOW(),
+  "revokedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT NOW(),
   CONSTRAINT "V2Device_pkey" PRIMARY KEY (id)
 );
 
@@ -30,12 +30,12 @@ ALTER TABLE "V2Device" ADD CONSTRAINT "V2Device_memberId_fkey" FOREIGN KEY ("mem
 
 -- Create Passkey table (WebAuthn)
 CREATE TABLE "Passkey" (
-  id TEXT NOT NULL,
-  memberId TEXT NOT NULL,
-  credentialId TEXT NOT NULL,
-  publicKey TEXT NOT NULL,
-  counter INTEGER NOT NULL DEFAULT 0,
-  createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+  "id" TEXT NOT NULL,
+  "memberId" TEXT NOT NULL,
+  "credentialId" TEXT NOT NULL,
+  "publicKey" TEXT NOT NULL,
+  "counter" INTEGER NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT NOW(),
   CONSTRAINT "Passkey_pkey" PRIMARY KEY (id)
 );
 
@@ -48,15 +48,15 @@ ALTER TABLE "Passkey" ADD CONSTRAINT "Passkey_memberId_fkey" FOREIGN KEY ("membe
 
 -- Create Pass table (visitor passes)
 CREATE TABLE "Pass" (
-  id TEXT NOT NULL,
-  householdId TEXT NOT NULL,
-  visitorName TEXT NOT NULL,
-  windowStart TIMESTAMP NOT NULL,
-  windowEnd TIMESTAMP NOT NULL,
-  recurrence JSONB,
-  deviceId TEXT,
-  revokedAt TIMESTAMP,
-  createdAt TIMESTAMP NOT NULL DEFAULT NOW(),
+  "id" TEXT NOT NULL,
+  "householdId" TEXT NOT NULL,
+  "visitorName" TEXT NOT NULL,
+  "windowStart" TIMESTAMP(3) NOT NULL,
+  "windowEnd" TIMESTAMP(3) NOT NULL,
+  "recurrence" JSONB,
+  "deviceId" TEXT,
+  "revokedAt" TIMESTAMP(3),
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT NOW(),
   CONSTRAINT "Pass_pkey" PRIMARY KEY (id)
 );
 
@@ -70,11 +70,11 @@ ALTER TABLE "Pass" ADD CONSTRAINT "Pass_deviceId_fkey" FOREIGN KEY ("deviceId") 
 
 -- Create PassEvent table (audit log)
 CREATE TABLE "PassEvent" (
-  id TEXT NOT NULL,
-  passId TEXT NOT NULL,
-  type TEXT NOT NULL,
-  deviceId TEXT,
-  at TIMESTAMP NOT NULL DEFAULT NOW(),
+  "id" TEXT NOT NULL,
+  "passId" TEXT NOT NULL,
+  "type" TEXT NOT NULL,
+  "deviceId" TEXT,
+  "at" TIMESTAMP(3) NOT NULL DEFAULT NOW(),
   CONSTRAINT "PassEvent_pkey" PRIMARY KEY (id)
 );
 

@@ -5,7 +5,7 @@
 
 import { initQueue, stopQueue } from '@/lib/queue'
 import { JOB_NAMES, type WebhookProcessJob, type DeviceOfflineJob, type DeviceOnlineJob } from '@/lib/queue/jobs'
-import { ingestEvent, setDeviceOnline } from '@/lib/doorbell/store'
+import { ingestEvent, setDeviceOnline, sweepOverdueCases } from '@/lib/doorbell/store'
 
 async function main() {
   console.log('[WORKER] Starting timer worker...')
@@ -91,9 +91,29 @@ async function main() {
 
   console.log('[WORKER] Worker ready, waiting for jobs...')
 
+  // Escalation backstop. Looks at the DATABASE every few seconds and escalates any waiting case
+  // whose deadline has passed, so a case still moves on if the web process is down or restarting.
+  // Safe to run next to the web server's own tick: each step is claimed atomically, so only one
+  // of them ever sends the alert.
+  const SWEEP_MS = Number(process.env.ESCALATION_SWEEP_MS || 5_000)
+  let sweeping = false
+  const sweepTimer = setInterval(async () => {
+    if (sweeping) return
+    sweeping = true
+    try {
+      const n = await sweepOverdueCases()
+      if (n > 0) console.log(`[WORKER] Sweep escalated ${n} step(s)`)
+    } catch (error) {
+      console.error('[WORKER] Escalation sweep failed:', error)
+    } finally {
+      sweeping = false
+    }
+  }, SWEEP_MS)
+
   // Handle graceful shutdown
   const shutdown = async () => {
     console.log('[WORKER] Shutting down...')
+    clearInterval(sweepTimer)
     await stopQueue()
     process.exit(0)
   }

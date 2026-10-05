@@ -404,7 +404,10 @@ model Pass {
   windowStart DateTime
   windowEnd   DateTime
   recurrence Json?       // Optional recurrence rules
-  deviceId    String?     // Device-bound pass
+  deviceId    String?     // Legacy FK to V2Device; no longer written by the visitor flow
+  secretHash      String?   @unique // sha256 of the one-time link secret; the secret itself is never stored
+  boundDeviceHash String?           // sha256 of the visitor's device secret, set on first use
+  boundAt         DateTime?
   revokedAt   DateTime?
   createdAt   DateTime    @default(now())
   household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
@@ -419,7 +422,7 @@ model Pass {
 model PassEvent {
   id        String   @id @default(cuid())
   passId    String
-  type      String   // created | used | revoked
+  type      String   // created | bound | used | rejected | revoked
   deviceId  String?
   at        DateTime @default(now())
   pass      Pass     @relation(fields: [passId], references: [id], onDelete: Cascade)

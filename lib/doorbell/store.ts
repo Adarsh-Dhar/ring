@@ -4,7 +4,8 @@ import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfigure
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
-import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases } from '../db/cases'
+import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
+import { escalateDueCase, type EscalationDeps } from './escalation'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
 import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
@@ -195,6 +196,9 @@ async function loadStateFromDB(householdId: string): Promise<void> {
           // so tick() can immediately escalate/resolve rather than leaving it stuck.
           c.deadlineAt = now + 5_000
           c.log.push({ t: now, msg: 'Server restarted. Case deadline had already passed; resuming escalation.' })
+          // Save the grace window so the database and memory agree about the deadline.
+          // (The escalation claim compares the saved deadline; a mismatch would only cost one reload.)
+          updateCase(c.id, { deadlineAt: c.deadlineAt, log: c.log }).catch(e => reportError(e, { householdId, fn: 'restart-grace' }))
         } else {
           c.log.push({ t: now, msg: 'Server restarted. Resuming timer from saved deadline (no duplicate alert).' })
         }
@@ -443,7 +447,7 @@ function notifyAll(state: HouseholdState, title: string, body: string, caseId: s
   })
 }
 
-function smsAll(state: HouseholdState, body: string, residentName: string, urgent = true) {
+function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, residentName: string, urgent = true) {
   getApprovedMemberships(state.householdId).then(memberships => {
     memberships.forEach(m => {
       if (m.user.phone) sendSms(m.user.phone, body, { urgent }).catch(e => console.error('[SMS]', e))
@@ -1106,6 +1110,83 @@ function warnIfAlertsFailing(state: HouseholdState, now: number) {
 
 export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
+// ── Escalation wiring ─────────────────────────────────────────────────────────
+
+/** Database claim + alerts for one household. Used by tick() and by the worker sweep. */
+function escalationDeps(householdId: string, residentName: string, timeoutSec: number): EscalationDeps {
+  return {
+    claim: (caseId, expect, change, log) => claimEscalationStep(caseId, expect, change, log),
+    reload: async (caseId) => {
+      const row = await getCase(caseId)
+      if (!row) return null
+      return {
+        helperIndex: row.helperIndex,
+        deadlineAt:  row.deadlineAt.getTime(),
+        status:      row.status as CaseStatus,
+        lane:        (row.lane as 'normal' | 'expected' | null) ?? undefined,
+        resolvedAt:  row.resolvedAt?.getTime(),
+        answer:      (row.answer as Answer | null) ?? undefined,
+        answeredBy:  row.answeredBy ?? undefined,
+        log:         (row.log as any) || [],
+      }
+    },
+    nameOf: async (id) => (id ? (await getMembership(id))?.user.name : undefined),
+    onStep: async (c, step) => {
+      if (step.kind === 'expected_to_normal') {
+        const first = step.fromId ? await getMembership(step.fromId) : null
+        if (first) {
+          pushToMembership(first.id, { title: '🚪 Someone is at the door', body: `Nobody confirmed the expected visit. Open the app. You have ${timeoutSec}s.`, tag: c.id, url: '/helper' })
+          if (first.user.phone) {
+            sendSms(first.user.phone, `Someone is at ${residentName}'s door. Open the helper app now. You have ${timeoutSec}s.`, { urgent: true })
+          }
+        }
+        return
+      }
+      if (step.kind === 'exhausted') {
+        smsAll({ householdId }, `Doorbell: nobody answered for ${residentName}. Please call them now.`, residentName, true)
+        return
+      }
+      const to = step.toId ? await getMembership(step.toId) : null
+      if (to) {
+        pushToMembership(to.id, { title: `🚪 ${step.fromName ?? 'Someone'} did not answer`, body: 'It is your turn. Open the app.', tag: c.id, url: '/helper' })
+        if (to.user.phone) {
+          sendSms(to.user.phone, `Doorbell for ${residentName}: ${step.fromName ?? 'the first helper'} did not answer. It is your turn. Open the helper app now.`, { urgent: true })
+        }
+      }
+    },
+  }
+}
+
+/**
+ * Worker backstop. Finds waiting cases that are overdue in the DATABASE and escalates them,
+ * so a case still escalates when the web process is down or restarting.
+ * `graceMs` keeps this from racing the web server's own 1 s tick; if the web server got there
+ * first the claim simply fails and nothing is sent twice.
+ */
+export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
+  const rows = await getOverdueCases(graceMs)
+  let steps = 0
+  for (const row of rows) {
+    try {
+      const household = await getHousehold(row.householdId)
+      if (!household) continue
+      const timeoutSec = household.timeoutSec || DEFAULT_ESCALATION_SECONDS
+      const chain = ((row.chain as any) as string[]) || []
+      const c: DoorCase = {
+        id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
+        createdAt: row.createdAt.getTime(), helperIndex: row.helperIndex, deadlineAt: row.deadlineAt.getTime(),
+        status: row.status as CaseStatus, log: ((row.log as any) || []),
+        chain: chain.length ? chain : (await getApprovedMemberships(row.householdId)).map(m => m.id),
+        lane: (row.lane as 'normal' | 'expected' | null) ?? undefined,
+      }
+      steps += await escalateDueCase(c, Date.now(), { timeoutSec, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
+    } catch (e) {
+      reportError(e, { fn: 'sweepOverdueCases', caseId: row.id })
+    }
+  }
+  return steps
+}
+
 // ── Tick ──────────────────────────────────────────────────────────────────────
 
 export async function tick(householdId?: string) {
@@ -1128,47 +1209,13 @@ export async function tick(householdId?: string) {
 
     warnIfAlertsFailing(state, now)
 
+    const deps = escalationDeps(householdId, household.residentName, state.timeoutSec)
     for (const c of state.cases) {
-      if (c.status !== 'waiting') continue
-      while (c.status === 'waiting' && now >= c.deadlineAt) {
-        if (c.lane === 'expected') {
-          c.lane       = 'normal'
-          c.deadlineAt += state.timeoutSec * 1000
-          addLog(c, `Nobody confirmed the expected visit in ${EXPECTED_TIMEOUT_SECONDS}s. Treated as an unknown visitor: normal alert and SMS.`)
-
-          const approved = await getApprovedMemberships(householdId)
-          const first    = approved.find(m => m.id === c.chain[c.helperIndex])
-          if (first) {
-            pushToMembership(first.id, { title: '🚪 Someone is at the door', body: `Nobody confirmed the expected visit. Open the app. You have ${state.timeoutSec}s.`, tag: c.id, url: '/helper' })
-            if (first.user.phone) {
-              sendSms(first.user.phone, `Someone is at ${household.residentName}'s door. Open the helper app now. You have ${state.timeoutSec}s.`, { urgent: true })
-            }
-          }
-          continue
-        }
-
-        const fromId = c.chain[c.helperIndex]
-        const from   = await getMembership(fromId)
-        c.helperIndex += 1
-
-        if (c.helperIndex >= c.chain.length) {
-          c.status     = 'no_response'
-          c.resolvedAt = c.deadlineAt
-          addLog(c, `${from?.user.name ?? 'Someone'} did not answer. Nobody left to ask. Resident told to keep door closed.`)
-          smsAll(state, `Doorbell: nobody answered for ${household.residentName}. Please call them now.`, household.residentName, true)
-          addLog(c, 'SMS sent to all helpers.')
-        } else {
-          const toId = c.chain[c.helperIndex]
-          const to   = await getMembership(toId)
-          c.deadlineAt += state.timeoutSec * 1000
-          addLog(c, `${from?.user.name ?? 'Someone'} did not answer in ${state.timeoutSec}s. Escalated to ${to?.user.name ?? 'next helper'}.`)
-          if (to) {
-            pushToMembership(to.id, { title: `🚪 ${from?.user.name ?? 'Someone'} did not answer`, body: 'It is your turn. Open the app.', tag: c.id, url: '/helper' })
-            if (to.user.phone) {
-              sendSms(to.user.phone, `Doorbell for ${household.residentName}: ${from?.user.name ?? 'the first helper'} did not answer. It is your turn. Open the helper app now.`, { urgent: true })
-            }
-          }
-        }
+      if (c.status !== 'waiting' || now < c.deadlineAt) continue
+      try {
+        await escalateDueCase(c, now, { timeoutSec: state.timeoutSec, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
+      } catch (e) {
+        reportError(e, { householdId, fn: 'tick/escalate', caseId: c.id })
       }
     }
 
