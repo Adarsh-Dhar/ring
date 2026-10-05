@@ -553,6 +553,7 @@ export async function getSetup(householdId: string) {
   return {
     members: memberships.map(m => ({
       id: m.id, name: m.user.name, phone: m.user.phone, emoji: m.emoji, consent: m.consent, role: m.role,
+      user: { id: m.user.id, name: m.user.name },
     })),
     quiet:       state.quiet,
     timeoutSec:  state.timeoutSec,

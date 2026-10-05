@@ -19,9 +19,9 @@ export async function POST(request: NextRequest) {
   try {
     const options = await generatePasskeyRegistrationOptions(userId, userName)
     return NextResponse.json(options)
-  } catch (error) {
+  } catch (error: any) {
     console.error('[PASSKEY] Failed to generate registration options:', error)
-    return NextResponse.json({ error: 'Failed to generate options' }, { status: 500 })
+    return NextResponse.json({ error: error?.message || 'Failed to generate options' }, { status: 500 })
   }
 }
 
@@ -39,8 +39,8 @@ export async function PUT(request: NextRequest) {
   try {
     const verification = await verifyPasskeyRegistration(userId, response, expectedChallenge)
     return NextResponse.json({ verified: true, verification })
-  } catch (error) {
+  } catch (error: any) {
     console.error('[PASSKEY] Registration verification failed:', error)
-    return NextResponse.json({ error: 'Registration failed' }, { status: 400 })
+    return NextResponse.json({ error: error?.message || 'Registration failed' }, { status: 400 })
   }
 }

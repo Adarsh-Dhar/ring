@@ -142,7 +142,16 @@ export default function LoginPage() {
       })
 
       if (!optionsRes.ok) {
-        setMessage({ text: await apiError(optionsRes), kind: 'error' })
+        const errorText = await apiError(optionsRes)
+        if (optionsRes.status === 404) {
+          // User not found - they need to sign up first
+          setMessage({
+            text: 'No account found with this email. Please sign up first using a code or magic link, then you can register a passkey in settings.',
+            kind: 'error',
+          })
+        } else {
+          setMessage({ text: errorText, kind: 'error' })
+        }
         inFlight.current = false
         setLoading(false)
         return
@@ -387,6 +396,9 @@ export default function LoginPage() {
                 </div>
                 <p className="text-sm text-gray-600">
                   Use your device's biometric (Face ID, fingerprint) or security key to sign in.
+                </p>
+                <p className="text-xs text-gray-400">
+                  New to Doorbell Helper? Sign up with a code or magic link first, then register a passkey in settings.
                 </p>
                 <button
                   type="submit"

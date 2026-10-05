@@ -146,7 +146,48 @@ export async function POST(req: NextRequest) {
         // P2002 = unique constraint — the phone/email belongs to another account
         if (e?.code === 'P2002') {
           const field = (e?.meta?.target as string[] | undefined)?.join(', ') ?? 'phone or email'
-          return fail(`That ${field} is already registered to another account.`, 409)
+          const conflictingValue = profileUpdate[field as 'phone' | 'email']
+          
+          // Check if the conflicting account has a household
+          const conflictingUser = await db.user.findUnique({
+            where: { [field as 'phone' | 'email']: conflictingValue },
+            select: {
+              id: true,
+              memberships: {
+                where: { consent: 'approved' },
+                select: { householdId: true }
+              }
+            }
+          })
+
+          if (conflictingUser && conflictingUser.memberships.length > 0) {
+            // The other account has a household - tell them to sign in with that account
+            return fail(
+              `That ${field} is already registered to another account with a household. Please sign in using that ${field} instead.`,
+              409
+            )
+          }
+
+          // The other account has no household - transfer the phone/email to current account
+          if (conflictingUser) {
+            try {
+              // Clear the field from the old account
+              await db.user.update({
+                where: { id: conflictingUser.id },
+                data: { [field as 'phone' | 'email']: null }
+              })
+              // Now set it on the current account
+              await db.user.update({
+                where: { id: guardianUserId },
+                data: profileUpdate
+              })
+            } catch (mergeError) {
+              console.error('[HOUSEHOLD CREATE] Failed to transfer phone/email between accounts', mergeError)
+              return fail('Unable to update your profile. Please try again.', 503)
+            }
+          } else {
+            return fail(`That ${field} is already registered to another account.`, 409)
+          }
         }
         console.error('[HOUSEHOLD CREATE] Failed to update user profile', e)
         return fail('Unable to update your profile. Please try again.', 503)

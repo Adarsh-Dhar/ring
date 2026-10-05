@@ -35,19 +35,29 @@ function base64ToUint8Array(base64: string): Uint8Array {
 /**
  * Generate WebAuthn registration options for a new passkey
  */
-export async function generatePasskeyRegistrationOptions(userId: string, userName: string) {
+export async function generatePasskeyRegistrationOptions(membershipId: string, userName: string) {
   const db = getDb()
 
-  // Get existing passkeys for this user to exclude from credentials
+  // Get the membership to get the user ID
+  const membership = await db.membership.findUnique({
+    where: { id: membershipId },
+    include: { user: true },
+  })
+
+  if (!membership) {
+    throw new Error('Membership not found')
+  }
+
+  // Get existing passkeys for this membership to exclude from credentials
   const existingPasskeys = await db.passkey.findMany({
-    where: { memberId: userId },
+    where: { memberId: membershipId },
     select: { credentialId: true },
   })
 
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: RP_ID,
-    userID: userId as unknown as Uint8Array,
+    userID: membership.userId as unknown as Uint8Array,
     userName,
     // Don't allow user to register the same device twice
     excludeCredentials: existingPasskeys.map(pk => ({
@@ -67,7 +77,7 @@ export async function generatePasskeyRegistrationOptions(userId: string, userNam
  * Verify WebAuthn registration response and save the passkey
  */
 export async function verifyPasskeyRegistration(
-  userId: string,
+  membershipId: string,
   response: RegistrationResponseJSON,
   expectedChallenge: string
 ) {
@@ -95,7 +105,7 @@ export async function verifyPasskeyRegistration(
     // Save the passkey to the database
     await db.passkey.create({
       data: {
-        memberId: userId,
+        memberId: membershipId,
         credentialId: credential.id,
         publicKey: Buffer.from(credential.publicKey).toString('base64'),
         counter: credential.counter,
