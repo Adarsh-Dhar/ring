@@ -159,6 +159,18 @@ export async function getV2DeviceSession(req: NextRequest): Promise<{
   if (device.revokedAt) return null
   if (device.householdId !== data.householdId) return null
 
+  // Reject token whose kind differs from the device's kind
+  if (device.kind !== data.kind) return null
+
+  // Reject helper and guardian devices whose membership isn't approved
+  if ((device.kind === 'helper' || device.kind === 'guardian') && device.memberId) {
+    const membership = await db.membership.findUnique({
+      where: { id: device.memberId },
+      select: { consent: true }
+    })
+    if (!membership || membership.consent !== 'approved') return null
+  }
+
   // Check session expiry (90 days from last seen)
   const SESSION_DURATION = 90 * 24 * 60 * 60 * 1000
   const sessionExpiry = new Date(device.lastSeenAt.getTime() + SESSION_DURATION)
@@ -223,7 +235,7 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
   // Try v2 device session first
   const v2Session = await getV2DeviceSession(req)
   if (v2Session) {
-    // Visitor devices are only allowed on visitor-specific routes
+    // Visitor devices are only allowed on routes that explicitly allow 'device'
     if (v2Session.kind === 'visitor' && !allowed.includes('device')) {
       return { ok: false as const, res: fail('Visitor devices cannot access this endpoint', 403) }
     }
@@ -246,6 +258,7 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
     if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
     if (allowed.includes('resident') && session.kind === 'resident') roleOk = true
+    if (allowed.includes('device') && v2Session.kind === 'visitor') roleOk = true
 
     if (!roleOk) {
       return { ok: false as const, res: fail('Forbidden', 403) }

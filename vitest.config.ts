@@ -3,5 +3,14 @@ import path from 'path'
 
 export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname) } },
-  test: { environment: 'node', include: ['tests/**/*.test.ts'], env: { NODE_ENV: 'test' } },
+  test: {
+    environment: 'node',
+    include: ['tests/**/*.test.ts'],
+    env: { NODE_ENV: 'test' },
+    poolOptions: {
+      threads: {
+        singleThread: true,
+      },
+    },
+  },
 })

@@ -25,14 +25,27 @@ export function useRealtime(options: UseRealtimeOptions) {
   const heartbeatTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastHeartbeatRef = useRef<number>(Date.now())
 
+  // Store callbacks in refs to avoid re-creating EventSource on every render
+  const onHeartbeatLostRef = useRef(onHeartbeatLost)
+  const onStateChangeRef = useRef(onStateChange)
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onHeartbeatLostRef.current = onHeartbeatLost
+  }, [onHeartbeatLost])
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange
+  }, [onStateChange])
+
   const HEARTBEAT_TIMEOUT = 10000 // 10 seconds without heartbeat = connection lost
 
   const handleHeartbeatLost = useCallback(() => {
     console.warn('[SSE] Heartbeat lost - connection may be dead')
     setConnected(false)
     setError('Connection lost')
-    onHeartbeatLost?.()
-  }, [onHeartbeatLost])
+    onHeartbeatLostRef.current?.()
+  }, [])
 
   const resetHeartbeatTimer = useCallback(() => {
     if (heartbeatTimeoutRef.current) {
@@ -56,6 +69,10 @@ export function useRealtime(options: UseRealtimeOptions) {
 
     eventSourceRef.current = eventSource
 
+    // Start heartbeat timer immediately (before connection opens)
+    // This ensures a connection that never opens fails closed
+    resetHeartbeatTimer()
+
     // Handle connection open
     eventSource.onopen = () => {
       console.log('[SSE] Connected')
@@ -76,7 +93,7 @@ export function useRealtime(options: UseRealtimeOptions) {
         const data = JSON.parse(event.data)
         // data.view is the ResidentView object
         setState(data.view)
-        onStateChange?.(data.view)
+        onStateChangeRef.current?.(data.view)
       } catch (error) {
         console.error('[SSE] Failed to parse state message:', error)
       }
@@ -100,7 +117,7 @@ export function useRealtime(options: UseRealtimeOptions) {
         clearTimeout(heartbeatTimeoutRef.current)
       }
     }
-  }, [onStateChange, resetHeartbeatTimer])
+  }, [resetHeartbeatTimer]) // Only depend on resetHeartbeatTimer, not callbacks
 
   return {
     state,

@@ -45,17 +45,33 @@ export async function generateMagicLink(email: string): Promise<{ token: string;
 
 /**
  * Verify a magic link token
+ * Uses updateMany with conditional where to prevent race conditions
  */
 export async function verifyMagicLink(token: string): Promise<{ success: boolean; userId?: string; error?: string }> {
   const db = getDb()
 
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex')
 
-  const otpRecord = await db.otpCode.findFirst({
+  // Use updateMany with conditional where to ensure single-use
+  // This prevents race conditions where two simultaneous requests could both use the same link
+  const result = await db.otpCode.updateMany({
     where: {
       codeHash: tokenHash,
       used: false,
       expiresAt: { gt: new Date() },
+    },
+    data: { used: true },
+  })
+
+  if (result.count === 0) {
+    return { success: false, error: 'Invalid or expired magic link' }
+  }
+
+  // Fetch the record to get the userId
+  const otpRecord = await db.otpCode.findFirst({
+    where: {
+      codeHash: tokenHash,
+      used: true,
     },
     include: { user: true },
   })
@@ -63,12 +79,6 @@ export async function verifyMagicLink(token: string): Promise<{ success: boolean
   if (!otpRecord) {
     return { success: false, error: 'Invalid or expired magic link' }
   }
-
-  // Mark as used
-  await db.otpCode.update({
-    where: { id: otpRecord.id },
-    data: { used: true },
-  })
 
   return { success: true, userId: otpRecord.userId }
 }
