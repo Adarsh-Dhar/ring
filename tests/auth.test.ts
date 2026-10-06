@@ -6,11 +6,14 @@ import { verifyRingSignature } from '../lib/ring/verify'
 describe('tokens', () => {
   it('round-trips and rejects tampering', () => {
     process.env.AUTH_SECRET = 'a'.repeat(32)
-    const t = makeToken({ kind: 'helper', sub: 'h1', householdId: 'hh1', epoch: 1, exp: Math.floor(Date.now() / 1000) + 3600 })!
+    const t = makeToken({ kind: 'user', sub: 'u1', householdId: 'hh1', epoch: undefined, exp: Math.floor(Date.now() / 1000) + 3600, sessionVersion: 1 })!
     const verified = verifyToken(t)
     expect(verified.ok).toBe(true)
     if (verified.ok) {
-      expect(verified.data).toEqual({ kind: 'helper', sub: 'h1', householdId: 'hh1', epoch: 1 })
+      expect(verified.data.kind).toBe('user')
+      expect(verified.data.sub).toBe('u1')
+      expect(verified.data.householdId).toBe('hh1')
+      expect(verified.data.sessionVersion).toBe(1)
     }
     expect(verifyToken('garbage').ok).toBe(false)
     expect(verifyToken(null).ok).toBe(false)

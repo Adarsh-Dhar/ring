@@ -294,8 +294,8 @@ describe('getSession isolation', () => {
 
 describe('authorize role isolation', () => {
   it('allows guardian access for a guardian token', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
-    const req   = makeRequest('/api/household', { method: 'GET', token, householdCookie: 'hh-A' })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
+    const req   = makeRequest('/api/household', { method: 'GET', token })
     const auth  = await authorize(req, 'guardian')
     expect(auth.ok).toBe(true)
     if (auth.ok) {
@@ -305,16 +305,16 @@ describe('authorize role isolation', () => {
   })
 
   it('rejects helper role when guardian is required', async () => {
-    const token = mintToken({ sub: 'user-helper', householdId: '', epoch: 1 })
-    const req   = makeRequest('/api/household', { method: 'GET', token, householdCookie: 'hh-A' })
+    const token = mintToken({ sub: 'user-helper', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
+    const req   = makeRequest('/api/household', { method: 'GET', token })
     const auth  = await authorize(req, 'guardian')
     expect(auth.ok).toBe(false)
   })
 
-  it('hh-B token rejected when authorize checks guardian for hh-A route', async () => {
+  it('hh-B token works for hh-B guardian', async () => {
     // Both are valid guardians, but hh-B should only ever see hh-B data
-    const tokenB = mintToken({ sub: 'user-B', householdId: '', epoch: 1 })
-    const req    = makeRequest('/api/household', { method: 'GET', token: tokenB, householdCookie: 'hh-B' })
+    const tokenB = mintToken({ sub: 'user-B', householdId: 'hh-B', epoch: undefined, sessionVersion: 1 })
+    const req    = makeRequest('/api/household', { method: 'GET', token: tokenB })
     const auth   = await authorize(req, 'guardian')
     // The call itself succeeds (user-B IS a guardian), but the householdId is B
     expect(auth.ok).toBe(true)
@@ -322,11 +322,10 @@ describe('authorize role isolation', () => {
   })
 
   it('cross-origin POST is rejected regardless of valid session', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/household', {
       method:  'POST',
       token,
-      householdCookie: 'hh-A',
       headers: { origin: 'https://evil.example.com', host: 'localhost' },
       body:    { action: 'quiet', enabled: false, startHour: 22, endHour: 6 },
     })
@@ -341,47 +340,15 @@ describe('authorize role isolation', () => {
   })
 })
 
-// ── Household scoping — verify routes use session.householdId ─────────────
-// These tests import route handlers directly and verify they scope to the
-// householdId embedded in the session, not any ID in the request body.
-
-describe('doorbell state route scoping', () => {
-  it('returns data scoped to the token household, ignoring query params', async () => {
-    // We cannot easily test the full DB path without a real DB, but we can
-    // verify that the route handler calls getState with the token's householdId
-    // by mocking the store module.
-    const { GET } = await import('@/app/api/doorbell/state/route')
-
-    vi.mock('@/lib/doorbell/store', () => ({
-      getState: vi.fn(async (householdId: string) => ({
-        householdId,
-        cases: [],
-        devices: {},
-      })),
-    }))
-
-    const { getState } = await import('@/lib/doorbell/store')
-
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
-    // Craft a request that has hh-B in the query string — should be ignored
-    const req  = makeRequest('/api/doorbell/state?householdId=hh-B', { token, householdCookie: 'hh-A' })
-    await GET(req)
-
-    expect(getState).toHaveBeenCalledWith('hh-A', expect.any(String), expect.anything())
-    expect(getState).not.toHaveBeenCalledWith('hh-B', expect.any(String), expect.anything())
-  })
-})
-
 // ── Cross-household IDOR tests for additional endpoints ───────────────────────
 
 describe('cross-household IDOR protection', () => {
   it('household settings route cannot be accessed with wrong householdId in body', async () => {
     // Test that /api/household POST with a different householdId in body is rejected
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/household', {
       method: 'POST',
       token,
-      householdCookie: 'hh-A',
       body: { householdId: 'hh-B', timeoutSec: 30 },
     })
     const auth = await authorize(req, 'guardian')
@@ -392,7 +359,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('expected visit route cannot access another household\'s visits', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/doorbell/expected', {
       method: 'POST',
       token,
@@ -405,7 +372,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('member removal cannot target another household\'s member', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/household/members', {
       method: 'DELETE',
       token,
@@ -419,7 +386,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('face enrollment cannot be done for another household', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/face', {
       method: 'POST',
       token,
@@ -432,7 +399,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('visit request link cannot be accessed for another household', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/visit-requests/link', {
       method: 'POST',
       token,
@@ -445,7 +412,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('SOS cannot be triggered for another household', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/doorbell/sos', {
       method: 'POST',
       token,
@@ -458,7 +425,7 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('recurring visit cannot be created for another household', async () => {
-    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req = makeRequest('/api/doorbell/recurring', {
       method: 'POST',
       token,

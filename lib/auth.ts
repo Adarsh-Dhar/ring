@@ -80,7 +80,7 @@ export function verifyToken(
     const householdId = claims.householdId
     const epoch = claims.epoch
     const membershipId = claims.membershipId
-    const userId = claims.userId
+    const userId = claims.userId as string | undefined
     const sessionVersion = claims.sessionVersion
 
     if (typeof kind !== 'string') return { ok: false }

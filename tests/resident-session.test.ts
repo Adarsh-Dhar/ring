@@ -5,13 +5,30 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const devices = new Map<string, { householdId: string; household: { residentEpoch: number } }>()
+const devices = new Map<string, { householdId: string }>()
 let residentEpoch = 1
 vi.mock('@/lib/db/client', () => ({
-  getDb: () => ({ residentDevice: { findUnique: ({ where }: any) => Promise.resolve(devices.get(where.id) ?? null) } }),
+  getDb: () => ({
+    residentDevice: {
+      findUnique: ({ where, include }: any) => {
+        const device = devices.get(where.id)
+        if (!device) return Promise.resolve(null)
+        return Promise.resolve({
+          id: where.id,
+          householdId: device.householdId,
+          household: { id: device.householdId, residentEpoch },
+        })
+      }
+    }
+  }),
 }))
 vi.mock('@/lib/db/households', () => ({
-  getResidentEpoch: () => Promise.resolve(residentEpoch),
+  getResidentEpoch: (id: string) => {
+    // Return the epoch for the household from the device map
+    const device = devices.get('dev1')
+    if (device && device.householdId === id) return Promise.resolve(residentEpoch)
+    return Promise.resolve(1)
+  },
   getDeviceEpoch: () => Promise.resolve(1),
 }))
 vi.mock('@/lib/db/memberships', () => ({ getMembershipEpoch: () => Promise.resolve(1) }))
@@ -23,9 +40,9 @@ process.env.AUTH_SECRET = 'a'.repeat(32)
 const exp = () => Math.floor(Date.now() / 1000) + 3600
 const reqWith = (cookie?: string) => new NextRequest('http://localhost/api/doorbell/state', { headers: cookie ? { cookie } : {} })
 const deviceCookie = (o: Partial<{ sub: string; householdId: string; epoch: number; kind: string }> = {}) =>
-  `${DEVICE_COOKIE}=${makeToken({ kind: 'device', sub: 'dev1', householdId: 'hh1', epoch: 1, exp: exp(), ...o })}`
+  `${DEVICE_COOKIE}=${makeToken({ kind: 'device', sub: 'dev1', householdId: 'hh1', epoch: 1, exp: exp(), sessionVersion: undefined, ...o })}`
 
-beforeEach(() => { devices.clear(); devices.set('dev1', { householdId: 'hh1', household: { residentEpoch: 1 } }); residentEpoch = 1 })
+beforeEach(() => { devices.clear(); devices.set('dev1', { householdId: 'hh1' }); residentEpoch = 1 })
 
 describe('resident device session', () => {
   it('a paired device is a resident session for its household', async () => {

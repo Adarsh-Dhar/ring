@@ -189,7 +189,7 @@ export function withErrorHandling(
     } catch (e) {
       const message = e instanceof Error ? e.message : 'An unexpected error occurred'
       console.error('[API ERROR]', req.method, req.nextUrl.pathname, e)
-      return fail(`Server error: ${message}`, 500)
+      return fail('Something went wrong. Please try again.', 500)
     }
   }
 }
