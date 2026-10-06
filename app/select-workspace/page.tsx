@@ -116,7 +116,16 @@ export default function SelectWorkspacePage() {
   }
 
   const selectWorkspace = (householdId: string) => {
-    router.push(`/workspace/${householdId}?role=helper`)
+    // Set household cookie before navigating
+    fetch('/api/session/household', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ householdId }),
+    }).then(() => {
+      router.push(`/workspace/${householdId}`)
+    }).catch(() => {
+      router.push(`/workspace/${householdId}`)
+    })
   }
 
   if (loading) {

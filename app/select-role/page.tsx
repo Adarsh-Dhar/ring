@@ -28,7 +28,16 @@ export default function SelectRolePage() {
           // Check if user has a guardian membership
           const guardianMembership = data.memberships.find((m: any) => m.role === 'guardian')
           if (guardianMembership) {
-            router.push(`/workspace/${guardianMembership.householdId}`)
+            // Set household cookie before navigating
+            fetch('/api/session/household', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ householdId: guardianMembership.householdId }),
+            }).then(() => {
+              router.push(`/workspace/${guardianMembership.householdId}`)
+            }).catch(() => {
+              router.push(`/workspace/${guardianMembership.householdId}`)
+            })
           } else {
             // User has helper memberships but no guardian - go to create
             router.push('/create-workspace')

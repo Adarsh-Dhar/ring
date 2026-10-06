@@ -12,36 +12,16 @@ import {
 import { createInvite, getInvitesForHousehold, deleteInvite } from '@/lib/db/invites'
 import { authorize, fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
-import { makeToken } from '@/lib/auth'
-import { normalizePhone, normalizeEmail } from '@/lib/identity'
-import { Prisma } from '@prisma/client'
-import crypto from 'crypto'
+import { normalizeEmail } from '@/lib/identity'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'any')
+  const a = await authorize(req, 'guardian', 'helper')
   if (a.ok === false) return a.res
 
-  let householdId: string
-  if (a.session!.householdId) {
-    householdId = a.session!.householdId
-  } else {
-    // User session - get household from user's membership (guardian or helper)
-    const db = getDb()
-    const membership = await db.membership.findFirst({
-      where: {
-        userId: a.session!.userId,
-        consent: 'approved',
-      },
-      select: { householdId: true },
-    })
-    if (!membership) {
-      return fail('You must be a member of a household to view members.', 403)
-    }
-    householdId = membership.householdId
-  }
+  const householdId = a.session!.householdId
 
   let memberships: Awaited<ReturnType<typeof getMembershipsForHousehold>>
   let invites: Awaited<ReturnType<typeof getInvitesForHousehold>>
@@ -85,7 +65,7 @@ const Body = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('remove'),  id: z.string().max(80) }),
   z.object({ action: z.literal('move'),    id: z.string().max(80), dir: z.union([z.literal(-1), z.literal(1)]) }),
-  z.object({ action: z.literal('consent'), id: z.string().max(80), consent: z.enum(['approved', 'declined', 'pending']) }),
+  z.object({ action: z.literal('consent'), id: z.string().max(80), consent: z.enum(['pending', 'declined']) }),
   z.object({ action: z.literal('reorder'), ids: z.array(z.string().max(80)) }),
   z.object({ action: z.literal('revoke'),  id: z.string().max(80) }),
   z.object({ action: z.literal('createInvite'), role: z.enum(['guardian', 'helper']) }),
@@ -93,27 +73,10 @@ const Body = z.discriminatedUnion('action', [
 ])
 
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'any')
+  const a = await authorize(req, 'guardian')
   if (a.ok === false) return a.res
 
-  let householdId: string
-  if (a.session!.householdId) {
-    householdId = a.session!.householdId
-  } else {
-    // User session - get household from user's membership (guardian or helper)
-    const db = getDb()
-    const membership = await db.membership.findFirst({
-      where: {
-        userId: a.session!.userId,
-        consent: 'approved',
-      },
-      select: { householdId: true },
-    })
-    if (!membership) {
-      return fail('You must be a member of a household to manage members.', 403)
-    }
-    householdId = membership.householdId
-  }
+  const householdId = a.session!.householdId
 
   const p = await parse(req, Body)
   if (p.ok === false) return p.res
@@ -134,6 +97,11 @@ export async function POST(req: NextRequest) {
           return fail('An email address is required to invite a member.', 400)
         }
 
+        // Prevent inviting yourself
+        if (b.email.toLowerCase() === a.session!.userId) {
+          return fail('You cannot invite yourself.', 400)
+        }
+
         const email = normalizeEmail(b.email)
 
         // Check if user exists
@@ -150,12 +118,11 @@ export async function POST(req: NextRequest) {
           where: { userId: user.id, householdId },
         })
         if (existing) {
-          // If they're already a guardian, they can't be added as a helper in the same household
-          if (existing.role === 'guardian') {
-            return fail(`${b.name} is already the guardian of this household. A guardian cannot also be a helper in the same household.`, 409)
+          // Block role change on existing member
+          if (existing.role !== b.role) {
+            return fail(`${b.name} is already a member with a different role.`, 409)
           }
-          // If they're already a helper
-          return fail(`${b.name} is already a helper in this household.`, 409)
+          return fail(`${b.name} is already a member of this household.`, 409)
         }
 
         const currentMembers = await getMembershipsForHousehold(householdId)
@@ -182,15 +149,20 @@ export async function POST(req: NextRequest) {
           emoji:    b.emoji,
         })
 
-        // Create notification for the helper
+        // Create notification for the member with proper metadata
         await db.notification.create({
           data: {
             type: 'helper_invite',
-            title: 'You have been invited to be a helper',
-            message: `${sender?.name || 'Someone'} has invited you to join as a helper in ${household?.residentName || 'a household'}. Membership ID: ${membership.id}`,
+            title: `You have been invited to join as a ${b.role}`,
+            message: `${sender?.name || 'Someone'} has invited you to join as a ${b.role} in ${household?.residentName || 'a household'}.`,
             toUserId: user.id,
             fromUserId: a.session!.userId,
             status: 'pending',
+            metadata: {
+              membershipId: membership.id,
+              householdId,
+              role: b.role,
+            },
           },
         })
 
@@ -265,8 +237,7 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
     console.error(`[MEMBERS POST action=${b.action}]`, e)
-    return fail(`Failed to update members: ${msg}`, 503)
+    return fail('Something went wrong. Please try again.', 500)
   }
 }

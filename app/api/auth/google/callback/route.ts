@@ -5,6 +5,8 @@ import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/co
 import { sign, createSession } from '@/lib/auth'
 import { COOKIE, cookieOpts } from '@/lib/guard'
 import { normalizeEmail } from '@/lib/identity'
+import { buildUrl } from '@/lib/redirect'
+import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -17,30 +19,43 @@ export async function GET(req: NextRequest) {
 
   // Handle user cancellation
   if (error === 'access_denied') {
-    return NextResponse.redirect(new URL('/login?error=cancelled', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=cancelled', req.url)))
   }
 
   // Handle other errors
   if (error) {
     console.error('[GOOGLE CALLBACK] OAuth error:', error)
-    return NextResponse.redirect(new URL('/login?error=oauth_error', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=oauth_error', req.url)))
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/login?error=invalid_response', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=invalid_response', req.url)))
   }
 
   // Verify state and get code verifier and next from cookie
   const oauthState = req.cookies.get('oauth_state')?.value
   if (!oauthState) {
-    return NextResponse.redirect(new URL('/login?error=missing_state', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=missing_state', req.url)))
   }
 
-  const [storedState, codeVerifier, next] = oauthState.split('.')
-  if (storedState !== state) {
-    console.error('[GOOGLE CALLBACK] State mismatch')
-    return NextResponse.redirect(new URL('/login?error=state_mismatch', req.url))
+  let stateData: { s: string; v: string; n: string }
+  try {
+    stateData = JSON.parse(oauthState)
+  } catch (e) {
+    console.error('[GOOGLE CALLBACK] Failed to parse state cookie', e)
+    return NextResponse.redirect(new URL(buildUrl('/login?error=invalid_state', req.url)))
   }
+
+  // Use timingSafeEqual for state comparison
+  const stateBuffer = Buffer.from(state, 'utf8')
+  const storedStateBuffer = Buffer.from(stateData.s, 'utf8')
+  if (stateBuffer.length !== storedStateBuffer.length || !crypto.timingSafeEqual(new Uint8Array(stateBuffer), new Uint8Array(storedStateBuffer))) {
+    console.error('[GOOGLE CALLBACK] State mismatch')
+    return NextResponse.redirect(new URL(buildUrl('/login?error=state_mismatch', req.url)))
+  }
+
+  const codeVerifier = stateData.v
+  const next = stateData.n
 
   try {
     // Exchange code for tokens
@@ -60,7 +75,7 @@ export async function GET(req: NextRequest) {
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.json()
       console.error('[GOOGLE CALLBACK] Token exchange error:', errorData)
-      return NextResponse.redirect(new URL('/login?error=token_exchange_failed', req.url))
+      return NextResponse.redirect(new URL(buildUrl('/login?error=token_exchange_failed', req.url)))
     }
 
     const tokens = await tokenResponse.json()
@@ -74,14 +89,18 @@ export async function GET(req: NextRequest) {
     const googleSub = userInfo.data.id
     const email = userInfo.data.email
     const name = userInfo.data.name
-    const emailVerified = userInfo.data.verified_email || userInfo.data.email_verified
+    const emailVerified = userInfo.data.verified_email === true
+
+    if (!googleSub) {
+      return NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+    }
 
     if (!email) {
-      return NextResponse.redirect(new URL('/login?error=no_email', req.url))
+      return NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
     }
 
     if (!emailVerified) {
-      return NextResponse.redirect(new URL('/login?error=email_not_verified', req.url))
+      return NextResponse.redirect(new URL(buildUrl('/login?error=email_not_verified', req.url)))
     }
 
     // Normalize email
@@ -127,7 +146,7 @@ export async function GET(req: NextRequest) {
     const token = sign(session)
 
     if (!token) {
-      return NextResponse.redirect(new URL('/login?error=session_creation_failed', req.url))
+      return NextResponse.redirect(new URL(buildUrl('/login?error=session_creation_failed', req.url)))
     }
 
     // Set session cookie and redirect
@@ -141,7 +160,7 @@ export async function GET(req: NextRequest) {
     return res
   } catch (e) {
     console.error('[GOOGLE CALLBACK] Error:', e)
-    return NextResponse.redirect(new URL('/login?error=server_error', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=server_error', req.url)))
   }
 }
 

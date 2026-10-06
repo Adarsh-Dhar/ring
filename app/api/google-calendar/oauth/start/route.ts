@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/config'
 import crypto from 'crypto'
+import { safeNext, buildUrl } from '@/lib/redirect'
+import { authorize } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
+  const a = await authorize(req, 'user')
+  if (a.ok === false) return a.res
+
+  const { searchParams } = new URL(req.url)
+  const h = searchParams.get('h') // householdId
+
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return NextResponse.json(
       { error: 'Google OAuth credentials not configured' },
@@ -20,8 +28,8 @@ export async function GET(req: NextRequest) {
   const codeVerifier = crypto.randomBytes(32).toString('base64url')
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
 
-  // Store state and verifier in httpOnly cookie
-  const oauthState = `${state}.${codeVerifier}`
+  // Store state, verifier, and household in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, h })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -37,7 +45,7 @@ export async function GET(req: NextRequest) {
     )
   )
 
-  res.cookies.set('calendar_oauth_state', oauthState, {
+  res.cookies.set('calendar_oauth_state', stateCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',

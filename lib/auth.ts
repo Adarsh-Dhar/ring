@@ -1,6 +1,11 @@
 import crypto from 'crypto'
+import os from 'os'
 
 export const IS_PROD = process.env.NODE_ENV === 'production'
+
+// Module-level constant for dev secret (stable per process)
+const DEV_SECRET = `dev-${os.hostname()}`
+let devSecretWarned = false
 
 // ---------------------------------------------------------------------------
 // JWT-like tokens (hand-rolled HS256, no third-party JWT library)
@@ -13,11 +18,11 @@ function getSecret(): string {
     if (IS_PROD) {
       throw new Error('AUTH_SECRET environment variable must be set in production')
     }
-    // In development, use a machine-specific random string instead of a hardcoded value
-    const hostname = require('os').hostname()
-    const machineSecret = `dev-${hostname}-${Date.now()}`
-    console.warn(`[AUTH] No AUTH_SECRET set – using development placeholder for ${hostname}. NEVER use in production.`)
-    return machineSecret
+    if (!devSecretWarned) {
+      console.warn(`[AUTH] No AUTH_SECRET set – using development placeholder for ${os.hostname()}. NEVER use in production.`)
+      devSecretWarned = true
+    }
+    return DEV_SECRET
   }
   return s
 }
@@ -25,10 +30,10 @@ function getSecret(): string {
 export type TokenClaims = {
   kind: string
   sub: string
-  householdId: string
+  householdId?: string
   membershipId?: string
   userId?: string
-  epoch: number
+  epoch?: number
   sessionVersion?: number
   exp: number   // required – Unix seconds
 }
@@ -45,7 +50,7 @@ export function makeToken(claims: TokenClaims): string | null {
 
 export function verifyToken(
   token: string | null
-): { ok: true; data: Omit<TokenClaims, 'exp'> } | { ok: false } {
+): { ok: true; data: TokenClaims } | { ok: false } {
   if (!token) return { ok: false }
   const parts = token.split('.')
   if (parts.length !== 3) return { ok: false }
@@ -70,17 +75,23 @@ export function verifyToken(
     if (typeof claims.exp !== 'number') return { ok: false }
     if (claims.exp < Math.floor(Date.now() / 1000)) return { ok: false }
 
-    const kind        = claims.kind
-    const sub         = claims.sub
+    const kind = claims.kind
+    const sub = claims.sub
     const householdId = claims.householdId
-    const epoch       = claims.epoch
+    const epoch = claims.epoch
+    const membershipId = claims.membershipId
+    const userId = claims.userId
+    const sessionVersion = claims.sessionVersion
 
-    if (typeof kind !== 'string')        return { ok: false }
-    if (typeof sub !== 'string')         return { ok: false }
-    if (typeof householdId !== 'string') return { ok: false }
-    if (typeof epoch !== 'number')       return { ok: false }
+    if (typeof kind !== 'string') return { ok: false }
+    if (typeof sub !== 'string') return { ok: false }
+    if (householdId !== undefined && typeof householdId !== 'string') return { ok: false }
+    if (epoch !== undefined && typeof epoch !== 'number') return { ok: false }
+    if (membershipId !== undefined && typeof membershipId !== 'string') return { ok: false }
+    if (userId !== undefined && typeof userId !== 'string') return { ok: false }
+    if (sessionVersion !== undefined && typeof sessionVersion !== 'number') return { ok: false }
 
-    return { ok: true, data: { kind, sub, householdId, epoch } }
+    return { ok: true, data: { kind, sub, householdId: householdId as string | undefined, epoch: epoch as number | undefined, membershipId: membershipId as string | undefined, userId, sessionVersion: sessionVersion as number | undefined, exp: claims.exp as number } }
   } catch {
     return { ok: false }
   }
@@ -94,10 +105,10 @@ export function createSession(userId: string, kind: 'user' | 'helper' | 'residen
   return {
     kind,
     sub: userId,
-    householdId,
+    householdId: householdId || undefined,
     membershipId,
     userId,
-    epoch: 0,
+    epoch: kind === 'resident' ? 0 : undefined,
     sessionVersion: kind === 'user' ? sessionVersion : undefined,
     exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30), // 30 days
   }

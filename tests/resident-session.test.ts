@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 
-const devices = new Map<string, { householdId: string }>()
+const devices = new Map<string, { householdId: string; household: { residentEpoch: number } }>()
 let residentEpoch = 1
 vi.mock('@/lib/db/client', () => ({
   getDb: () => ({ residentDevice: { findUnique: ({ where }: any) => Promise.resolve(devices.get(where.id) ?? null) } }),
@@ -25,7 +25,7 @@ const reqWith = (cookie?: string) => new NextRequest('http://localhost/api/doorb
 const deviceCookie = (o: Partial<{ sub: string; householdId: string; epoch: number; kind: string }> = {}) =>
   `${DEVICE_COOKIE}=${makeToken({ kind: 'device', sub: 'dev1', householdId: 'hh1', epoch: 1, exp: exp(), ...o })}`
 
-beforeEach(() => { devices.clear(); devices.set('dev1', { householdId: 'hh1' }); residentEpoch = 1 })
+beforeEach(() => { devices.clear(); devices.set('dev1', { householdId: 'hh1', household: { residentEpoch: 1 } }); residentEpoch = 1 })
 
 describe('resident device session', () => {
   it('a paired device is a resident session for its household', async () => {

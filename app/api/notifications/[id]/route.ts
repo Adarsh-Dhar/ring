@@ -58,6 +58,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (notification.type === 'helper_invite' && notification.metadata) {
         const metadata = notification.metadata as any
         if (metadata.membershipId) {
+          // Validate the membership belongs to the user and household
+          const membership = await db.membership.findUnique({
+            where: { id: metadata.membershipId },
+          })
+
+          if (!membership) {
+            return fail('Membership not found', 404)
+          }
+
+          if (membership.userId !== userId) {
+            return fail('This membership does not belong to you', 403)
+          }
+
+          if (membership.householdId !== metadata.householdId) {
+            return fail('Membership household mismatch', 403)
+          }
+
+          if (membership.consent !== 'pending') {
+            return fail('Membership is not in pending state', 400)
+          }
+
           await db.membership.update({
             where: { id: metadata.membershipId },
             data: {
@@ -104,9 +125,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (notification.type === 'helper_invite' && notification.metadata) {
         const metadata = notification.metadata as any
         if (metadata.membershipId) {
-          await db.membership.delete({
+          // Validate the membership belongs to the user and household
+          const membership = await db.membership.findUnique({
             where: { id: metadata.membershipId },
           })
+
+          if (membership && membership.userId === userId && membership.householdId === metadata.householdId && membership.consent === 'pending') {
+            await db.membership.delete({
+              where: { id: metadata.membershipId },
+            })
+          }
         }
 
         // Notify the resident who sent the invite

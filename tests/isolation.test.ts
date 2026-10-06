@@ -27,14 +27,16 @@ function mintToken(overrides: {
   householdId?: string
   epoch?: number
   expOffsetSec?: number
+  sessionVersion?: number
 }) {
   process.env.AUTH_SECRET = SECRET
   return makeToken({
-    kind:        overrides.kind        ?? 'helper',
-    sub:         overrides.sub         ?? 'membership-A',
-    householdId: overrides.householdId ?? 'household-A',
-    epoch:       overrides.epoch       ?? 1,
+    kind:        overrides.kind        ?? 'user',
+    sub:         overrides.sub         ?? 'user-A',
+    householdId: overrides.householdId ?? undefined,
+    epoch:       overrides.epoch,
     exp:         Math.floor(Date.now() / 1000) + (overrides.expOffsetSec ?? 3600),
+    sessionVersion: overrides.sessionVersion,
   })!
 }
 
@@ -45,16 +47,23 @@ function makeRequest(
     token?:       string | null
     body?:        unknown
     headers?:     Record<string, string>
+    householdCookie?: string
   } = {}
 ): NextRequest {
   const url = `http://localhost${path}`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(opts.token ? { cookie: `db_session=${opts.token}` } : {}),
+    ...(opts.householdCookie ? { cookie: `db_household=${opts.householdCookie}` } : {}),
+    ...(opts.headers ?? {}),
+  }
+  // Merge cookies if both are present
+  if (opts.token && opts.householdCookie) {
+    headers.cookie = `db_session=${opts.token}; db_household=${opts.householdCookie}`
+  }
   const init: RequestInit = {
     method:  opts.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(opts.token ? { cookie: `db_session=${opts.token}` } : {}),
-      ...(opts.headers ?? {}),
-    },
+    headers,
   }
   if (opts.body !== undefined) {
     init.body = JSON.stringify(opts.body)
@@ -65,9 +74,8 @@ function makeRequest(
 // ── Token self-consistency ─────────────────────────────────────────────────
 
 describe('token household binding', () => {
-  beforeAll(() => { process.env.AUTH_SECRET = SECRET })
-
   it('embeds householdId in the token and retrieves it correctly', () => {
+    process.env.AUTH_SECRET = SECRET
     const token = mintToken({ householdId: 'hh-abc-123' })
     const result = verifyToken(token)
     expect(result.ok).toBe(true)
@@ -75,8 +83,9 @@ describe('token household binding', () => {
   })
 
   it('tokens for different households are distinct and non-interchangeable', () => {
-    const tA = mintToken({ householdId: 'hh-A', sub: 'mem-A' })
-    const tB = mintToken({ householdId: 'hh-B', sub: 'mem-B' })
+    process.env.AUTH_SECRET = SECRET
+    const tA = mintToken({ householdId: 'hh-A', sub: 'user-A' })
+    const tB = mintToken({ householdId: 'hh-B', sub: 'user-B' })
     const rA = verifyToken(tA)
     const rB = verifyToken(tB)
     expect(rA.ok && rA.data.householdId).toBe('hh-A')
@@ -87,6 +96,7 @@ describe('token household binding', () => {
   })
 
   it('tampering with the householdId in the payload is rejected', () => {
+    process.env.AUTH_SECRET = SECRET
     const token = mintToken({ householdId: 'hh-A' })
     const [header, payload, sig] = token.split('.')
     // Decode, change householdId, re-encode without re-signing
@@ -100,17 +110,19 @@ describe('token household binding', () => {
     expect(verifyToken(tampered).ok).toBe(false)
   })
 
-  it('a pending token (no householdId) is verified but has empty householdId', () => {
-    const token = mintToken({ kind: 'pending', householdId: '', sub: 'user-1' })
+  it('a user token (no householdId) is verified but has empty householdId', () => {
+    process.env.AUTH_SECRET = SECRET
+    const token = mintToken({ kind: 'user', householdId: '', sub: 'user-1' })
     const result = verifyToken(token)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.data.kind).toBe('pending')
+      expect(result.data.kind).toBe('user')
       expect(result.data.householdId).toBe('')
     }
   })
 
   it('an expired token is always rejected, regardless of householdId', () => {
+    process.env.AUTH_SECRET = SECRET
     const expired = mintToken({ householdId: 'hh-A', expOffsetSec: -1 })
     expect(verifyToken(expired).ok).toBe(false)
   })
@@ -133,6 +145,11 @@ vi.mock('@/lib/db/client', () => {
     'hh-A': { residentEpoch: 1, timezone: 'UTC' },
     'hh-B': { residentEpoch: 1, timezone: 'UTC' },
   }
+  const users: Record<string, { id: string; name: string; email: string; sessionVersion: number }> = {
+    'user-A': { id: 'user-A', name: 'User A', email: 'user-a@example.com', sessionVersion: 1 },
+    'user-B': { id: 'user-B', name: 'User B', email: 'user-b@example.com', sessionVersion: 1 },
+    'user-helper': { id: 'user-helper', name: 'Helper', email: 'helper@example.com', sessionVersion: 1 },
+  }
   const memberships: Record<string, {
     id: string; userId: string; householdId: string; role: string
     consent: string; tokenEpoch: number
@@ -154,6 +171,14 @@ vi.mock('@/lib/db/client', () => {
 
   return {
     getDb: () => ({
+      user: {
+        findUnique: ({ where }: any) => {
+          const id = where.id
+          const u = users[id]
+          if (!u) return Promise.resolve(null)
+          return Promise.resolve(u)
+        },
+      },
       household: {
         findUnique: ({ where }: any) => Promise.resolve(
           households[where.id]
@@ -172,9 +197,37 @@ vi.mock('@/lib/db/client', () => {
             household: { id: m.householdId, residentName: 'Resident', ...households[m.householdId] },
           })
         },
+        findFirst: ({ where }: any) => {
+          const m = Object.values(memberships).find(
+            m => m.userId === where.userId && m.householdId === where.householdId && m.consent === where.consent
+          )
+          if (!m) return Promise.resolve(null)
+          return Promise.resolve({
+            ...m,
+            user:      { id: m.userId, name: 'Test', phone: null, email: null },
+            household: { id: m.householdId, residentName: 'Resident', ...households[m.householdId] },
+          })
+        },
+        findMany: ({ where }: any) => {
+          const matches = Object.values(memberships).filter(
+            m => (!where.userId || m.userId === where.userId) && (!where.householdId || m.householdId === where.householdId)
+          )
+          return Promise.resolve(matches)
+        },
       },
       residentDevice: {
-        findUnique: () => Promise.resolve(null),
+        findUnique: ({ where, include }: any) => {
+          // For device token verification, return a device with household epoch
+          if (where.id?.startsWith('device-')) {
+            const d = v2Devices[where.id]
+            if (!d) return Promise.resolve(null)
+            return Promise.resolve({
+              ...d,
+              household: { id: d.householdId, residentEpoch: households[d.householdId].residentEpoch },
+            })
+          }
+          return Promise.resolve(null)
+        },
       },
       v2Device: {
         findUnique: ({ where, include }: any) => {
@@ -198,53 +251,41 @@ import { getSession, authorize } from '@/lib/guard'
 describe('getSession isolation', () => {
   afterEach(() => { process.env.AUTH_SECRET = SECRET })
 
-  it('returns householdId hh-A for a mem-A token', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+  it('returns householdId hh-A for a user-A token with householdId in token', async () => {
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
     expect(session).not.toBeNull()
     expect(session!.householdId).toBe('hh-A')
   })
 
-  it('returns householdId hh-B for a mem-B token', async () => {
-    const token = mintToken({ sub: 'mem-B', householdId: 'hh-B', epoch: 1 })
+  it('returns householdId hh-B for a user-B token with householdId in token', async () => {
+    const token = mintToken({ sub: 'user-B', householdId: 'hh-B', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
     expect(session).not.toBeNull()
     expect(session!.householdId).toBe('hh-B')
   })
 
-  it('rejects a helper token for hh-A presented to a route expecting hh-B', async () => {
-    // mem-A is a guardian in hh-A; their token claims hh-B — tampered
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
-    const [h, p, s] = token.split('.')
-    const claims = JSON.parse(Buffer.from(p, 'base64url').toString())
-    claims.householdId = 'hh-B'
-    const tampered = [h, Buffer.from(JSON.stringify(claims)).toString('base64url'), s].join('.')
-    const req = makeRequest('/api/doorbell/state', { token: tampered })
-    const session = await getSession(req)
-    expect(session).toBeNull()
-  })
-
-  it('returns null for a pending token (no householdId)', async () => {
-    const token = mintToken({ kind: 'pending', householdId: '', sub: 'user-A', epoch: 1 })
+  it('rejects a user token with sessionVersion mismatch', async () => {
+    const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 2 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
+    // Should fail because sessionVersion doesn't match (mock returns 1)
     expect(session).toBeNull()
   })
 
-  it('returns null when the epoch is stale (token revoked)', async () => {
-    // tokenEpoch in mock is 1; send epoch: 2 → mismatch
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 2 })
+  it('returns empty householdId for a user token with no householdId', async () => {
+    const token = mintToken({ kind: 'user', householdId: undefined, sub: 'user-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
-    expect(session).toBeNull()
+    // User has no householdId in token
+    expect(session).not.toBeNull()
+    expect(session!.householdId).toBe('')
   })
 
-  it('returns null for a revoked membership (consent != approved)', async () => {
-    // mem-A has consent: 'approved' in mock but the mock returns it correctly;
-    // test a non-existent membership to simulate revocation
-    const token = mintToken({ sub: 'mem-GONE', householdId: 'hh-A', epoch: 1 })
+  it('returns null for a non-existent user', async () => {
+    const token = mintToken({ sub: 'user-GONE', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
     expect(session).toBeNull()
@@ -253,8 +294,8 @@ describe('getSession isolation', () => {
 
 describe('authorize role isolation', () => {
   it('allows guardian access for a guardian token', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
-    const req   = makeRequest('/api/household', { method: 'GET', token })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
+    const req   = makeRequest('/api/household', { method: 'GET', token, householdCookie: 'hh-A' })
     const auth  = await authorize(req, 'guardian')
     expect(auth.ok).toBe(true)
     if (auth.ok) {
@@ -264,27 +305,28 @@ describe('authorize role isolation', () => {
   })
 
   it('rejects helper role when guardian is required', async () => {
-    const token = mintToken({ sub: 'mem-helper-A', householdId: 'hh-A', epoch: 1 })
-    const req   = makeRequest('/api/household', { method: 'GET', token })
+    const token = mintToken({ sub: 'user-helper', householdId: '', epoch: 1 })
+    const req   = makeRequest('/api/household', { method: 'GET', token, householdCookie: 'hh-A' })
     const auth  = await authorize(req, 'guardian')
     expect(auth.ok).toBe(false)
   })
 
   it('hh-B token rejected when authorize checks guardian for hh-A route', async () => {
     // Both are valid guardians, but hh-B should only ever see hh-B data
-    const tokenB = mintToken({ sub: 'mem-B', householdId: 'hh-B', epoch: 1 })
-    const req    = makeRequest('/api/household', { method: 'GET', token: tokenB })
+    const tokenB = mintToken({ sub: 'user-B', householdId: '', epoch: 1 })
+    const req    = makeRequest('/api/household', { method: 'GET', token: tokenB, householdCookie: 'hh-B' })
     const auth   = await authorize(req, 'guardian')
-    // The call itself succeeds (mem-B IS a guardian), but the householdId is B
+    // The call itself succeeds (user-B IS a guardian), but the householdId is B
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-B')
   })
 
   it('cross-origin POST is rejected regardless of valid session', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req   = makeRequest('/api/household', {
       method:  'POST',
       token,
+      householdCookie: 'hh-A',
       headers: { origin: 'https://evil.example.com', host: 'localhost' },
       body:    { action: 'quiet', enabled: false, startHour: 22, endHour: 6 },
     })
@@ -320,9 +362,9 @@ describe('doorbell state route scoping', () => {
 
     const { getState } = await import('@/lib/doorbell/store')
 
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     // Craft a request that has hh-B in the query string — should be ignored
-    const req  = makeRequest('/api/doorbell/state?householdId=hh-B', { token })
+    const req  = makeRequest('/api/doorbell/state?householdId=hh-B', { token, householdCookie: 'hh-A' })
     await GET(req)
 
     expect(getState).toHaveBeenCalledWith('hh-A', expect.any(String), expect.anything())
@@ -335,24 +377,26 @@ describe('doorbell state route scoping', () => {
 describe('cross-household IDOR protection', () => {
   it('household settings route cannot be accessed with wrong householdId in body', async () => {
     // Test that /api/household POST with a different householdId in body is rejected
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/household', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B', timeoutSec: 30 },
     })
     const auth = await authorize(req, 'guardian')
-    // Authorization succeeds (mem-A is a guardian), but the householdId in session is A
+    // Authorization succeeds (user-A is a guardian), but the householdId in session is A
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
     // The route handler should only use session.householdId, not body.householdId
   })
 
   it('expected visit route cannot access another household\'s visits', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/doorbell/expected', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
     })
     const auth = await authorize(req, 'guardian')
@@ -361,10 +405,11 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('member removal cannot target another household\'s member', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/household/members', {
       method: 'DELETE',
       token,
+      householdCookie: 'hh-A',
       body: { membershipId: 'mem-B' }, // Try to delete a member from household B
     })
     const auth = await authorize(req, 'guardian')
@@ -374,10 +419,11 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('face enrollment cannot be done for another household', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/face', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B', action: 'enroll' },
     })
     const auth = await authorize(req, 'guardian')
@@ -386,10 +432,11 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('visit request link cannot be accessed for another household', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/visit-requests/link', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B' },
     })
     const auth = await authorize(req, 'guardian')
@@ -398,10 +445,11 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('SOS cannot be triggered for another household', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/doorbell/sos', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B' },
     })
     const auth = await authorize(req, 'guardian')
@@ -410,10 +458,11 @@ describe('cross-household IDOR protection', () => {
   })
 
   it('recurring visit cannot be created for another household', async () => {
-    const token = mintToken({ sub: 'mem-A', householdId: 'hh-A', epoch: 1 })
+    const token = mintToken({ sub: 'user-A', householdId: '', epoch: 1 })
     const req = makeRequest('/api/doorbell/recurring', {
       method: 'POST',
       token,
+      householdCookie: 'hh-A',
       body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
     })
     const auth = await authorize(req, 'guardian')

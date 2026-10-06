@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/config'
 import crypto from 'crypto'
+import { safeNext, buildUrl } from '@/lib/redirect'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -9,16 +10,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const next = searchParams.get('next')
 
-  // Validate next parameter
-  const getSafeRedirect = (nextParam: string | null): string => {
-    if (!nextParam) return ''
-    if (!nextParam.startsWith('/')) return ''
-    if (nextParam.startsWith('//')) return ''
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(nextParam)) return ''
-    return nextParam
-  }
-
-  const safeNext = getSafeRedirect(next)
+  const safeNextParam = safeNext(next)
 
   // Validate credentials at startup
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
@@ -35,8 +27,8 @@ export async function GET(req: NextRequest) {
   const codeVerifier = crypto.randomBytes(32).toString('base64url')
   const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
 
-  // Store state, verifier, and next in httpOnly cookie (short-lived)
-  const oauthState = `${state}.${codeVerifier}.${safeNext || ''}`
+  // Store state, verifier, and next in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, n: safeNextParam })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -52,7 +44,7 @@ export async function GET(req: NextRequest) {
   )
 
   // Set cookie with state, verifier, and next (5 minute expiry)
-  res.cookies.set('oauth_state', oauthState, {
+  res.cookies.set('oauth_state', stateCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',

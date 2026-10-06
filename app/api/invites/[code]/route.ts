@@ -39,7 +39,7 @@ export async function GET(req: NextRequest, context: Ctx) {
   try {
     invite = await db.invite.findUnique({
       where:   { code },
-      include: { household: true, createdBy: true },
+      include: { household: true },
     })
   } catch (e) {
     console.error('[INVITES GET] Failed to look up invite', e)
@@ -61,12 +61,13 @@ export async function GET(req: NextRequest, context: Ctx) {
     return fail('This invite link has expired. Please ask the guardian to send a new one.', 400)
   }
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     ok: true,
     householdName: invite.household.residentName,
     role: invite.role,
-    inviterName: invite.createdBy.name,
   })
+  res.headers.set('Cache-Control', 'no-store')
+  return res
 }
 
 const Body = z.object({
@@ -134,104 +135,64 @@ export async function POST(req: NextRequest, context: Ctx) {
     return fail('This invite link has expired. Please ask the guardian to send a new one.', 400)
   }
 
-  // Handle decline
+  // Handle decline - do not mutate the invite
   if (action === 'decline') {
-    try {
-      await db.invite.update({
-        where: { id: invite.id },
-        data:  { status: 'declined' },
-      })
-    } catch (e) {
-      console.error('[INVITES POST] Failed to mark invite as declined', e)
-      return fail('Unable to decline invite. Please try again.', 503)
-    }
     return NextResponse.json({ ok: true, declined: true })
   }
 
-  // Handle accept
-  let existing: any
-  try {
-    existing = await db.membership.findUnique({
-      where: { userId_householdId: { userId, householdId: invite.householdId } },
-    })
-  } catch (e) {
-    console.error('[INVITES POST] Failed to check existing membership', e)
-    return fail('Unable to check your household membership. Please try again.', 503)
-  }
-  if (existing) {
-    // If membership was declined, allow re-joining
-    if (existing.consent === 'declined') {
-      try {
-        await db.membership.update({
-          where: { id: existing.id },
-          data: { consent: 'pending' },
-        })
-      } catch (e) {
-        console.error('[INVITES POST] Failed to reset declined membership', e)
-        return fail('Unable to reset your declined membership. Please try again.', 503)
-      }
-    } else {
-      return fail('You are already a member of this household.', 409)
-    }
+  // Handle accept - use transaction for atomicity
+  // Per user decision: guardian approval required, so consent is 'pending'
+  if (!['guardian', 'helper'].includes(invite.role)) {
+    return fail('Invalid invite role', 400)
   }
 
-  let membership: any
-  if (!existing) {
-    try {
-      const memberCount = await db.membership.count({ where: { householdId: invite.householdId } })
-      membership = await db.membership.create({
-        data: {
-          userId,
-          householdId: invite.householdId,
-          role:        invite.role,
-          consent:     'pending',
-          position:    memberCount,
-          emoji:       '🙂',
-          tokenEpoch:  1,
-        },
-      })
-    } catch (e) {
-      console.error('[INVITES POST] Failed to create membership', e)
-      return fail('Unable to create your household membership. Please try again.', 503)
-    }
-  } else {
-    membership = existing
-  }
-
-  // Use transaction to mark invite as accepted with conditional update
   try {
     const result = await db.$transaction(async (tx) => {
+      // Mark invite as accepted (if still pending and not expired)
       const updated = await tx.invite.updateMany({
         where: {
           id: invite.id,
           status: 'pending',
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
         },
         data: { status: 'accepted', acceptedByUserId: userId },
       })
-      if (updated.count === 0) {
+      if (updated.count !== 1) {
         throw new Error('Invite already accepted or not pending')
       }
-      return updated
+
+      // Create or update membership
+      const memberCount = await tx.membership.count({ where: { householdId: invite.householdId } })
+      const membership = await tx.membership.upsert({
+        where: { userId_householdId: { userId, householdId: invite.householdId } },
+        create: {
+          userId,
+          householdId: invite.householdId,
+          role: invite.role,
+          consent: 'pending', // Guardian approval required
+          consentAt: new Date(),
+          position: memberCount,
+          emoji: '🙂',
+          tokenEpoch: 1,
+        },
+        update: {
+          consent: 'pending', // Reset to pending if declined
+          role: invite.role,
+        },
+      })
+
+      return { membership }
+    })
+
+    return NextResponse.json({
+      ok: true,
+      membershipId: result.membership.id,
+      householdId: invite.householdId,
+      role: invite.role,
     })
   } catch (e) {
-    console.error('[INVITES POST] Failed to mark invite as accepted', e)
-    // Rollback membership creation if invite was already accepted
-    if (!existing) {
-      try {
-        await db.membership.delete({ where: { id: membership.id } })
-      } catch (deleteError) {
-        console.error('[INVITES POST] Failed to rollback membership', deleteError)
-      }
-    }
+    console.error('[INVITES POST] Failed to accept invite', e)
     return fail('This invite has already been accepted or is no longer valid.', 409)
   }
-
-  // Do not set a new cookie - the user is already signed in
-  // Their role will be resolved from the DB on the next request
-  return NextResponse.json({
-    ok:          true,
-    membershipId: membership.id,
-    householdId:  invite.householdId,
-    role:         invite.role,
-  })
 }
+

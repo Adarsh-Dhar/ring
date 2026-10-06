@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { makeToken, verifyToken } from '@/lib/auth'
-import { COOKIE, DEVICE_COOKIE, cookieOpts, deviceCookieOpts, fail, getSession, parse, deviceTokenFrom } from '@/lib/guard'
+import { COOKIE, DEVICE_COOKIE, cookieOpts, deviceCookieOpts, fail, getSession, parse, deviceTokenFrom, HOUSEHOLD_COOKIE } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { hit, clientIp } from '@/lib/ratelimit'
 import crypto from 'crypto'
@@ -9,8 +9,6 @@ import crypto from 'crypto'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-/** Maximum wrong-code attempts before the pairing code is permanently invalidated. */
-const PAIRING_MAX_ATTEMPTS = 10
 /** Maximum pairing attempts per IP per 10 minutes. */
 const PAIRING_RATE_MAX     = 5
 const PAIRING_RATE_WINDOW  = 10 * 60_000  // 10 minutes
@@ -35,78 +33,65 @@ export async function GET(req: NextRequest) {
     return fail('Database is unavailable. Please try again shortly.', 503)
   }
 
-  if (s.kind === 'helper') {
-    let membership: any
-    try {
-      membership = await db.membership.findUnique({
-        where:   { id: s.membershipId },
-        include: { user: true, household: true },
-      })
-    } catch (e) {
-      console.error('[SESSION GET] Failed to load helper membership', e)
-      return fail('Unable to load your account details. Please try again.', 503)
-    }
-    if (!membership) {
-      return fail('Your membership no longer exists. Please sign in again.', 404)
-    }
-    return NextResponse.json({
-      kind:         'helper',
-      userId:       s.userId,
-      householdId:  s.householdId,
-      membershipId: s.membershipId,
-      role:         s.role,
-      name:         membership.user.name,
-      residentName: membership.household.residentName,
-    })
-  }
+  if (s.kind === 'user') {
+    // Resolve household for user sessions
+    let targetHouseholdId = s.householdId
+    let role: 'guardian' | 'helper' | null = null
 
-  if (s.kind === 'resident') {
-    let household: any
-    try {
-      household = await db.household.findUnique({ where: { id: s.householdId } })
-    } catch (e) {
-      console.error('[SESSION GET] Failed to load resident household', e)
-      return fail('Unable to load household details. Please try again.', 503)
-    }
-    if (!household) {
-      return fail('This household no longer exists. Please pair the device again.', 404)
-    }
-
-    // Sliding refresh: re-issue cookie if more than half the lifetime has passed
-    const deviceToken = deviceTokenFrom(req)
-    if (deviceToken) {
-      const t = verifyToken(deviceToken)
-      if (t.ok && t.data.exp) {
-        const lifetimeSeconds = t.data.exp - Math.floor(Date.now() / 1000)
-        const TOTAL_LIFETIME = 30 * 24 * 60 * 60 // 30 days
-        if (lifetimeSeconds < TOTAL_LIFETIME / 2) {
-          // Re-issue token with full lifetime
-          const newToken = makeToken({
-            kind:        'device',
-            sub:         s.userId,
-            householdId: s.householdId,
-            epoch:       t.data.epoch,
-            exp:         Math.floor(Date.now() / 1000) + TOTAL_LIFETIME,
-          })
-          if (newToken) {
-            const res = NextResponse.json({
-              kind:         'resident',
-              userId:       s.userId,
-              householdId:  s.householdId,
-              residentName: household.residentName,
-            })
-            res.cookies.set(DEVICE_COOKIE, newToken, deviceCookieOpts)
-            return res
-          }
-        }
+    if (!targetHouseholdId) {
+      const householdCookie = req.cookies.get(HOUSEHOLD_COOKIE)?.value
+      if (householdCookie) {
+        targetHouseholdId = householdCookie
       }
     }
 
+    if (!targetHouseholdId) {
+      const db = getDb()
+      const memberships = await db.membership.findMany({
+        where: {
+          userId: s.userId,
+          consent: 'approved',
+        },
+        select: { householdId: true, role: true },
+      })
+
+      if (memberships.length === 1) {
+        targetHouseholdId = memberships[0].householdId
+        role = memberships[0].role as 'guardian' | 'helper'
+      }
+    }
+
+    if (targetHouseholdId && !role) {
+      const db = getDb()
+      const membership = await db.membership.findFirst({
+        where: {
+          userId: s.userId,
+          householdId: targetHouseholdId,
+          consent: 'approved',
+        },
+        select: { role: true },
+      })
+      if (membership) {
+        role = membership.role as 'guardian' | 'helper'
+      }
+    }
+
+    const user = await db.user.findUnique({
+      where: { id: s.userId },
+      select: { id: true, name: true, email: true },
+    })
+
+    if (!user) {
+      return fail('User not found', 404)
+    }
+
     return NextResponse.json({
-      kind:         'resident',
-      userId:       s.userId,
-      householdId:  s.householdId,
-      residentName: household.residentName,
+      kind: 'user',
+      userId: s.userId,
+      name: user.name,
+      email: user.email,
+      householdId: targetHouseholdId || null,
+      role: role,
     })
   }
 
@@ -164,7 +149,7 @@ export async function POST(req: NextRequest) {
   try {
     device = await db.residentDevice.findUnique({
       where:   { pairingCodeHash: codeHash },
-      include: { household: true },
+      include: { household: { select: { residentEpoch: true } } },
     })
   } catch (e) {
     console.error('[SESSION POST] Failed to look up pairing code', e)
@@ -172,60 +157,24 @@ export async function POST(req: NextRequest) {
   }
 
   if (!device) {
-    // Count as failure (already counted by rate limiter)
-    return fail('Invalid pairing code. Please check the code shown on the guardian screen and try again.', 401)
+    return fail('Invalid or expired pairing code.', 401)
   }
 
-  // ── Check code expiry (15 minutes) ───────────────────────────────────────
-  const CODE_EXPIRY_MS = 15 * 60 * 1000
-  if (device.createdAt && new Date().getTime() - device.createdAt.getTime() > CODE_EXPIRY_MS) {
-    return fail('This pairing code has expired. Please ask the guardian to generate a new code.', 403)
+  // Atomic single-use claim: only one concurrent request can win
+  const claimed = await db.residentDevice.updateMany({
+    where: {
+      id: device.id,
+      pairingCodeHash: codeHash,
+      createdAt: { gt: new Date(Date.now() - 15 * 60_000) }, // 15 minutes expiry
+    },
+    data:  { pairingCodeHash: null, lastSeenAt: new Date() },
+  })
+
+  if (claimed.count !== 1) {
+    return fail('Invalid or expired pairing code.', 401)
   }
 
-  // ── Per-code attempt counter (persisted to DB) ────────────────────────────
-  if (device.pairingAttempts >= PAIRING_MAX_ATTEMPTS) {
-    // Code has been guessed wrong too many times — it is permanently burnt.
-    // The guardian must generate a new code.
-    console.warn(`[SESSION POST] Pairing code for device ${device.id} is locked after ${device.pairingAttempts} attempts`)
-    return fail('This pairing code has been locked after too many failed attempts. Please ask the guardian to generate a new code.', 403)
-  }
-
-  // ── Increment attempt counter on failure, burn code on success ─────────────
-  try {
-    await db.residentDevice.update({
-      where: { id: device.id },
-      data:  {
-        lastSeenAt: new Date(),
-        pairingAttempts: { increment: 1 },
-      },
-    })
-  } catch (e) {
-    // Non-fatal — log but continue
-    console.error('[SESSION POST] Failed to update device', e)
-  }
-
-  // Code matched — burn it by deleting the pairing code hash
-  try {
-    await db.residentDevice.update({
-      where: { id: device.id },
-      data:  { pairingCodeHash: null },
-    })
-  } catch (e) {
-    // Non-fatal — log but continue
-    console.error('[SESSION POST] Failed to burn pairing code', e)
-  }
-
-  let epoch = 1
-  try {
-    const household = await db.household.findUnique({
-      where:  { id: device.householdId },
-      select: { residentEpoch: true },
-    })
-    epoch = household?.residentEpoch ?? 1
-  } catch (e) {
-    console.error('[SESSION POST] Failed to load resident epoch', e)
-    return fail('Unable to complete device pairing. Please try again.', 503)
-  }
+  const epoch = device.household.residentEpoch
 
   const token = makeToken({
     kind:        'device',

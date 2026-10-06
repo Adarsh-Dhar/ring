@@ -4,6 +4,8 @@ import { getDb } from '@/lib/db/client'
 import { authorize } from '@/lib/guard'
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/config'
 import { encrypt } from '@/lib/auth'
+import { buildUrl } from '@/lib/redirect'
+import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -16,30 +18,48 @@ export async function GET(req: NextRequest) {
   const code = searchParams.get('code')
   const state = searchParams.get('state')
   const error = searchParams.get('error')
+  const h = searchParams.get('h') // householdId
 
   if (error === 'access_denied') {
-    return NextResponse.redirect(new URL('/workspace/helper?error=calendar_cancelled', req.url))
+    const target = h ? `/workspace/${h}?error=calendar_cancelled` : '/login?error=calendar_cancelled'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
   if (error) {
     console.error('[CALENDAR OAUTH] OAuth error:', error)
-    return NextResponse.redirect(new URL('/workspace/helper?error=calendar_oauth_error', req.url))
+    const target = h ? `/workspace/${h}?error=calendar_oauth_error` : '/login?error=calendar_oauth_error'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL('/workspace/helper?error=invalid_response', req.url))
+    const target = h ? `/workspace/${h}?error=invalid_response` : '/login?error=invalid_response'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
   const oauthState = req.cookies.get('calendar_oauth_state')?.value
   if (!oauthState) {
-    return NextResponse.redirect(new URL('/workspace/helper?error=missing_state', req.url))
+    return NextResponse.redirect(new URL(buildUrl('/login?error=missing_state', req.url)))
   }
 
-  const [storedState, codeVerifier] = oauthState.split('.')
-  if (storedState !== state) {
-    console.error('[CALENDAR OAUTH] State mismatch')
-    return NextResponse.redirect(new URL('/workspace/helper?error=state_mismatch', req.url))
+  let stateData: { s: string; v: string; h: string }
+  try {
+    stateData = JSON.parse(oauthState)
+  } catch (e) {
+    console.error('[CALENDAR OAUTH] Failed to parse state cookie', e)
+    const target = h ? `/workspace/${h}?error=invalid_state` : '/login?error=invalid_state'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
+
+  const stateBuffer = Buffer.from(state, 'utf8')
+  const storedStateBuffer = Buffer.from(stateData.s, 'utf8')
+  if (stateBuffer.length !== storedStateBuffer.length || !crypto.timingSafeEqual(new Uint8Array(stateBuffer), new Uint8Array(storedStateBuffer))) {
+    console.error('[CALENDAR OAUTH] State mismatch')
+    const target = h ? `/workspace/${h}?error=state_mismatch` : '/login?error=state_mismatch'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
+  }
+
+  const codeVerifier = stateData.v
+  const householdId = stateData.h
 
   try {
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -78,7 +98,8 @@ export async function GET(req: NextRequest) {
     })
 
     if (!user || user.googleSub !== googleSub) {
-      return NextResponse.redirect(new URL('/workspace/helper?error=account_mismatch', req.url))
+      const target = householdId ? `/workspace/${householdId}?error=account_mismatch` : '/login?error=account_mismatch'
+      return NextResponse.redirect(new URL(buildUrl(target, req.url)))
     }
 
     // Encrypt tokens before storing
@@ -86,7 +107,8 @@ export async function GET(req: NextRequest) {
     const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : null
 
     if (!encryptedAccessToken) {
-      return NextResponse.redirect(new URL('/workspace/helper?error=encryption_failed', req.url))
+      const target = householdId ? `/workspace/${householdId}?error=encryption_failed` : '/login?error=encryption_failed'
+      return NextResponse.redirect(new URL(buildUrl(target, req.url)))
     }
 
     // Store encrypted tokens
@@ -99,13 +121,15 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    const res = NextResponse.redirect(new URL('/workspace/helper?calendar=connected', req.url))
+    const target = householdId ? `/workspace/${householdId}?calendar=connected` : '/login?calendar=connected'
+    const res = NextResponse.redirect(new URL(buildUrl(target, req.url)))
     res.cookies.set('calendar_oauth_state', '', { maxAge: 0, path: '/' })
 
     return res
   } catch (e) {
     console.error('[CALENDAR OAUTH] Error:', e)
-    return NextResponse.redirect(new URL('/workspace/helper?error=server_error', req.url))
+    const target = householdId ? `/workspace/${householdId}?error=server_error` : '/login?error=server_error'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 }
 

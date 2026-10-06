@@ -60,8 +60,8 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // ── Public paths — no auth required ─────────────────────────────────────
-  const publicPaths = ['/login', '/api/auth', '/api/health', '/invite', '/pair']
-  const isPublic = publicPaths.some(path => pathname.startsWith(path))
+  const publicPaths = ['/login', '/api/auth', '/api/health', '/pair']
+  const isPublic = publicPaths.some(path => pathname === path || pathname.startsWith(path + '/'))
 
   if (isPublic) {
     // For invite pages, redirect unauthenticated users to login with next parameter
@@ -103,6 +103,7 @@ export function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
+    '/invite/:path*',
     '/helper/:path*',
     '/setup/:path*',
     '/sim/:path*',

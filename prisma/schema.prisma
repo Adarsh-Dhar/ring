@@ -102,10 +102,10 @@ model Notification {
 model ResidentDevice {
   id               String    @id @default(cuid())
   householdId      String
-  pairingCodeHash  String    @unique
-  pairingAttempts  Int       @default(0)
+  pairingCodeHash  String?   @unique
   deviceTokenEpoch Int       @default(1)
   lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
   household        Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
@@ -389,7 +389,6 @@ model V2Device {
   membership  Membership?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
   passes      Pass[]
 
-  @@unique([householdId, kind, revokedAt]) // At most one active device per kind per household
   @@index([householdId])
   @@index([memberId])
 }

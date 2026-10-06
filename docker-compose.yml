@@ -35,6 +35,10 @@ services:
     environment:
       DATABASE_URL: postgresql://doorbell:${POSTGRES_PASSWORD}@postgres_db:5432/doorbell
       TRUST_PROXY: "1"   # Caddy is the only way in (port is not published), so x-forwarded-for is trustworthy
+      # Google OAuth credentials (must be set in .env.prod)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      TRUST_X_FORWARDED_FOR: "true"
     volumes:
       - ./videos:/usr/src/app/videos:ro    # door camera mp4s
 

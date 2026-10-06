@@ -7,9 +7,10 @@ import { getDb } from './db/client'
 
 export const COOKIE = 'db_session'
 export const DEVICE_COOKIE = 'db_device'
+export const HOUSEHOLD_COOKIE = 'db_household'
 
 export type Session = {
-  kind: 'user' | 'resident' | 'device'
+  kind: 'user' | 'resident' | 'device' | 'helper'
   userId: string
   householdId: string
   membershipId?: string
@@ -24,7 +25,7 @@ const tokenFrom = (req: NextRequest) => {
   return req.cookies.get(COOKIE)?.value ?? null
 }
 
-const deviceTokenFrom = (req: NextRequest) => {
+export const deviceTokenFrom = (req: NextRequest) => {
   return req.cookies.get(DEVICE_COOKIE)?.value ?? null
 }
 
@@ -58,6 +59,7 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
   }
 
   if (data.kind === 'resident') {
+    if (!data.householdId) return null
     const epoch = await getResidentEpoch(data.householdId)
     if (data.epoch !== epoch) return null
     return { kind: 'resident', userId: data.sub, householdId: data.householdId }
@@ -74,10 +76,14 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
 async function residentFromDevice(req: NextRequest): Promise<Session | null> {
   const t = verifyToken(deviceTokenFrom(req))
   if (t.ok === false || t.data.kind !== 'device') return null
-  const device = await getDb().residentDevice.findUnique({ where: { id: t.data.sub }, select: { householdId: true, deviceTokenEpoch: true } })
+  if (!t.data.householdId) return null
+  const device = await getDb().residentDevice.findUnique({
+    where: { id: t.data.sub },
+    include: { household: { select: { residentEpoch: true } } }
+  })
   if (!device || device.householdId !== t.data.householdId) return null
-  // Compare deviceTokenEpoch from device row with epoch in token
-  if (t.data.epoch !== device.deviceTokenEpoch) return null
+  // Compare token epoch with household's residentEpoch
+  if (t.data.epoch !== device.household.residentEpoch) return null
   return { kind: 'resident', userId: t.data.sub, householdId: device.householdId }
 }
 
@@ -260,21 +266,46 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
 
   // For user sessions, resolve role from database membership
   if (session.kind === 'user') {
+    // Resolve householdId in order: session, cookie, single membership
+    let targetHouseholdId = session.householdId
+
+    if (!targetHouseholdId) {
+      // Try cookie
+      const householdCookie = req.cookies.get(HOUSEHOLD_COOKIE)?.value
+      if (householdCookie) {
+        targetHouseholdId = householdCookie
+      }
+    }
+
+    if (!targetHouseholdId) {
+      // Try single approved membership
+      const db = getDb()
+      const memberships = await db.membership.findMany({
+        where: {
+          userId: session.userId,
+          consent: 'approved',
+        },
+        select: { householdId: true },
+      })
+
+      if (memberships.length === 1) {
+        targetHouseholdId = memberships[0].householdId
+      } else {
+        return { ok: false as const, res: fail('Select a household first', 400) }
+      }
+    }
+
     // If 'any' or 'user' is allowed, return without checking role
     if (allowed.includes('any') || allowed.includes('user')) {
-      return { ok: true as const, session }
+      return { ok: true as const, session: { ...session, householdId: targetHouseholdId } }
     }
 
-    // Otherwise, we need a householdId to check membership
-    if (!session.householdId) {
-      return { ok: false as const, res: fail('Household required for this action', 400) }
-    }
-
+    // Otherwise, we need to check membership for the target household
     const db = getDb()
     const membership = await db.membership.findFirst({
       where: {
         userId: session.userId,
-        householdId: session.householdId,
+        householdId: targetHouseholdId,
         consent: 'approved',
       },
       select: { role: true, id: true }
@@ -296,6 +327,7 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     // Augment session with role and membershipId
     session.role = membership.role as 'guardian' | 'helper'
     session.membershipId = membership.id
+    session.householdId = targetHouseholdId
   }
 
   // Check role authorization for resident sessions

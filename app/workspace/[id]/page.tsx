@@ -1,9 +1,7 @@
 'use client'
-
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-
 interface WorkspaceData {
   id: string
   residentName: string
@@ -16,7 +14,6 @@ interface WorkspaceData {
     email: string | null
   } | null
 }
-
 interface DashboardData {
   ringStatus: string
   pendingAlerts: number
@@ -24,7 +21,6 @@ interface DashboardData {
   activePasses: number
   googleCalendarConnected: boolean
 }
-
 interface CalendarEvent {
   id: string
   summary: string
@@ -32,7 +28,6 @@ interface CalendarEvent {
   start: { dateTime?: string; date?: string }
   end: { dateTime?: string; date?: string }
 }
-
 interface Notification {
   id: string
   type: string
@@ -46,9 +41,7 @@ interface Notification {
     email: string | null
   }
 }
-
 // Also update the select-workspace page to include the new notification types
-
 export default function WorkspacePage() {
   const router = useRouter()
   const params = useParams()
@@ -65,26 +58,30 @@ export default function WorkspacePage() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const notificationRef = useRef<HTMLDivElement>(null)
-  const [deviceAuth, setDeviceAuth] = useState<{ userCode: string; verificationUrl: string; deviceCode: string } | null>(null)
-  const [pollingTokens, setPollingTokens] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const accountRef = useRef<HTMLDivElement>(null)
-
+  // Set household cookie on page load
+  useEffect(() => {
+    fetch('/api/session/household', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ householdId: workspaceId }),
+    }).catch((e) => {
+      console.error('Failed to set household cookie', e)
+    })
+  }, [workspaceId])
   const loadDashboardData = useCallback(async () => {
     try {
       const res = await fetch(`/api/workspace/${workspaceId}/dashboard`)
       if (res.ok) {
         const data = await res.json()
         setDashboardData(data)
-
         // Load calendar events if connected
         if (data.googleCalendarConnected) {
           setLoadingCalendar(true)
           const now = new Date()
           const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
           const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-
           const calRes = await fetch(
             `/api/google-calendar/events?timeMin=${startOfMonth.toISOString()}&timeMax=${endOfMonth.toISOString()}`
           )
@@ -99,61 +96,9 @@ export default function WorkspacePage() {
       console.error('Failed to load dashboard data', e)
     }
   }, [workspaceId])
-
-  const connectGoogleCalendar = async () => {
-    try {
-      const res = await fetch('/api/google-calendar/device-auth', { method: 'POST' })
-      if (res.ok) {
-        const data = await res.json()
-        setDeviceAuth({
-          userCode: data.userCode,
-          verificationUrl: data.verificationUrl,
-          deviceCode: data.deviceCode,
-        })
-        startPollingTokens(data.deviceCode, data.interval || 5)
-      }
-    } catch (e) {
-      console.error('Failed to get device code', e)
-    }
+  const connectGoogleCalendar = () => {
+    window.location.href = `/api/google-calendar/oauth/start?h=${workspaceId}`
   }
-
-  const copyUserCode = () => {
-    if (deviceAuth) {
-      navigator.clipboard.writeText(deviceAuth.userCode)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  const startPollingTokens = async (deviceCode: string, interval: number) => {
-    setPollingTokens(true)
-    const pollInterval = setInterval(async () => {
-      try {
-        const res = await fetch('/api/google-calendar/poll-tokens', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceCode }),
-        })
-        const data = await res.json()
-
-        if (data.success) {
-          clearInterval(pollInterval)
-          setPollingTokens(false)
-          setDeviceAuth(null)
-          loadDashboardData()
-        } else if (data.error === 'expired_token') {
-          clearInterval(pollInterval)
-          setPollingTokens(false)
-          setDeviceAuth(null)
-          alert('Authorization expired. Please try again.')
-        }
-        // For 'authorization_pending' or 'slow_down', just continue polling
-      } catch (e) {
-        console.error('Error polling for tokens', e)
-      }
-    }, interval * 1000)
-  }
-
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -167,18 +112,15 @@ export default function WorkspacePage() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
-
   useEffect(() => {
     loadWorkspace()
     loadNotifications()
   }, [workspaceId])
-
   useEffect(() => {
     if (activeTab === 'dashboard') {
       loadDashboardData()
     }
   }, [activeTab, loadDashboardData]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const loadNotifications = async () => {
     try {
       const res = await fetch('/api/notifications')
@@ -191,7 +133,6 @@ export default function WorkspacePage() {
       console.error('Failed to load notifications', e)
     }
   }
-
   const respondToNotification = async (notificationId: string, action: 'accept' | 'reject') => {
     try {
       const res = await fetch(`/api/notifications/${notificationId}`, {
@@ -206,7 +147,6 @@ export default function WorkspacePage() {
       console.error('Failed to respond to notification', e)
     }
   }
-
   const markAsRead = async (notificationId: string) => {
     try {
       await fetch(`/api/notifications/${notificationId}`, {
@@ -219,12 +159,10 @@ export default function WorkspacePage() {
       console.error('Failed to mark notification as read', e)
     }
   }
-
   const leaveWorkspace = async () => {
     if (!confirm('Are you sure you want to leave this workspace?')) {
       return
     }
-
     try {
       const res = await fetch(`/api/workspace/${workspaceId}/leave`, {
         method: 'POST',
@@ -240,7 +178,6 @@ export default function WorkspacePage() {
       alert('Failed to leave workspace. Please try again.')
     }
   }
-
   const loadWorkspace = async () => {
     try {
       const res = await fetch(`/api/workspace/${workspaceId}`)
@@ -262,7 +199,6 @@ export default function WorkspacePage() {
         }
         return
       }
-
       const data = await res.json()
       setWorkspace(data)
     } catch {
@@ -271,7 +207,6 @@ export default function WorkspacePage() {
       setLoading(false)
     }
   }
-
   const switchRole = (newRole: 'resident' | 'helper') => {
     if (newRole === 'resident') {
       // If user is guardian of this household, go to resident view
@@ -281,7 +216,6 @@ export default function WorkspacePage() {
       router.push('/select-workspace')
     }
   }
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -289,7 +223,6 @@ export default function WorkspacePage() {
       </div>
     )
   }
-
   if (!workspace) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -297,10 +230,8 @@ export default function WorkspacePage() {
       </div>
     )
   }
-
   const isResidentView = roleParam === 'resident'
   const userIsGuardian = workspace.role === 'guardian'
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -333,7 +264,6 @@ export default function WorkspacePage() {
                   Switch to {isResidentView ? 'Helper' : 'Resident'}
                 </button>
               )}
-
               {/* Leave Workspace button for helpers only */}
               {!isResidentView && workspace.hasHelperMembership && (
                 <button
@@ -343,7 +273,6 @@ export default function WorkspacePage() {
                   Leave Workspace
                 </button>
               )}
-
               {/* Notification Bell */}
               <div className="relative">
                 <button
@@ -362,7 +291,6 @@ export default function WorkspacePage() {
                     </span>
                   )}
                 </button>
-
                 {/* Notification Dropdown */}
                 {showNotifications && (
                   <div ref={notificationRef} className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50 max-h-96 overflow-y-auto">
@@ -423,7 +351,6 @@ export default function WorkspacePage() {
                   </div>
                 )}
               </div>
-
               {/* Account Menu */}
               <div className="relative" ref={accountRef}>
                 <button
@@ -432,7 +359,6 @@ export default function WorkspacePage() {
                 >
                   {workspace.user?.name?.charAt(0).toUpperCase() || 'U'}
                 </button>
-
                 {showAccountMenu && (
                   <div className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
                     <div className="p-4 border-b border-gray-200">
@@ -474,7 +400,6 @@ export default function WorkspacePage() {
           </div>
         </div>
       </header>
-
       {/* Tabs */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -514,7 +439,6 @@ export default function WorkspacePage() {
           </nav>
         </div>
       </div>
-
       {/* Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'dashboard' && (
@@ -546,12 +470,11 @@ export default function WorkspacePage() {
                 <div className="text-gray-600">Active Visitor Passes</div>
               </div>
             </div>
-
             {/* Google Calendar */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-8">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">Google Calendar</h3>
-                {!dashboardData?.googleCalendarConnected && !deviceAuth && (
+                {!dashboardData?.googleCalendarConnected && (
                   <button
                     onClick={connectGoogleCalendar}
                     className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm"
@@ -560,78 +483,22 @@ export default function WorkspacePage() {
                   </button>
                 )}
               </div>
-
-              {deviceAuth ? (
-                <div className="text-center py-8">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-4">
-                    <h4 className="text-lg font-semibold text-blue-900 mb-2">Connect Your Google Calendar</h4>
-                    <p className="text-blue-800 mb-4">
-                      Visit <a href={deviceAuth.verificationUrl} target="_blank" rel="noopener noreferrer" className="underline font-medium">{deviceAuth.verificationUrl}</a>
-                      {' '}and enter this code:
-                    </p>
-                    <div className="bg-white border-2 border-blue-300 rounded-lg p-4 mb-4 flex items-center justify-between">
-                      <span className="text-3xl font-mono font-bold tracking-widest text-blue-900">
-                        {deviceAuth.userCode}
-                      </span>
-                      <button
-                        onClick={copyUserCode}
-                        className="ml-4 p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded-md transition-colors"
-                        title="Copy code"
-                      >
-                        {copied ? (
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        ) : (
-                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                        )}
-                      </button>
-                    </div>
-                    {pollingTokens && (
-                      <p className="text-sm text-blue-700">Waiting for authorization...</p>
-                    )}
-                  </div>
+              {dashboardData?.googleCalendarConnected ? (
+                <div className="text-center py-8 text-green-600">
+                  <svg className="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <p className="font-medium">Calendar Connected</p>
                 </div>
-              ) : !dashboardData?.googleCalendarConnected ? (
+              ) : (
                 <div className="text-center py-8 text-gray-500">
                   <svg className="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                   <p>Connect your Google Calendar to view and manage events</p>
                 </div>
-              ) : loadingCalendar ? (
-                <div className="text-center py-8 text-gray-500">
-                  <p>Loading calendar events...</p>
-                </div>
-              ) : calendarEvents.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <p>No upcoming events this month</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {calendarEvents.map((event) => (
-                    <div key={event.id} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                      <h4 className="font-medium text-gray-900">{event.summary || 'No title'}</h4>
-                      {event.description && (
-                        <p className="text-sm text-gray-600 mt-1">{event.description}</p>
-                      )}
-                      <p className="text-sm text-gray-500 mt-2">
-                        {event.start.dateTime
-                          ? new Date(event.start.dateTime).toLocaleString()
-                          : new Date(event.start.date || '').toLocaleDateString()}
-                        {' - '}
-                        {event.end.dateTime
-                          ? new Date(event.end.dateTime).toLocaleString()
-                          : new Date(event.end.date || '').toLocaleDateString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
               )}
             </div>
-
             {isResidentView && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
                 <h3 className="text-lg font-semibold text-blue-900 mb-2">
@@ -652,24 +519,6 @@ export default function WorkspacePage() {
             )}
           </div>
         )}
-
-        {activeTab === 'helpers' && isResidentView && (
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Manage Helpers</h2>
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <p className="text-gray-600 mb-4">
-                Add trusted family and friends as helpers who can respond to doorbell alerts.
-              </p>
-              <Link
-                href={`/workspace/${workspaceId}/add-helper`}
-                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-              >
-                Add Helper
-              </Link>
-            </div>
-          </div>
-        )}
-
         {activeTab === 'visitors' && (
           <div>
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Visitor Management</h2>
