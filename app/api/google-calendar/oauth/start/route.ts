@@ -24,24 +24,20 @@ export async function GET(req: NextRequest) {
   // Generate state for CSRF protection
   const state = crypto.randomBytes(32).toString('base64url')
 
-  // Generate PKCE code verifier and challenge
-  const codeVerifier = crypto.randomBytes(32).toString('base64url')
-  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+  // For TV/Limited Input devices, we use standard OAuth without PKCE
+  // The redirect URI must be pre-registered in Google Console
+  const redirectUri = getRedirectUri(req)
 
-  // Store state, verifier, and household in httpOnly cookie as JSON
-  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, h })
+  // Store state and household in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, h })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${GOOGLE_CLIENT_ID}&` +
-        `redirect_uri=${encodeURIComponent(getRedirectUri(req))}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
         `scope=${encodeURIComponent('https://www.googleapis.com/auth/calendar.events')}&` +
-        `state=${state}&` +
-        `code_challenge=${codeChallenge}&` +
-        `code_challenge_method=S256&` +
-        `prompt=consent&` +
-        `access_type=offline`
+        `state=${state}`
     )
   )
 
@@ -57,6 +53,14 @@ export async function GET(req: NextRequest) {
 }
 
 function getRedirectUri(req: NextRequest): string {
+  // Use APP_URL from environment for OAuth redirect URI
+  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
+  const appUrl = process.env.APP_URL
+  if (appUrl) {
+    return `${appUrl}/api/google-calendar/oauth/callback`
+  }
+  
+  // Fallback to request-based construction for development
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/google-calendar/oauth/callback`

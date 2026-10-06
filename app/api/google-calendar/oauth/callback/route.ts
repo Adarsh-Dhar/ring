@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(buildUrl('/login?error=missing_state', req.url)))
   }
 
-  let stateData: { s: string; v: string; h: string }
+  let stateData: { s: string; h: string }
   try {
     stateData = JSON.parse(oauthState)
   } catch (e) {
@@ -58,10 +58,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
-  const codeVerifier = stateData.v
   const householdId = stateData.h
 
   try {
+    // Exchange code for tokens (without PKCE for TV/Limited Input devices)
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -71,7 +71,6 @@ export async function GET(req: NextRequest) {
         code,
         grant_type: 'authorization_code',
         redirect_uri: getRedirectUri(req),
-        code_verifier: codeVerifier,
       }),
     })
 
@@ -134,6 +133,14 @@ export async function GET(req: NextRequest) {
 }
 
 function getRedirectUri(req: NextRequest): string {
+  // Use APP_URL from environment for OAuth redirect URI
+  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
+  const appUrl = process.env.APP_URL
+  if (appUrl) {
+    return `${appUrl}/api/google-calendar/oauth/callback`
+  }
+  
+  // Fallback to request-based construction for development
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/google-calendar/oauth/callback`

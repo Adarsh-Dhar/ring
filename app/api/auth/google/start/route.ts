@@ -23,27 +23,24 @@ export async function GET(req: NextRequest) {
   // Generate state for CSRF protection
   const state = crypto.randomBytes(32).toString('base64url')
 
-  // Generate PKCE code verifier and challenge
-  const codeVerifier = crypto.randomBytes(32).toString('base64url')
-  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+  // For TV/Limited Input devices, we use standard OAuth but with device-specific handling
+  // The redirect URI must be pre-registered in Google Console
+  const redirectUri = getRedirectUri(req)
 
-  // Store state, verifier, and next in httpOnly cookie as JSON
-  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, n: safeNextParam })
+  // Store state and next in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, n: safeNextParam })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${GOOGLE_CLIENT_ID}&` +
-        `redirect_uri=${encodeURIComponent(getRedirectUri(req))}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
         `scope=${encodeURIComponent('openid email profile')}&` +
-        `state=${state}&` +
-        `code_challenge=${codeChallenge}&` +
-        `code_challenge_method=S256&` +
-        `prompt=select_account`
+        `state=${state}`
     )
   )
 
-  // Set cookie with state, verifier, and next (5 minute expiry)
+  // Set cookie with state and next (5 minute expiry)
   res.cookies.set('oauth_state', stateCookie, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
@@ -56,6 +53,14 @@ export async function GET(req: NextRequest) {
 }
 
 function getRedirectUri(req: NextRequest): string {
+  // Use APP_URL from environment for OAuth redirect URI
+  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
+  const appUrl = process.env.APP_URL
+  if (appUrl) {
+    return `${appUrl}/api/auth/google/callback`
+  }
+  
+  // Fallback to request-based construction for development
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/auth/google/callback`
