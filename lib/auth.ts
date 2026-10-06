@@ -13,8 +13,11 @@ function getSecret(): string {
     if (IS_PROD) {
       throw new Error('AUTH_SECRET environment variable must be set in production')
     }
-    console.warn('[AUTH] No AUTH_SECRET set – using development placeholder. NEVER use in production.')
-    return 'dev-secret-do-not-use-in-production'
+    // In development, use a machine-specific random string instead of a hardcoded value
+    const hostname = require('os').hostname()
+    const machineSecret = `dev-${hostname}-${Date.now()}`
+    console.warn(`[AUTH] No AUTH_SECRET set – using development placeholder for ${hostname}. NEVER use in production.`)
+    return machineSecret
   }
   return s
 }
@@ -26,6 +29,7 @@ export type TokenClaims = {
   membershipId?: string
   userId?: string
   epoch: number
+  sessionVersion?: number
   exp: number   // required – Unix seconds
 }
 
@@ -86,7 +90,7 @@ export function sign(claims: TokenClaims): string | null {
   return makeToken(claims)
 }
 
-export function createSession(userId: string, kind: 'user' | 'helper' | 'resident', householdId: string = '', membershipId?: string): TokenClaims {
+export function createSession(userId: string, kind: 'user' | 'helper' | 'resident', householdId: string = '', membershipId?: string, sessionVersion: number = 1): TokenClaims {
   return {
     kind,
     sub: userId,
@@ -94,6 +98,7 @@ export function createSession(userId: string, kind: 'user' | 'helper' | 'residen
     membershipId,
     userId,
     epoch: 0,
+    sessionVersion: kind === 'user' ? sessionVersion : undefined,
     exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30), // 30 days
   }
 }

@@ -15,7 +15,6 @@ import { getDb } from '@/lib/db/client'
 import { makeToken } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import { Prisma } from '@prisma/client'
-import { hashPassword } from '@/lib/auth/password'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -79,8 +78,7 @@ export async function GET(req: NextRequest) {
 const Body = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('invite'),
-    email:  z.string().email().optional(),
-    phone:  z.string().trim().optional(),
+    email:  z.string().email(),
     name:   z.string().trim().min(1).max(60),
     role:   z.enum(['guardian', 'helper']),
     emoji:  z.string().max(8).default('🙂'),
@@ -132,45 +130,19 @@ export async function POST(req: NextRequest) {
   try {
     switch (b.action) {
       case 'invite': {
-        if (!b.email && !b.phone) {
-          return fail('An email address or phone number is required to invite a member.', 400)
+        if (!b.email) {
+          return fail('An email address is required to invite a member.', 400)
         }
 
-        const phone = b.phone && b.phone.trim() ? normalizePhone(b.phone) : null
-        const email = b.email && b.email.trim() ? normalizeEmail(b.email) : null
-        if (b.phone && b.phone.trim() && !phone) {
-          return fail(`"${b.phone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
-        }
+        const email = normalizeEmail(b.email)
 
-        let user: { id: string; name: string | null; email: string | null; phone: string | null }
-        if (email) {
-          // Check if user exists
-          const existingUser = await db.user.findUnique({ where: { email } })
-          if (existingUser) {
-            user = existingUser
-          } else {
-            // Generate a random temporary password for new users
-            const tempPassword = crypto.randomBytes(16).toString('hex')
-            const passwordHash = await hashPassword(tempPassword)
-
-            user = await db.user.create({
-              data: { email, name: b.name, passwordHash },
-            })
-          }
-        } else {
-          // Check if user exists
-          const existingUser = await db.user.findUnique({ where: { phone: phone! } })
-          if (existingUser) {
-            user = existingUser
-          } else {
-            // Generate a random temporary password for new users
-            const tempPassword = crypto.randomBytes(16).toString('hex')
-            const passwordHash = await hashPassword(tempPassword)
-
-            user = await db.user.create({
-              data: { phone: phone!, name: b.name, passwordHash },
-            })
-          }
+        // Check if user exists
+        let user = await db.user.findUnique({ where: { email } })
+        if (!user) {
+          // Create new user without password (Google-only auth)
+          user = await db.user.create({
+            data: { email, name: b.name },
+          })
         }
 
         // Check if they're already a member

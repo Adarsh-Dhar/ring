@@ -63,9 +63,13 @@ export default function WorkspacesPage() {
                 Notifications
               </button>
               <button
-                onClick={() => {
-                  document.cookie = 'db_session=; path=/; max-age=0'
-                  router.push('/')
+                onClick={async () => {
+                  try {
+                    await fetch('/api/session', { method: 'DELETE' })
+                  } catch (e) {
+                    console.error('Failed to sign out', e)
+                  }
+                  router.push('/login')
                 }}
                 className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
               >

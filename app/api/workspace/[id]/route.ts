@@ -29,7 +29,7 @@ export async function GET(
     })
 
     // Check if user is a member of this household
-    let membership = await db.membership.findFirst({
+    const membership = await db.membership.findFirst({
       where: {
         userId,
         householdId,
@@ -46,45 +46,8 @@ export async function GET(
       },
     })
 
-    // If not a member, check if user's name matches resident name and auto-create membership
     if (!membership) {
-      const household = await db.household.findUnique({
-        where: { id: householdId },
-        select: { residentName: true, requireResidentOk: true, plannedMode: true },
-      })
-
-      const user = await db.user.findUnique({
-        where: { id: userId },
-        select: { name: true },
-      })
-
-      // Auto-create membership if user's name matches resident name (for the resident themselves)
-      if (household && user && user.name === household.residentName) {
-        const memberCount = await db.membership.count({ where: { householdId } })
-        membership = await db.membership.create({
-          data: {
-            userId,
-            householdId,
-            role: 'guardian', // Give resident guardian-level access
-            consent: 'approved',
-            consentAt: new Date(),
-            position: memberCount,
-            tokenEpoch: 1,
-            emoji: '👤',
-          },
-          include: {
-            household: {
-              select: {
-                residentName: true,
-                requireResidentOk: true,
-                plannedMode: true,
-              },
-            },
-          },
-        })
-      } else {
-        return fail('You are not a member of this household.', 403)
-      }
+      return fail('You are not a member of this household. Please accept an invite to join.', 403)
     }
 
     // Check if user has a helper membership (they might also be a guardian)

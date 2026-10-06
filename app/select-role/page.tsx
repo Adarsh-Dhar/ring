@@ -9,14 +9,30 @@ export default function SelectRolePage() {
 
   const selectResident = () => {
     setLoading(true)
-    // Check if user already has a household
+    // Check if user already has a guardian membership
     fetch('/api/user/households')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) {
+          if (res.status === 401) {
+            router.push('/login')
+          } else {
+            router.push('/create-workspace')
+          }
+          return
+        }
+        return res.json()
+      })
       .then((data) => {
+        if (!data) return
         if (data.memberships && data.memberships.length > 0) {
-          // Residents have only one household, go directly to workspace as resident
-          const householdId = data.memberships[0].householdId
-          router.push(`/workspace/${householdId}?role=resident`)
+          // Check if user has a guardian membership
+          const guardianMembership = data.memberships.find((m: any) => m.role === 'guardian')
+          if (guardianMembership) {
+            router.push(`/workspace/${guardianMembership.householdId}`)
+          } else {
+            // User has helper memberships but no guardian - go to create
+            router.push('/create-workspace')
+          }
         } else {
           // No household, go to create household
           router.push('/create-workspace')

@@ -59,6 +59,23 @@ function notExpired(value: string): boolean {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
+  // ── Public paths — no auth required ─────────────────────────────────────
+  const publicPaths = ['/login', '/api/auth', '/api/health', '/invite', '/pair']
+  const isPublic = publicPaths.some(path => pathname.startsWith(path))
+
+  if (isPublic) {
+    // For invite pages, redirect unauthenticated users to login with next parameter
+    if (pathname.startsWith('/invite')) {
+      const sessionToken = req.cookies.get(SESSION_COOKIE)?.value
+      if (!looksLikeJwt(sessionToken) || !notExpired(sessionToken!)) {
+        const loginUrl = new URL('/login', req.url)
+        loginUrl.searchParams.set('next', pathname + req.nextUrl.search)
+        return NextResponse.redirect(loginUrl)
+      }
+    }
+    return NextResponse.next()
+  }
+
   // ── Resident / device pages — require device cookie ──────────────────────
   if (pathname.startsWith('/resident') || pathname.startsWith('/pair')) {
     const deviceToken = req.cookies.get(DEVICE_COOKIE)?.value
@@ -93,5 +110,12 @@ export const config = {
     '/resident/:path*',
     '/pair/:path*',
     '/consent/:path*',
+    '/workspace/:path*',
+    '/workspaces',
+    '/account',
+    '/select-workspace',
+    '/select-role',
+    '/create-workspace',
+    '/notifications',
   ],
 }

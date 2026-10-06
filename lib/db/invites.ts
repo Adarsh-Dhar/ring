@@ -12,7 +12,9 @@ export async function createInvite(data: {
 }) {
   const db = getDb()
   const crypto = await import('crypto')
-  const code = crypto.randomBytes(6).toString('base64url').substring(0, 8).toUpperCase()
+  // Generate 128-bit random code (16 bytes) and encode as base64url (case-sensitive)
+  // This provides ~2^128 possible codes, making brute-force infeasible
+  const code = crypto.randomBytes(16).toString('base64url')
 
   return db.invite.create({
     data: {

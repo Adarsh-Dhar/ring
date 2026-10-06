@@ -28,9 +28,13 @@ export default function AccountPage() {
     }
   }
 
-  const handleSignOut = () => {
-    document.cookie = 'db_session=; path=/; max-age=0'
-    router.push('/')
+  const handleSignOut = async () => {
+    try {
+      await fetch('/api/session', { method: 'DELETE' })
+    } catch (e) {
+      console.error('Failed to sign out', e)
+    }
+    router.push('/login')
   }
 
   if (loading) {

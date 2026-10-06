@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { setQuiet, setTimeoutSec, getSetup, setPlannedMode, PLANNED_MODES } from '@/lib/doorbell/store'
 import { updateHousehold, createResidentDevice, createHousehold } from '@/lib/db/households'
-import { authorize, fail, parse, getPendingUserId } from '@/lib/guard'
+import { authorize, fail, parse, getUserId } from '@/lib/guard'
 import { makeToken } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
 import { getDb } from '@/lib/db/client'
@@ -55,7 +55,7 @@ const Body = z.discriminatedUnion('action', [
     residentName:  z.string().trim().min(1).max(60),
     guardianName:  z.string().trim().min(1).max(60),
     guardianPhone: z.string().trim().optional(),
-    guardianEmail: z.string().email().optional(),
+    guardianEmail: z.string().email(),
     timezone:      z.string().optional(),
   }),
   z.object({ action: z.literal('quiet'), enabled: z.boolean(), startHour: hour, endHour: hour }),
@@ -81,17 +81,12 @@ export async function POST(req: NextRequest) {
 
   // ── Household creation ─────────────────────────────────────────────────────
   if (b.action === 'create') {
-    const pendingUserId = await getPendingUserId(req)
-    let guardianUserId: string | null = pendingUserId
+    const a = await authorize(req, 'user')
+    if (a.ok === false) return fail('You must be signed in to create a household.', 401)
+    const guardianUserId = a.session!.userId
 
-    if (!guardianUserId) {
-      const a = await authorize(req, 'user')
-      if (a.ok === false) return fail('You must be signed in to create a household.', 401)
-      guardianUserId = a.session!.userId
-    }
-
-    if (!b.guardianPhone && !b.guardianEmail) {
-      return fail('Guardian phone number or email address is required.', 400)
+    if (!b.guardianEmail) {
+      return fail('Guardian email address is required.', 400)
     }
 
     const guardianPhone = b.guardianPhone && b.guardianPhone.trim() ? normalizePhone(b.guardianPhone) : null
@@ -126,69 +121,19 @@ export async function POST(req: NextRequest) {
       return fail('Your account was not found. Please sign in again.', 401)
     }
 
-    // Only write a field if it is not already set — prevents P2002 unique constraint
+    // Only write name if it is not already set — prevents P2002 unique constraint
     // errors when the user already has this phone/email from OTP sign-in.
+    // Email and phone changes only come from verified Google identity, not household creation
     const profileUpdate: Record<string, string> = {}
     if (b.guardianName && b.guardianName !== currentUser.name) {
       profileUpdate.name = b.guardianName
     }
-    if (guardianPhone && guardianPhone !== currentUser.phone) {
-      profileUpdate.phone = guardianPhone
-    }
-    if (guardianEmail && !guardianPhone && guardianEmail !== currentUser.email) {
-      profileUpdate.email = guardianEmail
-    }
+    // Email and phone are not updated here - they come from verified Google identity
 
     if (Object.keys(profileUpdate).length > 0) {
       try {
         await db.user.update({ where: { id: guardianUserId }, data: profileUpdate })
       } catch (e: any) {
-        // P2002 = unique constraint — the phone/email belongs to another account
-        if (e?.code === 'P2002') {
-          const field = (e?.meta?.target as string[] | undefined)?.join(', ') ?? 'phone or email'
-          const conflictingValue = profileUpdate[field as 'phone' | 'email']
-          
-          // Check if the conflicting account has a household
-          const conflictingUser = await db.user.findUnique({
-            where: { [field as 'phone' | 'email']: conflictingValue },
-            select: {
-              id: true,
-              memberships: {
-                where: { consent: 'approved' },
-                select: { householdId: true }
-              }
-            }
-          })
-
-          if (conflictingUser && conflictingUser.memberships.length > 0) {
-            // The other account has a household - tell them to sign in with that account
-            return fail(
-              `That ${field} is already registered to another account with a household. Please sign in using that ${field} instead.`,
-              409
-            )
-          }
-
-          // The other account has no household - transfer the phone/email to current account
-          if (conflictingUser) {
-            try {
-              // Clear the field from the old account
-              await db.user.update({
-                where: { id: conflictingUser.id },
-                data: { [field as 'phone' | 'email']: null }
-              })
-              // Now set it on the current account
-              await db.user.update({
-                where: { id: guardianUserId },
-                data: profileUpdate
-              })
-            } catch (mergeError) {
-              console.error('[HOUSEHOLD CREATE] Failed to transfer phone/email between accounts', mergeError)
-              return fail('Unable to update your profile. Please try again.', 503)
-            }
-          } else {
-            return fail(`That ${field} is already registered to another account.`, 409)
-          }
-        }
         console.error('[HOUSEHOLD CREATE] Failed to update user profile', e)
         return fail('Unable to update your profile. Please try again.', 503)
       }

@@ -18,10 +18,11 @@ model User {
   memberships     Membership[]
   receivedNotifications Notification[] @relation("ReceivedNotifications")
   sentNotifications Notification[] @relation("SentNotifications")
-  googleAccessToken   String?
-  googleRefreshToken String?
+  googleAccessToken   String? // Encrypted
+  googleRefreshToken String? // Encrypted
   googleTokenExpiry   DateTime?
   googleSub          String?
+  sessionVersion     Int            @default(1)
   @@unique([googleSub])
 }
 

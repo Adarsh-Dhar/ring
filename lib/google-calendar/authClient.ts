@@ -1,12 +1,13 @@
 /**
  * Google OAuth Client Management
  * Handles OAuth2 client creation, token storage, and refresh
- * Uses Device Authorization Grant for limited input devices
+ * Tokens are encrypted at rest using AES-256-GCM
  */
 
 import { google } from 'googleapis';
 import { getDb } from '@/lib/db/client';
 import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from './config';
+import { decrypt, encrypt } from '@/lib/auth';
 
 export async function getAuthedClient(userId: string) {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
@@ -30,14 +31,23 @@ export async function getAuthedClient(userId: string) {
       return null;
     }
 
+    // Decrypt tokens
+    const accessToken = user.googleAccessToken ? decrypt(user.googleAccessToken) : null;
+    const refreshToken = user.googleRefreshToken ? decrypt(user.googleRefreshToken) : null;
+
+    if (!refreshToken) {
+      console.warn('Failed to decrypt refresh token');
+      return null;
+    }
+
     const oauth2Client = new google.auth.OAuth2(
       GOOGLE_CLIENT_ID,
       GOOGLE_CLIENT_SECRET
     );
 
     oauth2Client.setCredentials({
-      access_token: user.googleAccessToken || undefined,
-      refresh_token: user.googleRefreshToken,
+      access_token: accessToken || undefined,
+      refresh_token: refreshToken,
       expiry_date: user.googleTokenExpiry ? user.googleTokenExpiry.getTime() : undefined,
     });
 
@@ -47,10 +57,20 @@ export async function getAuthedClient(userId: string) {
         console.log('Google OAuth tokens refreshed, persisting to database');
         const newExpiryDate = new Date(tokens.expiry_date || Date.now() + 3600000);
 
+        // Encrypt new tokens before storing
+        const encryptedAccessToken = encrypt(tokens.access_token);
+        const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : undefined;
+
+        if (!encryptedAccessToken) {
+          console.error('Failed to encrypt access token');
+          return;
+        }
+
         await db.user.update({
           where: { id: userId },
           data: {
-            googleAccessToken: tokens.access_token,
+            googleAccessToken: encryptedAccessToken,
+            googleRefreshToken: encryptedRefreshToken || user.googleRefreshToken,
             googleTokenExpiry: newExpiryDate,
           },
         });
@@ -101,14 +121,22 @@ export async function getAuthedClientOrReason(userId: string): Promise<AuthedCli
     return { ok: false, reason: 'not_connected' };
   }
 
+  // Decrypt tokens
+  const accessToken = user.googleAccessToken ? decrypt(user.googleAccessToken) : null;
+  const refreshToken = user.googleRefreshToken ? decrypt(user.googleRefreshToken) : null;
+
+  if (!refreshToken) {
+    return { ok: false, reason: 'not_connected' };
+  }
+
   const oauth2Client = new google.auth.OAuth2(
     GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET
   );
 
   oauth2Client.setCredentials({
-    access_token: user.googleAccessToken || undefined,
-    refresh_token: user.googleRefreshToken,
+    access_token: accessToken || undefined,
+    refresh_token: refreshToken,
     expiry_date: user.googleTokenExpiry ? new Date(user.googleTokenExpiry).getTime() : undefined,
   });
 
@@ -118,17 +146,26 @@ export async function getAuthedClientOrReason(userId: string): Promise<AuthedCli
       const { credentials } = await oauth2Client.refreshAccessToken();
       const newExpiryDate = new Date(credentials.expiry_date || Date.now() + 3600000);
 
+      // Encrypt new tokens before storing
+      const encryptedAccessToken = encrypt(credentials.access_token);
+      const encryptedRefreshToken = credentials.refresh_token ? encrypt(credentials.refresh_token) : undefined;
+
+      if (!encryptedAccessToken) {
+        return { ok: false, reason: 'refresh_failed' };
+      }
+
       await db.user.update({
         where: { id: userId },
         data: {
-          googleAccessToken: credentials.access_token,
+          googleAccessToken: encryptedAccessToken,
+          googleRefreshToken: encryptedRefreshToken || user.googleRefreshToken,
           googleTokenExpiry: newExpiryDate,
         },
       });
 
       oauth2Client.setCredentials({
         access_token: credentials.access_token,
-        refresh_token: user.googleRefreshToken,
+        refresh_token: refreshToken,
         expiry_date: credentials.expiry_date ? new Date(credentials.expiry_date).getTime() : undefined,
       });
     } catch (error) {

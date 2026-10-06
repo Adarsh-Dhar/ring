@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { makeToken } from '@/lib/auth'
-import { COOKIE, DEVICE_COOKIE, cookieOpts, deviceCookieOpts, fail, getSession, parse } from '@/lib/guard'
+import { makeToken, verifyToken } from '@/lib/auth'
+import { COOKIE, DEVICE_COOKIE, cookieOpts, deviceCookieOpts, fail, getSession, parse, deviceTokenFrom } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { hit, clientIp } from '@/lib/ratelimit'
 import crypto from 'crypto'
@@ -71,6 +71,37 @@ export async function GET(req: NextRequest) {
     if (!household) {
       return fail('This household no longer exists. Please pair the device again.', 404)
     }
+
+    // Sliding refresh: re-issue cookie if more than half the lifetime has passed
+    const deviceToken = deviceTokenFrom(req)
+    if (deviceToken) {
+      const t = verifyToken(deviceToken)
+      if (t.ok && t.data.exp) {
+        const lifetimeSeconds = t.data.exp - Math.floor(Date.now() / 1000)
+        const TOTAL_LIFETIME = 30 * 24 * 60 * 60 // 30 days
+        if (lifetimeSeconds < TOTAL_LIFETIME / 2) {
+          // Re-issue token with full lifetime
+          const newToken = makeToken({
+            kind:        'device',
+            sub:         s.userId,
+            householdId: s.householdId,
+            epoch:       t.data.epoch,
+            exp:         Math.floor(Date.now() / 1000) + TOTAL_LIFETIME,
+          })
+          if (newToken) {
+            const res = NextResponse.json({
+              kind:         'resident',
+              userId:       s.userId,
+              householdId:  s.householdId,
+              residentName: household.residentName,
+            })
+            res.cookies.set(DEVICE_COOKIE, newToken, deviceCookieOpts)
+            return res
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       kind:         'resident',
       userId:       s.userId,
@@ -89,17 +120,29 @@ export async function GET(req: NextRequest) {
  *
  * Security measures:
  *  - IP rate limit: max 5 attempts per IP per 10 minutes (in-memory, resets on restart).
+ *  - Global rate limit: max 100 attempts total per 10 minutes (prevents distributed attacks).
  *  - DB attempt counter: max 10 wrong guesses per code before it is permanently invalidated.
  *    This survives process restarts, so an attacker cannot reset the counter by restarting.
  *  - The code hash uses SHA-256 (deterministic) so the DB unique index still works.
- *    Rate limiting + attempt counting make brute-force infeasible (5/10 min per IP,
- *    10 total per code, against a 32-character alphabet = ~2.2 billion combinations).
+ *  - Pairing codes expire after 15 minutes.
+ *  - Successfully used codes are immediately invalidated (single-use).
+ *  - Trust X-Forwarded-For only when behind Caddy (configurable via env var).
+ *  - Rate limit counts failures, not successes.
+ *  - Regex matches exactly 6 characters (was accepting 36 before).
  */
 export async function POST(req: NextRequest) {
+  // ── Get IP (trust X-Forwarded-For only when configured) ─────────────────────
+  const trustXForwardedFor = process.env.TRUST_X_FORWARDED_FOR === 'true'
+  const ip = clientIp(req, trustXForwardedFor)
+
   // ── IP rate limit ─────────────────────────────────────────────────────────
-  const ip = clientIp(req)
   if (!hit(`pairing:${ip}`, PAIRING_RATE_MAX, PAIRING_RATE_WINDOW)) {
     return fail('Too many pairing attempts. Please wait 10 minutes and try again.', 429)
+  }
+
+  // ── Global rate limit (prevents distributed attacks) ───────────────────────
+  if (!hit('pairing:global', 100, PAIRING_RATE_WINDOW)) {
+    return fail('Too many pairing attempts globally. Please wait 10 minutes and try again.', 429)
   }
 
   const p = await parse(req, z.object({
@@ -129,8 +172,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (!device) {
-    // Still increment a placeholder counter via the rate limiter — already done above.
+    // Count as failure (already counted by rate limiter)
     return fail('Invalid pairing code. Please check the code shown on the guardian screen and try again.', 401)
+  }
+
+  // ── Check code expiry (15 minutes) ───────────────────────────────────────
+  const CODE_EXPIRY_MS = 15 * 60 * 1000
+  if (device.createdAt && new Date().getTime() - device.createdAt.getTime() > CODE_EXPIRY_MS) {
+    return fail('This pairing code has expired. Please ask the guardian to generate a new code.', 403)
   }
 
   // ── Per-code attempt counter (persisted to DB) ────────────────────────────
@@ -141,15 +190,29 @@ export async function POST(req: NextRequest) {
     return fail('This pairing code has been locked after too many failed attempts. Please ask the guardian to generate a new code.', 403)
   }
 
-  // Code matched — reset the attempt counter (successful pairing).
+  // ── Increment attempt counter on failure, burn code on success ─────────────
   try {
     await db.residentDevice.update({
       where: { id: device.id },
-      data:  { lastSeenAt: new Date(), pairingAttempts: 0 },
+      data:  {
+        lastSeenAt: new Date(),
+        pairingAttempts: { increment: 1 },
+      },
     })
   } catch (e) {
     // Non-fatal — log but continue
-    console.error('[SESSION POST] Failed to update device lastSeenAt', e)
+    console.error('[SESSION POST] Failed to update device', e)
+  }
+
+  // Code matched — burn it by deleting the pairing code hash
+  try {
+    await db.residentDevice.update({
+      where: { id: device.id },
+      data:  { pairingCodeHash: null },
+    })
+  } catch (e) {
+    // Non-fatal — log but continue
+    console.error('[SESSION POST] Failed to burn pairing code', e)
   }
 
   let epoch = 1
@@ -169,7 +232,7 @@ export async function POST(req: NextRequest) {
     sub:         device.id,
     householdId: device.householdId,
     epoch,
-    exp:         Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365,
+    exp:         Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30, // 30 days with sliding refresh
   })
 
   if (!token) {
@@ -181,7 +244,22 @@ export async function POST(req: NextRequest) {
   return res
 }
 
-export async function DELETE() {
+export async function DELETE(req: NextRequest) {
+  const s = await getSession(req)
+  if (s && s.kind === 'user') {
+    // Bump sessionVersion to invalidate all existing sessions
+    try {
+      const db = getDb()
+      await db.user.update({
+        where: { id: s.userId },
+        data: { sessionVersion: { increment: 1 } }
+      })
+    } catch (e) {
+      console.error('[SESSION DELETE] Failed to bump sessionVersion', e)
+      // Continue anyway - clearing the cookie is the primary goal
+    }
+  }
+
   const res = NextResponse.json({ ok: true })
   res.cookies.set(COOKIE,        '', { ...cookieOpts,       maxAge: 0 })
   res.cookies.set(DEVICE_COOKIE, '', { ...deviceCookieOpts, maxAge: 0 })

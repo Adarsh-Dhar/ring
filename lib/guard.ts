@@ -9,7 +9,7 @@ export const COOKIE = 'db_session'
 export const DEVICE_COOKIE = 'db_device'
 
 export type Session = {
-  kind: 'helper' | 'resident' | 'device' | 'user'
+  kind: 'user' | 'resident' | 'device'
   userId: string
   householdId: string
   membershipId?: string
@@ -30,7 +30,8 @@ const deviceTokenFrom = (req: NextRequest) => {
 
 /**
  * Resolves the caller from a signed token AND current server state.
- * Revoked tokens (epoch mismatch) return null.
+ * Revoked tokens (epoch mismatch or sessionVersion mismatch) return null.
+ * For user sessions, roles are resolved from the database.
  */
 export async function getSession(req: NextRequest): Promise<Session | null> {
   const t = verifyToken(tokenFrom(req))
@@ -38,12 +39,17 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
 
   const data = t.data
 
-  // Pending tokens (issued by verify-otp, before household selection) are
-  // intentionally rejected here – they are only valid for select-household.
-  if (data.kind === 'pending') return null
-
-  // New simple user session (for email/password auth without household)
+  // Only 'user' and 'resident' kinds are valid for human sessions
   if (data.kind === 'user') {
+    const db = getDb()
+    const user = await db.user.findUnique({
+      where: { id: data.sub },
+      select: { id: true, sessionVersion: true }
+    })
+
+    if (!user) return null
+    if (data.sessionVersion !== user.sessionVersion) return null
+
     return {
       kind: 'user',
       userId: data.sub,
@@ -57,24 +63,6 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
     return { kind: 'resident', userId: data.sub, householdId: data.householdId }
   }
 
-  if (data.kind === 'helper') {
-    const epoch = await getMembershipEpoch(data.sub)
-    if (data.epoch !== epoch) return null
-    const db = getDb()
-    const membership = await db.membership.findUnique({
-      where: { id: data.sub },
-      include: { user: true, household: true }
-    })
-    if (!membership || membership.consent !== 'approved') return null
-    return {
-      kind: 'helper',
-      userId: membership.userId,
-      householdId: membership.householdId,
-      membershipId: membership.id,
-      role: membership.role as 'guardian' | 'helper'
-    }
-  }
-
   return null
 }
 
@@ -86,33 +74,18 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
 async function residentFromDevice(req: NextRequest): Promise<Session | null> {
   const t = verifyToken(deviceTokenFrom(req))
   if (t.ok === false || t.data.kind !== 'device') return null
-  const device = await getDb().residentDevice.findUnique({ where: { id: t.data.sub }, select: { householdId: true } })
+  const device = await getDb().residentDevice.findUnique({ where: { id: t.data.sub }, select: { householdId: true, deviceTokenEpoch: true } })
   if (!device || device.householdId !== t.data.householdId) return null
-  if (t.data.epoch !== (await getResidentEpoch(device.householdId))) return null
+  // Compare deviceTokenEpoch from device row with epoch in token
+  if (t.data.epoch !== device.deviceTokenEpoch) return null
   return { kind: 'resident', userId: t.data.sub, householdId: device.householdId }
 }
 
 /**
- * Extracts the userId from a pending token (issued after OTP verify,
- * before household selection).  Returns null for any other token kind.
- * Used by routes that should be accessible before a household is selected
- * (e.g. accepting an invite).
+ * Returns the userId from a user session.
+ * Used by routes that need the current user.
  */
-export async function getPendingUserId(req: NextRequest): Promise<string | null> {
-  const t = verifyToken(tokenFrom(req))
-  if (t.ok === false) return null
-  if (t.data.kind !== 'pending') return null
-  return t.data.sub
-}
-
-/**
- * Returns the userId whether the token is pending OR a full helper session.
- * Use in routes that accept both pre-household and post-household callers.
- */
-export async function getAnyUserId(req: NextRequest): Promise<string | null> {
-  const t = verifyToken(tokenFrom(req))
-  if (t.ok === false) return null
-  if (t.data.kind === 'pending') return t.data.sub
+export async function getUserId(req: NextRequest): Promise<string | null> {
   const session = await getSession(req)
   return session?.userId ?? null
 }
@@ -233,7 +206,7 @@ export function isParseOk<T>(p: ParseResult<T>): p is { ok: true; data: T } { re
 
 /**
  * Authorizes a request. Returns the session if authenticated and authorized.
- * All authorized sessions must have a householdId - this is used for scoping.
+ * For user sessions, loads the user's membership for the target household and checks the role.
  * Supports both old-style cookie sessions and new v2 device sessions.
  */
 export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Auth> {
@@ -254,8 +227,9 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     if (v2Session.kind === 'guardian') role = 'guardian'
     if (v2Session.kind === 'helper') role = 'helper'
 
+    // Visitor devices get their own kind, not mapped to helper
     const session: Session = {
-      kind: v2Session.kind === 'resident' ? 'resident' : 'helper',
+      kind: v2Session.kind === 'visitor' ? 'device' : (v2Session.kind === 'resident' ? 'resident' : 'helper'),
       userId: v2Session.deviceId,
       householdId: v2Session.householdId,
       membershipId: v2Session.membershipId,
@@ -284,17 +258,55 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     return { ok: false as const, res: fail('Not signed in', 401) }
   }
 
-  // Check role authorization
-  let roleOk = false
-  if (allowed.includes('any')) roleOk = true
-  if (allowed.includes('user') && session.kind === 'user') roleOk = true
-  if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
-  if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
-  if (allowed.includes('resident') && session.kind === 'resident') roleOk = true
-  if (allowed.includes('device') && session.kind === 'device') roleOk = true
+  // For user sessions, resolve role from database membership
+  if (session.kind === 'user') {
+    // If 'any' or 'user' is allowed, return without checking role
+    if (allowed.includes('any') || allowed.includes('user')) {
+      return { ok: true as const, session }
+    }
 
-  if (!roleOk) {
-    return { ok: false as const, res: fail('Forbidden', 403) }
+    // Otherwise, we need a householdId to check membership
+    if (!session.householdId) {
+      return { ok: false as const, res: fail('Household required for this action', 400) }
+    }
+
+    const db = getDb()
+    const membership = await db.membership.findFirst({
+      where: {
+        userId: session.userId,
+        householdId: session.householdId,
+        consent: 'approved',
+      },
+      select: { role: true, id: true }
+    })
+
+    if (!membership) {
+      return { ok: false as const, res: fail('You are not a member of this household', 403) }
+    }
+
+    // Check role authorization
+    let roleOk = false
+    if (allowed.includes('guardian') && membership.role === 'guardian') roleOk = true
+    if (allowed.includes('helper') && membership.role === 'helper') roleOk = true
+
+    if (!roleOk) {
+      return { ok: false as const, res: fail('Forbidden', 403) }
+    }
+
+    // Augment session with role and membershipId
+    session.role = membership.role as 'guardian' | 'helper'
+    session.membershipId = membership.id
+  }
+
+  // Check role authorization for resident sessions
+  if (session.kind === 'resident') {
+    let roleOk = false
+    if (allowed.includes('any')) roleOk = true
+    if (allowed.includes('resident')) roleOk = true
+
+    if (!roleOk) {
+      return { ok: false as const, res: fail('Forbidden', 403) }
+    }
   }
 
   return { ok: true as const, session }

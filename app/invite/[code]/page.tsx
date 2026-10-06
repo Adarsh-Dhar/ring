@@ -8,8 +8,10 @@ export default function InvitePage() {
   const params = useParams()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [household, setHousehold] = useState<any>(null)
-  const [consented, setConsented] = useState(false)
+  const [householdName, setHouseholdName] = useState<string | null>(null)
+  const [inviterName, setInviterName] = useState<string | null>(null)
+  const [role, setRole] = useState<string | null>(null)
+  const [accepted, setAccepted] = useState(false)
 
   useEffect(() => {
     loadInvite()
@@ -26,7 +28,9 @@ export default function InvitePage() {
         return
       }
 
-      setHousehold(data)
+      setHouseholdName(data.householdName)
+      setInviterName(data.inviterName)
+      setRole(data.role)
       setLoading(false)
     } catch (err) {
       setError('Network error')
@@ -53,12 +57,16 @@ export default function InvitePage() {
         return
       }
 
-      setConsented(true)
+      setAccepted(true)
 
-      // Auto-create passkey after consent
+      // Redirect after showing success message
       setTimeout(() => {
-        router.push('/helper')
-      }, 2000)
+        if (role === 'guardian') {
+          router.push(`/workspace/${data.householdId}`)
+        } else {
+          router.push('/helper')
+        }
+      }, 1500)
     } catch (err) {
       setError('Network error')
       setLoading(false)
@@ -76,10 +84,11 @@ export default function InvitePage() {
         body: JSON.stringify({ action: 'decline' }),
       })
 
+      const data = await res.json()
+
       if (res.ok) {
         router.push('/')
       } else {
-        const data = await res.json()
         setError(data.error || 'Failed to decline invite')
         setLoading(false)
       }
@@ -117,16 +126,16 @@ export default function InvitePage() {
     )
   }
 
-  if (consented) {
+  if (accepted) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8 text-center">
           <div className="text-6xl mb-4">✅</div>
           <h1 className="text-2xl font-bold mb-4">You're In!</h1>
           <p className="text-gray-600 mb-6">
-            You've been added as a helper for {household.residentName}.
+            You've been added as a {role} for {householdName}.
           </p>
-          <p className="text-sm text-gray-500">Setting up your session...</p>
+          <p className="text-sm text-gray-500">Redirecting to your dashboard...</p>
         </div>
       </div>
     )
@@ -137,7 +146,7 @@ export default function InvitePage() {
       <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
         <h1 className="text-2xl font-bold text-center mb-2">You're Invited!</h1>
         <p className="text-gray-600 text-center mb-6">
-          {household.createdBy} has invited you to help watch over {household.residentName}.
+          {inviterName} has invited you to help watch over {householdName}.
         </p>
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">

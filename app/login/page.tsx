@@ -1,132 +1,55 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [deviceAuth, setDeviceAuth] = useState<{ userCode: string; verificationUrl: string; deviceCode: string } | null>(null)
-  const [pollingTokens, setPollingTokens] = useState(false)
+  const searchParams = useSearchParams()
+  const next = searchParams.get('next')
+  const error = searchParams.get('error')
+
+  // Validate next parameter to prevent open redirects
+  const getSafeRedirect = (nextParam: string | null): string => {
+    if (!nextParam) return ''
+    // Must start with / (relative path)
+    if (!nextParam.startsWith('/')) return ''
+    // Must not start with // (protocol-relative)
+    if (nextParam.startsWith('//')) return ''
+    // Must not contain a scheme (http://, https://, etc.)
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(nextParam)) return ''
+    return nextParam
+  }
+
+  const safeNext = getSafeRedirect(next)
+
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  const initiateAuth = async () => {
-    // Clear any existing polling
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
-    }
-    setPollingTokens(false)
-    setError('')
-
-    try {
-      const res = await fetch('/api/auth/device', { method: 'POST' })
-      if (res.ok) {
-        const data = await res.json()
-        setDeviceAuth({
-          userCode: data.userCode,
-          verificationUrl: data.verificationUrl,
-          deviceCode: data.deviceCode,
-        })
-        startPollingTokens(data.deviceCode, data.interval || 5)
-      } else {
-        const data = await res.json()
-        setError(data.error || 'Failed to initiate authentication')
-      }
-    } catch (e) {
-      setError('An error occurred. Please try again.')
-    }
-  }
-
-  const copyToClipboard = () => {
-    if (deviceAuth) {
-      navigator.clipboard.writeText(deviceAuth.userCode)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  const startPollingTokens = async (deviceCode: string, interval: number) => {
-    // Clear any existing interval
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-    }
-
-    setPollingTokens(true)
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch('/api/auth/poll', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceCode }),
-        })
-        const data = await res.json()
-
-        if (data.success) {
-          // Clear interval immediately on success
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current)
-            pollIntervalRef.current = null
-          }
-          setPollingTokens(false)
-          setDeviceAuth(null)
-
-          // Check if user has a household
-          const householdsRes = await fetch('/api/user/households')
-          if (householdsRes.ok) {
-            const householdsData = await householdsRes.json()
-            if (householdsData.households && householdsData.households.length > 0) {
-              // Redirect to first household as resident
-              const residentHousehold = householdsData.households.find((h: any) => h.role === 'guardian')
-              if (residentHousehold) {
-                router.push(`/workspace/${residentHousehold.householdId}?role=resident`)
-              } else {
-                router.push('/select-workspace')
-              }
-            } else {
-              router.push('/select-role')
-            }
-          } else {
-            router.push('/select-role')
-          }
-        } else if (data.error === 'expired_token') {
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current)
-            pollIntervalRef.current = null
-          }
-          setPollingTokens(false)
-          setDeviceAuth(null)
-          setError('Authorization expired. Please try again.')
-        } else if (data.error === 'authorization_pending' || data.error === 'slow_down') {
-          // Continue polling - these are expected states
-        } else {
-          // Other errors (like invalid_grant/device code already exchanged)
-          // Stop polling and prompt user to try again
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current)
-            pollIntervalRef.current = null
-          }
-          setPollingTokens(false)
-          setDeviceAuth(null)
-          setError('Authorization failed. Please try again.')
-        }
-      } catch (e) {
-        console.error('Error polling for tokens', e)
-      }
-    }, interval * 1000)
+  const initiateGoogleAuth = () => {
+    setLoading(true)
+    const redirectUrl = safeNext ? `/api/auth/google/start?next=${encodeURIComponent(safeNext)}` : '/api/auth/google/start'
+    window.location.href = redirectUrl
   }
 
   useEffect(() => {
-    initiateAuth()
-
-    // Cleanup interval on unmount
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current)
+    // Handle error messages from OAuth callback
+    if (error) {
+      const errorMessages: Record<string, string> = {
+        cancelled: 'You cancelled the sign-in process.',
+        oauth_error: 'An error occurred during sign-in.',
+        invalid_response: 'Invalid response from Google.',
+        missing_state: 'Security error: missing state.',
+        state_mismatch: 'Security error: state mismatch.',
+        token_exchange_failed: 'Failed to exchange authorization code.',
+        no_email: 'Google did not provide an email address.',
+        email_not_verified: 'Your Google email is not verified.',
+        session_creation_failed: 'Failed to create session.',
+        server_error: 'A server error occurred.',
       }
+      setError(errorMessages[error] || 'An unknown error occurred.')
     }
-  }, [])
+  }, [error])
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
@@ -143,60 +66,40 @@ export default function LoginPage() {
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
             {error}
+            <button
+              onClick={() => setError('')}
+              className="ml-2 text-red-800 hover:text-red-900 underline"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
-        {deviceAuth ? (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-blue-900 mb-2">Connect Your Google Account</h3>
-            <p className="text-blue-800 mb-4">
-              Visit{' '}
-              <a
-                href={deviceAuth.verificationUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline font-medium"
-              >
-                {deviceAuth.verificationUrl}
-              </a>
-              {' '}
-              and enter this code:
-            </p>
-            <div className="bg-white border-2 border-blue-300 rounded-lg p-4 mb-4 flex items-center justify-between">
-              <span className="text-3xl font-mono font-bold tracking-widest text-blue-900">
-                {deviceAuth.userCode}
-              </span>
-              <button
-                onClick={copyToClipboard}
-                className="ml-4 p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-100 rounded-md transition-colors"
-                title="Copy code"
-              >
-                {copied ? (
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                )}
-              </button>
-            </div>
-            {pollingTokens && (
-              <p className="text-sm text-blue-700">Waiting for authorization...</p>
-            )}
-            <button
-              onClick={initiateAuth}
-              className="mt-4 text-sm text-blue-600 hover:text-blue-700 underline"
-            >
-              Start over
-            </button>
-          </div>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            <p>Initializing authentication...</p>
-          </div>
-        )}
+        <button
+          onClick={initiateGoogleAuth}
+          disabled={loading}
+          className="w-full flex items-center justify-center px-4 py-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+        >
+          {loading ? (
+            <span className="flex items-center">
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              Signing in...
+            </span>
+          ) : (
+            <span className="flex items-center">
+              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
+                <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+              Continue with Google
+            </span>
+          )}
+        </button>
       </div>
     </div>
   )

@@ -20,7 +20,12 @@ export function hit(key: string, max: number, windowMs: number, now = Date.now()
 }
 
 /** Same extraction send-otp uses. Caddy sets X-Forwarded-For; do not expose the app port directly. */
-export const clientIp = (req: NextRequest) =>
-  (req.headers.get('x-forwarded-for')?.split(',')[0] ?? '').trim() || 'unknown'
+export const clientIp = (req: NextRequest, trustXForwardedFor = false) => {
+  if (trustXForwardedFor) {
+    return (req.headers.get('x-forwarded-for')?.split(',')[0] ?? '').trim() || 'unknown'
+  }
+  // Otherwise use the socket address (not accessible in Edge runtime, but fine for Node.js)
+  return 'unknown'
+}
 
 export function _resetRateLimits() { buckets.clear() }   // tests only

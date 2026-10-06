@@ -11,6 +11,10 @@ interface WorkspaceData {
   requireResidentOk: boolean
   plannedMode: string
   hasHelperMembership: boolean
+  user: {
+    name: string | null
+    email: string | null
+  } | null
 }
 
 interface DashboardData {
@@ -450,9 +454,13 @@ export default function WorkspacePage() {
                         Account Settings
                       </Link>
                       <button
-                        onClick={() => {
-                          document.cookie = 'db_session=; path=/; max-age=0'
-                          router.push('/')
+                        onClick={async () => {
+                          try {
+                            await fetch('/api/session', { method: 'DELETE' })
+                          } catch (e) {
+                            console.error('Failed to sign out', e)
+                          }
+                          router.push('/login')
                         }}
                         className="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50 rounded-md text-sm"
                       >
