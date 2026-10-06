@@ -82,6 +82,22 @@ export function verifyToken(
   }
 }
 
+export function sign(claims: TokenClaims): string | null {
+  return makeToken(claims)
+}
+
+export function createSession(userId: string, kind: 'user' | 'helper' | 'resident', householdId: string = '', membershipId?: string): TokenClaims {
+  return {
+    kind,
+    sub: userId,
+    householdId,
+    membershipId,
+    userId,
+    epoch: 0,
+    exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24 * 30), // 30 days
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AES-256-GCM envelope encryption (for Ring OAuth tokens at rest)
 // ---------------------------------------------------------------------------

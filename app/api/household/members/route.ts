@@ -14,14 +14,35 @@ import { authorize, fail, parse } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
 import { makeToken } from '@/lib/auth'
 import { normalizePhone, normalizeEmail } from '@/lib/identity'
+import { Prisma } from '@prisma/client'
+import { hashPassword } from '@/lib/auth/password'
+import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'any')
   if (a.ok === false) return a.res
-  const householdId = a.session!.householdId
+
+  let householdId: string
+  if (a.session!.householdId) {
+    householdId = a.session!.householdId
+  } else {
+    // User session - get household from user's membership (guardian or helper)
+    const db = getDb()
+    const membership = await db.membership.findFirst({
+      where: {
+        userId: a.session!.userId,
+        consent: 'approved',
+      },
+      select: { householdId: true },
+    })
+    if (!membership) {
+      return fail('You must be a member of a household to view members.', 403)
+    }
+    householdId = membership.householdId
+  }
 
   let memberships: Awaited<ReturnType<typeof getMembershipsForHousehold>>
   let invites: Awaited<ReturnType<typeof getInvitesForHousehold>>
@@ -74,9 +95,27 @@ const Body = z.discriminatedUnion('action', [
 ])
 
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'any')
   if (a.ok === false) return a.res
-  const householdId = a.session!.householdId
+
+  let householdId: string
+  if (a.session!.householdId) {
+    householdId = a.session!.householdId
+  } else {
+    // User session - get household from user's membership (guardian or helper)
+    const db = getDb()
+    const membership = await db.membership.findFirst({
+      where: {
+        userId: a.session!.userId,
+        consent: 'approved',
+      },
+      select: { householdId: true },
+    })
+    if (!membership) {
+      return fail('You must be a member of a household to manage members.', 403)
+    }
+    householdId = membership.householdId
+  }
 
   const p = await parse(req, Body)
   if (p.ok === false) return p.res
@@ -105,25 +144,46 @@ export async function POST(req: NextRequest) {
 
         let user: { id: string; name: string | null; email: string | null; phone: string | null }
         if (email) {
-          user = await db.user.upsert({
-            where:  { email },
-            update: {},
-            create: { email, name: b.name },
-          })
+          // Check if user exists
+          const existingUser = await db.user.findUnique({ where: { email } })
+          if (existingUser) {
+            user = existingUser
+          } else {
+            // Generate a random temporary password for new users
+            const tempPassword = crypto.randomBytes(16).toString('hex')
+            const passwordHash = await hashPassword(tempPassword)
+
+            user = await db.user.create({
+              data: { email, name: b.name, passwordHash },
+            })
+          }
         } else {
-          user = await db.user.upsert({
-            where:  { phone: phone! },
-            update: {},
-            create: { phone: phone!, name: b.name },
-          })
+          // Check if user exists
+          const existingUser = await db.user.findUnique({ where: { phone: phone! } })
+          if (existingUser) {
+            user = existingUser
+          } else {
+            // Generate a random temporary password for new users
+            const tempPassword = crypto.randomBytes(16).toString('hex')
+            const passwordHash = await hashPassword(tempPassword)
+
+            user = await db.user.create({
+              data: { phone: phone!, name: b.name, passwordHash },
+            })
+          }
         }
 
         // Check if they're already a member
-        const existing = await db.membership.findUnique({
-          where: { userId_householdId: { userId: user.id, householdId } },
+        const existing = await db.membership.findFirst({
+          where: { userId: user.id, householdId },
         })
         if (existing) {
-          return fail(`${b.name} is already a member of this household.`, 409)
+          // If they're already a guardian, they can't be added as a helper in the same household
+          if (existing.role === 'guardian') {
+            return fail(`${b.name} is already the guardian of this household. A guardian cannot also be a helper in the same household.`, 409)
+          }
+          // If they're already a helper
+          return fail(`${b.name} is already a helper in this household.`, 409)
         }
 
         const currentMembers = await getMembershipsForHousehold(householdId)
@@ -131,12 +191,35 @@ export async function POST(req: NextRequest) {
           ? Math.max(...currentMembers.map(m => m.position))
           : -1
 
+        // Get household and sender name for notification
+        const household = await db.household.findUnique({
+          where: { id: householdId },
+          select: { residentName: true },
+        })
+
+        const sender = await db.user.findUnique({
+          where: { id: a.session!.userId },
+          select: { name: true },
+        })
+
         const membership = await createMembership({
           userId: user.id,
           householdId,
           role:     b.role,
           position: maxPosition + 1,
           emoji:    b.emoji,
+        })
+
+        // Create notification for the helper
+        await db.notification.create({
+          data: {
+            type: 'helper_invite',
+            title: 'You have been invited to be a helper',
+            message: `${sender?.name || 'Someone'} has invited you to join as a helper in ${household?.residentName || 'a household'}. Membership ID: ${membership.id}`,
+            toUserId: user.id,
+            fromUserId: a.session!.userId,
+            status: 'pending',
+          },
         })
 
         return NextResponse.json({

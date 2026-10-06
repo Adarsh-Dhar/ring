@@ -1,5 +1,4 @@
 import { getDb } from './client'
-import { hashPassword } from '@/lib/auth/password'
 
 /**
  * Test helper functions for creating test data.
@@ -31,13 +30,12 @@ export async function createMembership(householdId: string, data: {
   emoji?: string
 }) {
   const db = getDb()
-  // First create a user with a password
-  const passwordHash = await hashPassword('testPassword123')
+  // Create a user without password (Google auth only)
   const user = await db.user.create({
     data: {
       email: `test-${Date.now()}@example.com`,
       name: `Test User ${Date.now()}`,
-      passwordHash,
+      googleSub: `test-google-sub-${Date.now()}`,
     }
   })
 

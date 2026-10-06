@@ -14,9 +14,9 @@ export default function SelectRolePage() {
       .then((res) => res.json())
       .then((data) => {
         if (data.memberships && data.memberships.length > 0) {
-          // Residents have only one household, go directly to workspace
+          // Residents have only one household, go directly to workspace as resident
           const householdId = data.memberships[0].householdId
-          router.push(`/workspace/${householdId}`)
+          router.push(`/workspace/${householdId}?role=resident`)
         } else {
           // No household, go to create household
           router.push('/create-workspace')
@@ -30,7 +30,8 @@ export default function SelectRolePage() {
 
   const selectHelper = () => {
     setLoading(true)
-    router.push('/workspaces')
+    // Helpers go to workspace selection page
+    router.push('/select-workspace')
   }
 
   return (

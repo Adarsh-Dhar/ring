@@ -9,26 +9,27 @@ export const runtime = 'nodejs'
  * GET /api/auth/me - Get current user info
  */
 export async function GET(request: NextRequest) {
-  const a = await authorize(request, 'guardian')
+  const a = await authorize(request, 'any')
   if (!isAuthOk(a)) return a.res
 
   try {
     const db = getDb()
-    const membership = await db.membership.findUnique({
-      where: { id: a.session.membershipId },
-      include: { user: true },
+    const user = await db.user.findUnique({
+      where: { id: a.session.userId },
     })
 
-    if (!membership) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     return NextResponse.json({
-      userId: membership.userId,
-      membershipId: membership.id,
-      name: membership.user.name,
-      email: membership.user.email,
-      phone: membership.user.phone,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        createdAt: user.createdAt.toISOString(),
+      },
     })
   } catch (error: any) {
     console.error('[AUTH ME] Failed to get user info:', error)

@@ -15,15 +15,9 @@ export default function LandingPage() {
             <div className="flex items-center space-x-4">
               <Link
                 href="/login"
-                className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium"
-              >
-                Login
-              </Link>
-              <Link
-                href="/signup"
                 className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 transition-colors"
               >
-                Sign Up
+                Sign In with Google
               </Link>
             </div>
           </div>
@@ -41,7 +35,7 @@ export default function LandingPage() {
           </p>
           <div className="flex justify-center space-x-4">
             <Link
-              href="/signup"
+              href="/login"
               className="bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 transition-colors"
             >
               Get Started Free
@@ -188,10 +182,10 @@ export default function LandingPage() {
             Join thousands of families using Doorbell Helper to stay connected and safe.
           </p>
           <Link
-            href="/signup"
+            href="/login"
             className="bg-white text-blue-600 px-8 py-3 rounded-lg text-lg font-medium hover:bg-gray-100 transition-colors"
           >
-            Create Free Account
+            Sign In with Google
           </Link>
         </div>
       </section>

@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
 export default function AddVisitorPage() {
   const router = useRouter()
   const params = useParams()
+  const searchParams = useSearchParams()
   const workspaceId = params.id as string
+  const role = searchParams.get('role') || 'resident'
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [visitorName, setVisitorName] = useState('')
@@ -50,7 +52,7 @@ export default function AddVisitorPage() {
         return
       }
 
-      router.push(`/workspace/${workspaceId}`)
+      router.push(`/workspace/${workspaceId}?role=${role}`)
     } catch {
       setError('Network error. Please try again.')
     } finally {
@@ -65,7 +67,7 @@ export default function AddVisitorPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-4">
-              <Link href={`/workspace/${workspaceId}`} className="text-gray-700 hover:text-gray-900">
+              <Link href={`/workspace/${workspaceId}?role=${role}`} className="text-gray-700 hover:text-gray-900">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
@@ -179,7 +181,7 @@ export default function AddVisitorPage() {
             </button>
 
             <Link
-              href={`/workspace/${workspaceId}`}
+              href={`/workspace/${workspaceId}?role=${role}`}
               className="block text-center text-gray-600 py-2 hover:text-gray-900"
             >
               Cancel

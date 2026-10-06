@@ -8,15 +8,21 @@ datasource db {
 }
 
 model User {
-  id              String       @id @default(cuid())
-  email           String       @unique
-  passwordHash    String
+  id              String         @id @default(cuid())
+  email           String         @unique
   name            String?
-  phone           String?      @unique
-  createdAt       DateTime     @default(now())
-  acceptedInvites Invite[]     @relation("AcceptedInvites")
-  createdInvites  Invite[]     @relation("CreatedInvites")
+  phone           String?        @unique
+  createdAt       DateTime       @default(now())
+  acceptedInvites Invite[]       @relation("AcceptedInvites")
+  createdInvites  Invite[]       @relation("CreatedInvites")
   memberships     Membership[]
+  receivedNotifications Notification[] @relation("ReceivedNotifications")
+  sentNotifications Notification[] @relation("SentNotifications")
+  googleAccessToken   String?
+  googleRefreshToken String?
+  googleTokenExpiry   DateTime?
+  googleSub          String?
+  @@unique([googleSub])
 }
 
 model Household {
@@ -70,6 +76,26 @@ model Membership {
 
   @@unique([userId, householdId])
   @@index([householdId])
+}
+
+model Notification {
+  id           String   @id @default(cuid())
+  type         String   // helper_invite | visitor_request | alert
+  title        String
+  message      String
+  status       String   @default("pending") // pending | accepted | rejected | read
+  metadata     Json?    // Additional data like householdId, membershipId, etc.
+  read         Boolean  @default(false)
+  readAt       DateTime?
+  toUserId     String
+  fromUserId   String?
+  createdAt    DateTime @default(now())
+  respondedAt  DateTime?
+  toUser       User     @relation("ReceivedNotifications", fields: [toUserId], references: [id], onDelete: Cascade)
+  fromUser     User?    @relation("SentNotifications", fields: [fromUserId], references: [id], onDelete: SetNull)
+
+  @@index([toUserId, status])
+  @@index([toUserId, read])
 }
 
 model ResidentDevice {

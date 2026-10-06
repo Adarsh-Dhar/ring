@@ -46,9 +46,9 @@ export default function CreateWorkspacePage() {
 
       const data = await res.json()
       if (data.householdId) {
-        router.push(`/workspace/${data.householdId}`)
+        router.push(`/workspace/${data.householdId}?role=resident`)
       } else {
-        router.push('/workspaces')
+        router.push('/select-role')
       }
     } catch {
       setError('Network error. Please try again.')
