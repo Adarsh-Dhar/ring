@@ -1,15 +1,9 @@
 {
   "buildCommand": "pnpm build",
-  "outputDirectory": ".next",
   "framework": "nextjs",
   "installCommand": "pnpm install",
   "env": {
     "NODE_OPTIONS": "--max-old-space-size=4096"
-  },
-  "functions": {
-    "app/api/**": {
-      "maxDuration": 60
-    }
   },
   "headers": [
     {
