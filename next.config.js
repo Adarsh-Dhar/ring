@@ -11,7 +11,16 @@ const tunnelHosts = (process.env.TUNNEL_HOST || '')
 module.exports = {
   serverExternalPackages: ['@vladmandic/face-api', '@tensorflow/tfjs', '@tensorflow/tfjs-backend-wasm', '@napi-rs/canvas'],
   outputFileTracingIncludes: { '/api/face': ['./node_modules/@vladmandic/face-api/model/**'] },
-  allowedDevOrigins: ['*.pinggy.link', '*.pinggy.io', '*.ngrok-free.app', '*.ngrok.app', '*.ngrok.io', '*.trycloudflare.com', '*.loca.lt', '192.168.0.102', ...tunnelHosts],
+  allowedDevOrigins: ['*.pinggy.net', '*.pinggy.link', '*.pinggy.io', '*.ngrok-free.app', '*.ngrok.app', '*.ngrok.io', '*.trycloudflare.com', '*.loca.lt', '192.168.0.102', ...tunnelHosts],
+  typescript: {
+    // Ignore type errors during build to prevent memory issues
+    ignoreBuildErrors: false,
+  },
+  eslint: {
+    // Disable ESLint during build to save memory
+    ignoreDuringBuilds: false,
+  },
+
   async headers() {
     return [
       {

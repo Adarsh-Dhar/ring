@@ -50,24 +50,18 @@ export async function GET(req: NextRequest) {
 
   res.cookies.set('calendar_oauth_state', stateCookie, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: req.headers.get('host')?.includes('localhost') ? false : true,
     sameSite: 'lax',
     maxAge: 5 * 60,
     path: '/',
+    // Don't set domain to allow cross-subdomain cookies
   })
 
   return res
 }
 
 function getRedirectUri(req: NextRequest): string {
-  // Use APP_URL from environment for OAuth redirect URI
-  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
-  const appUrl = process.env.APP_URL
-  if (appUrl) {
-    return `${appUrl}/api/google-calendar/oauth/callback`
-  }
-  
-  // Fallback to request-based construction for development
+  // Use the request host for redirect URI to match the domain the user is accessing from
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/google-calendar/oauth/callback`

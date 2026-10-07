@@ -47,26 +47,27 @@ export async function GET(req: NextRequest) {
   )
 
   // Set cookie with state and next (5 minute expiry)
+  // Don't set domain for tunnel environments to allow cross-subdomain cookies
+  const requestHost = req.headers.get('host') || 'localhost:3000'
+  const isLocal = requestHost.includes('localhost') || requestHost.includes('192.168.')
+  
+  console.log('[GOOGLE START] Setting oauth_state cookie, requestHost:', requestHost, 'isLocal:', isLocal)
+  
   res.cookies.set('oauth_state', stateCookie, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: !isLocal,
     sameSite: 'lax',
     maxAge: 5 * 60,
     path: '/',
+    // Don't set domain for tunnels to allow cross-subdomain cookies
   })
 
   return res
 }
 
 function getRedirectUri(req: NextRequest): string {
-  // Use APP_URL from environment for OAuth redirect URI
-  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
-  const appUrl = process.env.APP_URL
-  if (appUrl) {
-    return `${appUrl}/api/auth/google/callback`
-  }
-  
-  // Fallback to request-based construction for development
+  // Use the request host for redirect URI to match the domain the user is accessing from
+  // This ensures cookies work correctly with tunnels
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/auth/google/callback`

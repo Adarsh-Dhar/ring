@@ -55,6 +55,9 @@ export default function WorkspacePage() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [loadingCalendar, setLoadingCalendar] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [ringStatus, setRingStatus] = useState<'connected' | 'not_connected' | 'checking'>('checking')
+  const [showRingModal, setShowRingModal] = useState(false)
+  const [ringInstructions, setRingInstructions] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<'dashboard' | 'helpers' | 'visitors'>('dashboard')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
@@ -78,6 +81,7 @@ export default function WorkspacePage() {
       if (res.ok) {
         const data = await res.json()
         setDashboardData(data)
+        setRingStatus(data.ringStatus === 'connected' ? 'connected' : 'not_connected')
         // Load calendar events if connected
         if (data.googleCalendarConnected) {
           setLoadingCalendar(true)
@@ -99,6 +103,23 @@ export default function WorkspacePage() {
   }, [workspaceId, currentMonth])
   const connectGoogleCalendar = () => {
     window.location.href = `/api/google-calendar/oauth/start?h=${workspaceId}`
+  }
+
+  const checkRingStatus = async () => {
+    try {
+      const res = await fetch('/api/ring/initiate-link')
+      if (res.ok) {
+        const data = await res.json()
+        setRingInstructions(data)
+        setShowRingModal(true)
+      }
+    } catch (e) {
+      console.error('Failed to check Ring status', e)
+    }
+  }
+
+  const handleConnectRing = () => {
+    checkRingStatus()
   }
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -483,10 +504,19 @@ export default function WorkspacePage() {
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Dashboard</h2>
             <div className="grid md:grid-cols-4 gap-6 mb-8">
               <div className="bg-white rounded-lg shadow-md p-6">
-                <div className={`text-3xl font-bold mb-2 ${dashboardData?.ringStatus === 'connected' ? 'text-green-600' : 'text-gray-400'}`}>
-                  {dashboardData?.ringStatus === 'connected' ? 'Connected' : 'Not Connected'}
-                </div>
-                <div className="text-gray-600">Ring Doorbell Status</div>
+                {ringStatus === 'connected' ? (
+                  <>
+                    <div className="text-3xl font-bold text-green-600 mb-2">Connected</div>
+                    <div className="text-gray-600">Ring Doorbell Status</div>
+                  </>
+                ) : (
+                  <button
+                    onClick={handleConnectRing}
+                    className="w-full bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  >
+                    Connect Ring Account
+                  </button>
+                )}
               </div>
               <div className="bg-white rounded-lg shadow-md p-6">
                 <div className="text-3xl font-bold text-green-600 mb-2">
@@ -624,18 +654,77 @@ export default function WorkspacePage() {
                 <p className="text-blue-800 mb-4">
                   Link your Ring account to start receiving doorbell events.
                 </p>
-                <a
-                  href="https://developer.amazon.com/ring/console/apps"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  onClick={handleConnectRing}
                   className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
                 >
-                  Open Ring Developer Portal
-                </a>
+                  Connect Ring Account
+                </button>
               </div>
             )}
           </div>
         )}
+
+        {/* Ring Connection Modal */}
+        {showRingModal && ringInstructions && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+              <h3 className="text-xl font-bold mb-4">Connect Ring Account</h3>
+              {ringInstructions.status === 'ready_to_claim' ? (
+                <>
+                  <p className="text-gray-700 mb-4">{ringInstructions.message}</p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => window.location.href = ringInstructions.setupUrl}
+                      className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                    >
+                      Go to Setup Page
+                    </button>
+                    <button
+                      onClick={() => setShowRingModal(false)}
+                      className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-700 mb-4">{ringInstructions.message}</p>
+                  <ol className="list-decimal list-inside mb-4 space-y-2">
+                    {ringInstructions.instructions?.map((instruction: string, index: number) => (
+                      <li key={index} className="text-gray-600">{instruction}</li>
+                    ))}
+                  </ol>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => window.open(ringInstructions.portalUrl, '_blank', 'noopener')}
+                      className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+                    >
+                      Open Ring Portal
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowRingModal(false)
+                        loadDashboardData()
+                      }}
+                      className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
+                    >
+                      Check Status
+                    </button>
+                    <button
+                      onClick={() => setShowRingModal(false)}
+                      className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'visitors' && (
           <div>
             <h2 className="text-2xl font-bold text-gray-900 mb-4">Visitor Management</h2>

@@ -17,25 +17,37 @@ export async function GET(req: NextRequest) {
   const state = searchParams.get('state')
   const error = searchParams.get('error')
 
+  // If user already has a valid session, redirect to select-role immediately
+  // This prevents duplicate OAuth processing from multiple callback requests
+  const existingSession = req.cookies.get('db_session')?.value
+  if (existingSession && !error) {
+    console.log('[GOOGLE CALLBACK] User already has session, redirecting to select-role')
+    return NextResponse.redirect(new URL(buildUrl('/select-role', req.url)))
+  }
+
   // Handle user cancellation
   if (error === 'access_denied') {
-    return NextResponse.redirect(new URL(buildUrl('/login?error=cancelled', req.url)))
+    return clearStateAndRedirect(buildUrl('/login?error=cancelled', req.url))
   }
 
   // Handle other errors
   if (error) {
     console.error('[GOOGLE CALLBACK] OAuth error:', error)
-    return NextResponse.redirect(new URL(buildUrl('/login?error=oauth_error', req.url)))
+    return clearStateAndRedirect(buildUrl('/login?error=oauth_error', req.url))
   }
 
   if (!code || !state) {
-    return NextResponse.redirect(new URL(buildUrl('/login?error=invalid_response', req.url)))
+    return clearStateAndRedirect(buildUrl('/login?error=invalid_response', req.url))
   }
 
   // Verify state and get code verifier and next from cookie
   const oauthState = req.cookies.get('oauth_state')?.value
+  console.log('[GOOGLE CALLBACK] OAuth state cookie:', oauthState ? 'present' : 'missing')
+  console.log('[GOOGLE CALLBACK] All cookies:', req.cookies.getAll())
+  
   if (!oauthState) {
-    return NextResponse.redirect(new URL(buildUrl('/login?error=missing_state', req.url)))
+    console.error('[GOOGLE CALLBACK] Missing oauth_state cookie')
+    return clearStateAndRedirect(buildUrl('/login?error=missing_state', req.url))
   }
 
   let stateData: { s: string; v: string; n: string }
@@ -43,7 +55,7 @@ export async function GET(req: NextRequest) {
     stateData = JSON.parse(oauthState)
   } catch (e) {
     console.error('[GOOGLE CALLBACK] Failed to parse state cookie', e)
-    return NextResponse.redirect(new URL(buildUrl('/login?error=invalid_state', req.url)))
+    return clearStateAndRedirect(buildUrl('/login?error=invalid_state', req.url))
   }
 
   // Use timingSafeEqual for state comparison
@@ -51,7 +63,7 @@ export async function GET(req: NextRequest) {
   const storedStateBuffer = Buffer.from(stateData.s, 'utf8')
   if (stateBuffer.length !== storedStateBuffer.length || !crypto.timingSafeEqual(new Uint8Array(stateBuffer), new Uint8Array(storedStateBuffer))) {
     console.error('[GOOGLE CALLBACK] State mismatch')
-    return NextResponse.redirect(new URL(buildUrl('/login?error=state_mismatch', req.url)))
+    return clearStateAndRedirect(buildUrl('/login?error=state_mismatch', req.url))
   }
 
   const codeVerifier = stateData.v
@@ -59,6 +71,9 @@ export async function GET(req: NextRequest) {
 
   try {
     // Exchange code for tokens with PKCE
+    const redirectUri = getRedirectUri(req)
+    console.log('[GOOGLE CALLBACK] Exchanging token, redirect_uri:', redirectUri)
+    
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -67,18 +82,27 @@ export async function GET(req: NextRequest) {
         client_secret: GOOGLE_CLIENT_SECRET,
         code,
         grant_type: 'authorization_code',
-        redirect_uri: getRedirectUri(req),
+        redirect_uri: redirectUri,
         code_verifier: codeVerifier,
       }),
     })
 
+    const responseText = await tokenResponse.text()
+    console.log('[GOOGLE CALLBACK] Token exchange response body:', responseText)
+    
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json()
+      const errorData = JSON.parse(responseText)
       console.error('[GOOGLE CALLBACK] Token exchange error:', errorData)
-      return NextResponse.redirect(new URL(buildUrl('/login?error=token_exchange_failed', req.url)))
+      console.error('[GOOGLE CALLBACK] Redirect URI used:', redirectUri)
+      console.error('[GOOGLE CALLBACK] Code length:', code?.length)
+
+      const res = NextResponse.redirect(new URL(buildUrl('/login?error=token_exchange_failed', req.url)))
+      res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+      return res
     }
 
-    const tokens = await tokenResponse.json()
+    const tokens = JSON.parse(responseText)
+    console.log('[GOOGLE CALLBACK] Tokens received successfully')
 
     // Get user info from Google
     const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
@@ -92,15 +116,21 @@ export async function GET(req: NextRequest) {
     const emailVerified = userInfo.data.verified_email === true
 
     if (!googleSub) {
-      return NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      const res = NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+      return res
     }
 
     if (!email) {
-      return NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      const res = NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+      return res
     }
 
     if (!emailVerified) {
-      return NextResponse.redirect(new URL(buildUrl('/login?error=email_not_verified', req.url)))
+      const res = NextResponse.redirect(new URL(buildUrl('/login?error=email_not_verified', req.url)))
+      res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+      return res
     }
 
     // Normalize email
@@ -146,33 +176,34 @@ export async function GET(req: NextRequest) {
     const token = sign(session)
 
     if (!token) {
-      return NextResponse.redirect(new URL(buildUrl('/login?error=session_creation_failed', req.url)))
+      const res = NextResponse.redirect(new URL(buildUrl('/login?error=session_creation_failed', req.url)))
+      res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+      return res
     }
 
     // Set session cookie and redirect
     const redirectTarget = next || '/select-role'
-    const res = NextResponse.redirect(new URL(redirectTarget, req.url))
-    res.cookies.set(COOKIE, token, cookieOpts)
+    const finalRes = NextResponse.redirect(new URL(redirectTarget, req.url))
+    finalRes.cookies.set(COOKIE, token, cookieOpts)
+    finalRes.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
 
-    // Clear oauth state cookie
-    res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
-
-    return res
+    return finalRes
   } catch (e) {
     console.error('[GOOGLE CALLBACK] Error:', e)
-    return NextResponse.redirect(new URL(buildUrl('/login?error=server_error', req.url)))
+    const res = NextResponse.redirect(new URL(buildUrl('/login?error=server_error', req.url)))
+    res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+    return res
   }
 }
 
+function clearStateAndRedirect(url: string): NextResponse {
+  const res = NextResponse.redirect(new URL(url))
+  res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+  return res
+}
+
 function getRedirectUri(req: NextRequest): string {
-  // Use APP_URL from environment for OAuth redirect URI
-  // Google OAuth doesn't allow private IP addresses like 192.168.x.x
-  const appUrl = process.env.APP_URL
-  if (appUrl) {
-    return `${appUrl}/api/auth/google/callback`
-  }
-  
-  // Fallback to request-based construction for development
+  // Use the request host for redirect URI to match the domain the user is accessing from
   const host = req.headers.get('host') || 'localhost:3000'
   const protocol = host.includes('localhost') ? 'http' : 'https'
   return `${protocol}://${host}/api/auth/google/callback`
