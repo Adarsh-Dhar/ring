@@ -24,12 +24,15 @@ export async function GET(req: NextRequest) {
   // Generate state for CSRF protection
   const state = crypto.randomBytes(32).toString('base64url')
 
-  // For TV/Limited Input devices, we use standard OAuth without PKCE
-  // The redirect URI must be pre-registered in Google Console
+  // Generate PKCE code verifier and challenge
+  const codeVerifier = crypto.randomBytes(32).toString('base64url')
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+
+  // Get redirect URI
   const redirectUri = getRedirectUri(req)
 
-  // Store state and household in httpOnly cookie as JSON
-  const stateCookie = JSON.stringify({ s: state, h })
+  // Store state, verifier, and household in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, h })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -37,7 +40,11 @@ export async function GET(req: NextRequest) {
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
         `scope=${encodeURIComponent('https://www.googleapis.com/auth/calendar.events')}&` +
-        `state=${state}`
+        `state=${state}&` +
+        `code_challenge=${codeChallenge}&` +
+        `code_challenge_method=S256&` +
+        `prompt=consent&` +
+        `access_type=offline`
     )
   )
 

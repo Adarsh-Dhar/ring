@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(buildUrl('/login?error=missing_state', req.url)))
   }
 
-  let stateData: { s: string; n: string }
+  let stateData: { s: string; v: string; n: string }
   try {
     stateData = JSON.parse(oauthState)
   } catch (e) {
@@ -54,10 +54,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(buildUrl('/login?error=state_mismatch', req.url)))
   }
 
+  const codeVerifier = stateData.v
   const next = stateData.n
 
   try {
-    // Exchange code for tokens (without PKCE for TV/Limited Input devices)
+    // Exchange code for tokens with PKCE
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -67,6 +68,7 @@ export async function GET(req: NextRequest) {
         code,
         grant_type: 'authorization_code',
         redirect_uri: getRedirectUri(req),
+        code_verifier: codeVerifier,
       }),
     })
 

@@ -23,12 +23,15 @@ export async function GET(req: NextRequest) {
   // Generate state for CSRF protection
   const state = crypto.randomBytes(32).toString('base64url')
 
-  // For TV/Limited Input devices, we use standard OAuth but with device-specific handling
-  // The redirect URI must be pre-registered in Google Console
+  // Generate PKCE code verifier and challenge
+  const codeVerifier = crypto.randomBytes(32).toString('base64url')
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+
+  // Get redirect URI
   const redirectUri = getRedirectUri(req)
 
-  // Store state and next in httpOnly cookie as JSON
-  const stateCookie = JSON.stringify({ s: state, n: safeNextParam })
+  // Store state, verifier, and next in httpOnly cookie as JSON
+  const stateCookie = JSON.stringify({ s: state, v: codeVerifier, n: safeNextParam })
   const res = NextResponse.redirect(
     new URL(
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -36,7 +39,10 @@ export async function GET(req: NextRequest) {
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
         `scope=${encodeURIComponent('openid email profile')}&` +
-        `state=${state}`
+        `state=${state}&` +
+        `code_challenge=${codeChallenge}&` +
+        `code_challenge_method=S256&` +
+        `prompt=select_account`
     )
   )
 
