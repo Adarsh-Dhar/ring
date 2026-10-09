@@ -173,9 +173,12 @@ export async function GET(req: NextRequest) {
 
     // Create session
     const session = createSession(user.id, 'user', '', undefined, user.sessionVersion || 1)
+    console.log('[GOOGLE CALLBACK] Session created:', session)
     const token = sign(session)
+    console.log('[GOOGLE CALLBACK] Token signed:', !!token)
 
     if (!token) {
+      console.error('[GOOGLE CALLBACK] Failed to sign token')
       const res = NextResponse.redirect(new URL(buildUrl('/login?error=session_creation_failed', req.url)))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
@@ -183,9 +186,11 @@ export async function GET(req: NextRequest) {
 
     // Set session cookie and redirect
     const redirectTarget = next || '/select-role'
+    console.log('[GOOGLE CALLBACK] Redirecting to:', redirectTarget)
     const finalRes = NextResponse.redirect(new URL(redirectTarget, req.url))
     finalRes.cookies.set(COOKIE, token, cookieOpts)
     finalRes.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
+    console.log('[GOOGLE CALLBACK] Session cookie set')
 
     return finalRes
   } catch (e) {
