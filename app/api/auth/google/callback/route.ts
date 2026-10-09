@@ -138,23 +138,18 @@ export async function GET(req: NextRequest) {
 
     // Create or update user
     const db = getDb()
-    console.log('[GOOGLE CALLBACK] Looking up user with googleSub:', googleSub)
     let user = await db.user.findUnique({
       where: { googleSub },
     })
-    console.log('[GOOGLE CALLBACK] User found by googleSub:', !!user)
 
     if (!user) {
       // Only link by email if verified (already checked above)
-      console.log('[GOOGLE CALLBACK] Looking up user by email:', normalizedEmail)
       user = await db.user.findUnique({
         where: { email: normalizedEmail },
       })
-      console.log('[GOOGLE CALLBACK] User found by email:', !!user)
 
       if (user) {
         // Update existing user with Google info and bump session version
-        console.log('[GOOGLE CALLBACK] Updating existing user with googleSub')
         user = await db.user.update({
           where: { id: user.id },
           data: {
@@ -164,7 +159,6 @@ export async function GET(req: NextRequest) {
         })
       } else {
         // Create new user (do NOT store Google tokens - those are for Calendar only)
-        console.log('[GOOGLE CALLBACK] Creating new user')
         user = await db.user.create({
           data: {
             email: normalizedEmail,
@@ -173,7 +167,6 @@ export async function GET(req: NextRequest) {
             sessionVersion: 1,
           },
         })
-        console.log('[GOOGLE CALLBACK] New user created with id:', user.id)
       }
     }
     // Do NOT update Google tokens on login - tokens are only for Calendar
