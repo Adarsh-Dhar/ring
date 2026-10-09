@@ -370,5 +370,5 @@ export async function parse<T extends z.ZodTypeAny>(req: NextRequest, schema: T)
   return { ok: true as const, data: r.data }
 }
 
-export const cookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: IS_PROD, path: '/', maxAge: 60 * 60 * 24 * 30 }
-export const deviceCookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: IS_PROD, path: '/', maxAge: 60 * 60 * 24 * 365 }
+export const cookieOpts = { httpOnly: true, sameSite: 'none' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }
+export const deviceCookieOpts = { httpOnly: true, sameSite: 'none' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 365 }
