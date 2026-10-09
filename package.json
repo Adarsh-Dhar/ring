@@ -20,7 +20,8 @@
     "load-test": "tsx tools/load-test.ts",
     "chaos-tests": "tsx tools/chaos-tests.ts",
     "worker": "tsx workers/timer-worker.ts",
-    "worker:once": "tsx workers/timer-worker.ts --once"
+    "worker:once": "tsx workers/timer-worker.ts --once",
+    "vercel:sync-env": "node scripts/sync-env-to-vercel.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.10",

@@ -53,3 +53,5 @@ _*.sh
 _*.ts
 TEST_RESULTS*.md
 FINAL_TEST_REPORT*.md
+.vercel
+.env*
