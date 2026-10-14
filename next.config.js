@@ -47,7 +47,10 @@ module.exports = {
             key: 'Content-Security-Policy',
             value: process.env.NODE_ENV === 'production'
               ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.twilio.com https://api.resend.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';"
-              : "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' http://localhost:* ws://localhost:*; img-src 'self' data: blob: http://localhost:*;"
+              : (() => {
+                  const tunnelHost = process.env.TUNNEL_HOST ? ` https://${process.env.TUNNEL_HOST} wss://${process.env.TUNNEL_HOST}` : '';
+                  return `default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' http://localhost:* ws://localhost:*${tunnelHost}; img-src 'self' data: blob: http://localhost:*${tunnelHost};`;
+                })()
           },
         ],
       },

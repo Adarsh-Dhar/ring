@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
     "build": "NODE_OPTIONS='--max-old-space-size=4096' next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
@@ -21,7 +21,8 @@
     "chaos-tests": "tsx tools/chaos-tests.ts",
     "worker": "tsx workers/timer-worker.ts",
     "worker:once": "tsx workers/timer-worker.ts --once",
-    "vercel:sync-env": "node scripts/sync-env-to-vercel.mjs"
+    "vercel:sync-env": "node scripts/sync-env-to-vercel.mjs",
+    "tunnel": "./tunnel.sh"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.10",
