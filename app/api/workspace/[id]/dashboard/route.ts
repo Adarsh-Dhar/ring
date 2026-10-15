@@ -104,7 +104,7 @@ export async function GET(
     // Check if user has Google Calendar connected
     const user = await db.user.findUnique({
       where: { id: userId },
-      select: { googleRefreshToken: true },
+      select: { googleRefreshToken: true, googleAccessToken: true },
     })
 
     return NextResponse.json({
@@ -112,7 +112,7 @@ export async function GET(
       pendingAlerts: pendingCases,
       scheduledVisits: scheduledVisits,
       activePasses: activePasses,
-      googleCalendarConnected: !!user?.googleRefreshToken,
+      googleCalendarConnected: !!(user?.googleRefreshToken || user?.googleAccessToken),
     })
   } catch (e) {
     console.error('[DASHBOARD GET] Failed to load dashboard data', e)

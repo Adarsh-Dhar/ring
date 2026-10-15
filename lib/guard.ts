@@ -12,7 +12,7 @@ export const HOUSEHOLD_COOKIE = 'db_household'
 export type Session = {
   kind: 'user' | 'resident' | 'device' | 'helper'
   userId: string
-  householdId: string
+  householdId?: string
   membershipId?: string
   role?: 'guardian' | 'helper'
 }
@@ -54,7 +54,7 @@ export async function getSession(req: NextRequest): Promise<Session | null> {
     return {
       kind: 'user',
       userId: data.sub,
-      householdId: data.householdId || '',
+      householdId: data.householdId || undefined,
     }
   }
 
@@ -266,6 +266,12 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
 
   // For user sessions, resolve role from database membership
   if (session.kind === 'user') {
+    // If 'any' or 'user' is allowed, return without checking role or household
+    if (allowed.includes('any') || allowed.includes('user')) {
+      return { ok: true as const, session }
+    }
+
+    // Otherwise, we need to resolve householdId and check membership
     // Resolve householdId in order: session, cookie, single membership
     let targetHouseholdId = session.householdId
 
@@ -295,12 +301,7 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
       }
     }
 
-    // If 'any' or 'user' is allowed, return without checking role
-    if (allowed.includes('any') || allowed.includes('user')) {
-      return { ok: true as const, session: { ...session, householdId: targetHouseholdId } }
-    }
-
-    // Otherwise, we need to check membership for the target household
+    // Check membership for the target household
     const db = getDb()
     const membership = await db.membership.findFirst({
       where: {

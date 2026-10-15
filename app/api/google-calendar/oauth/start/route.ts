@@ -3,6 +3,7 @@ import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/co
 import crypto from 'crypto'
 import { safeNext, buildUrl } from '@/lib/redirect'
 import { authorize } from '@/lib/guard'
+import { getDb } from '@/lib/db/client'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -13,6 +14,20 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url)
   const h = searchParams.get('h') // householdId
+
+  // Check if user already has Google tokens from sign-in
+  const db = getDb()
+  const user = await db.user.findUnique({
+    where: { id: a.session!.userId },
+    select: { googleAccessToken: true, googleRefreshToken: true, googleTokenExpiry: true },
+  })
+
+  // If user already has tokens, redirect directly to success
+  if (user && (user.googleAccessToken || user.googleRefreshToken)) {
+    console.log('[CALENDAR OAUTH START] User already has Google tokens, skipping OAuth')
+    const target = h ? `/workspace/${h}?calendar=connected` : '/login?calendar=connected'
+    return NextResponse.redirect(new URL(buildUrl(target, req.url)))
+  }
 
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     return NextResponse.json(

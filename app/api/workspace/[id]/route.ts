@@ -26,6 +26,7 @@ export async function GET(
         name: true,
         email: true,
         googleRefreshToken: true,
+        googleAccessToken: true,
       },
     })
 
@@ -68,7 +69,7 @@ export async function GET(
       requireResidentOk: membership.household.requireResidentOk,
       plannedMode: membership.household.plannedMode,
       hasHelperMembership: !!helperMembership,
-      googleCalendarConnected: !!user?.googleRefreshToken,
+      googleCalendarConnected: !!(user?.googleRefreshToken || user?.googleAccessToken),
       user: user ? { name: user.name, email: user.email } : null,
     })
   } catch (e) {

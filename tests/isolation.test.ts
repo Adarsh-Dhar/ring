@@ -275,13 +275,13 @@ describe('getSession isolation', () => {
     expect(session).toBeNull()
   })
 
-  it('returns empty householdId for a user token with no householdId', async () => {
+  it('returns undefined householdId for a user token with no householdId', async () => {
     const token = mintToken({ kind: 'user', householdId: undefined, sub: 'user-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/doorbell/state', { token })
     const session = await getSession(req)
     // User has no householdId in token
     expect(session).not.toBeNull()
-    expect(session!.householdId).toBe('')
+    expect(session!.householdId).toBeUndefined()
   })
 
   it('returns null for a non-existent user', async () => {
