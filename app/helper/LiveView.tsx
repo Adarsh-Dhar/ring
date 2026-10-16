@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 type St = 'idle' | 'connecting' | 'live' | 'ended' | 'error'
 
@@ -46,16 +46,31 @@ export default function LiveView({ caseId, deviceId }: { caseId: string; deviceI
 function SimVideo({ sources, label }: { sources: string[]; label: string }) {
   const [srcIndex, setSrcIndex] = useState(0)
   const [missing, setMissing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const currentSrc = sources[srcIndex]
 
   const handleError = () => {
+    console.warn(`[SimVideo] Failed to load source ${srcIndex}: ${currentSrc}`)
     if (srcIndex < sources.length - 1) {
       setSrcIndex(srcIndex + 1)
+      setError(null)
     } else {
       setMissing(true)
+      setError('No video available')
     }
   }
+
+  const handleLoad = () => {
+    setError(null)
+  }
+
+  // Reset when label changes (device changed)
+  React.useEffect(() => {
+    setSrcIndex(0)
+    setMissing(false)
+    setError(null)
+  }, [label])
 
   if (missing) {
     return (
@@ -80,11 +95,17 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
         muted
         playsInline
         onError={handleError}
+        onLoadStart={handleLoad}
         className="h-full w-full object-cover"
       />
       <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-slate-300">
         🎬 Sim · {label}
       </div>
+      {error && (
+        <div className="absolute top-2 right-2 rounded bg-red-900/80 px-2 py-0.5 text-xs text-red-200">
+          {error}
+        </div>
+      )}
     </div>
   )
 }

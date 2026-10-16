@@ -26,25 +26,44 @@ export async function describeSnapshot(
 
 /** Used by the job: fetch the Ring snapshot (or skip for sim devices) and describe it. */
 export async function describeForCase(householdId: string, caseId: string, deviceId: string | null) {
-  if (!deviceId) return null
+  if (!deviceId) {
+    console.log('[DESCRIBER] No device ID, skipping description')
+    return null
+  }
 
   // For simulator devices, check if stored frames exist and use video describer
   if (deviceId.startsWith('sim-')) {
-    const frames = await readFrames(householdId, deviceId)
-    if (frames && frames.length > 0) {
-      console.log('[DESCRIBER] Using stored frames for sim device')
-      return describeClip(householdId, caseId, frames)
+    try {
+      const frames = await readFrames(householdId, deviceId)
+      if (frames && frames.length > 0) {
+        console.log('[DESCRIBER] Using stored frames for sim device:', deviceId)
+        const result = await describeClip(householdId, caseId, frames)
+        if (result) {
+          console.log('[DESCRIBER] Video description successful for sim device:', deviceId)
+        } else {
+          console.log('[DESCRIBER] Video description returned null for sim device:', deviceId)
+        }
+        return result
+      }
+      console.log('[DESCRIBER] No stored frames for sim device:', deviceId)
+    } catch (e) {
+      console.error('[DESCRIBER] Failed to read/describe frames for sim device:', deviceId, e)
     }
-    // No stored frames, fall through to null
+    // No stored frames or error, fall through to null
     return null
   }
 
   // Real Ring device: fetch snapshot
-  const { fetchRingSnapshot } = await import('@/face/camera')
-  const buf = await fetchRingSnapshot(householdId, deviceId)
-  if (!buf) {
-    console.log('[DESCRIBER] Ring snapshot unavailable, no fallback - helper will see no description')
+  try {
+    const { fetchRingSnapshot } = await import('@/face/camera')
+    const buf = await fetchRingSnapshot(householdId, deviceId)
+    if (!buf) {
+      console.log('[DESCRIBER] Ring snapshot unavailable, no fallback - helper will see no description')
+      return null
+    }
+    return describeSnapshot(householdId, caseId, buf)
+  } catch (e) {
+    console.error('[DESCRIBER] Failed to fetch Ring snapshot:', e)
     return null
   }
-  return describeSnapshot(householdId, caseId, buf)
 }

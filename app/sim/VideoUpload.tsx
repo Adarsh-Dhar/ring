@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { extractFrames, validateFramesSize } from './extractFrames'
 
 interface VideoUploadProps {
@@ -8,28 +8,67 @@ interface VideoUploadProps {
   onUploadComplete?: () => void
 }
 
+interface UploadedClip {
+  device: string
+  size: number
+  mtime: number
+}
+
+const ALLOWED_MIME_TYPES = ['video/mp4', 'video/webm']
+
 export default function VideoUpload({ device, onUploadComplete }: VideoUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null) // Track for cleanup
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [duration, setDuration] = useState<number | null>(null)
   const [extracting, setExtracting] = useState(false)
+  const [uploadedClip, setUploadedClip] = useState<UploadedClip | null>(null)
+  const [loadingClip, setLoadingClip] = useState(true)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const MAX_SIZE_MB = 50
   const MAX_DURATION_SEC = 30
+
+  // Load existing clip on mount
+  useEffect(() => {
+    loadExistingClip()
+    return () => {
+      // Cleanup preview URL on unmount
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+      }
+    }
+  }, [device])
+
+  const loadExistingClip = async () => {
+    setLoadingClip(true)
+    try {
+      const response = await fetch('/api/sim/videos')
+      if (response.ok) {
+        const data = await response.json()
+        const clip = data.videos?.find((v: UploadedClip) => v.device === device)
+        setUploadedClip(clip || null)
+      }
+    } catch (e) {
+      console.error('Failed to load existing clips:', e)
+    } finally {
+      setLoadingClip(false)
+    }
+  }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0]
     if (!selected) return
 
     setError(null)
+    setUploadStatus(null)
 
-    // Check file type
-    if (!selected.type.startsWith('video/')) {
-      setError('Please select a video file (MP4 or WebM)')
+    // Validate file type explicitly
+    if (!ALLOWED_MIME_TYPES.includes(selected.type)) {
+      setError('Please select an MP4 or WebM video file')
       return
     }
 
@@ -42,23 +81,55 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
     setFile(selected)
 
-    // Create preview URL
+    // Create preview URL and track it for cleanup
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+    }
     const url = URL.createObjectURL(selected)
+    setPreviewUrl(url)
     setPreview(url)
 
     // Check duration
     const video = document.createElement('video')
     video.preload = 'metadata'
-    video.onloadedmetadata = () => {
-      URL.revokeObjectURL(url)
+    
+    const handleMetadata = () => {
+      if (video.duration === 0 || !isFinite(video.duration)) {
+        setError('Invalid video duration')
+        setFile(null)
+        setPreview(null)
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl)
+          setPreviewUrl(null)
+        }
+        return
+      }
+      
       if (video.duration > MAX_DURATION_SEC) {
         setError(`Video too long. Maximum ${MAX_DURATION_SEC} seconds.`)
         setFile(null)
         setPreview(null)
+        if (previewUrl) {
+          URL.revokeObjectURL(previewUrl)
+          setPreviewUrl(null)
+        }
       } else {
         setDuration(video.duration)
       }
     }
+
+    const handleError = () => {
+      setError('Could not load video metadata')
+      setFile(null)
+      setPreview(null)
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl)
+        setPreviewUrl(null)
+      }
+    }
+
+    video.onloadedmetadata = handleMetadata
+    video.onerror = handleError
     video.src = url
   }
 
@@ -67,58 +138,91 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
     setUploading(true)
     setError(null)
-    setProgress(0)
+    setUploadStatus('Uploading video...')
 
     try {
-      // Extract frames for AI description
-      setExtracting(true)
-      const frames = await extractFrames(file)
-      if (!validateFramesSize(frames)) {
-        setError('Frames too large. Max 1.5 MB total.')
-        setExtracting(false)
-        setUploading(false)
-        return
-      }
-      setExtracting(false)
-
-      // Upload video
-      const response = await fetch(`/api/sim/videos?device=${device}`, {
-        method: 'POST',
-        body: file,
-      })
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}))
-        throw new Error(data.error || 'Upload failed')
+      // Upload video with XMLHttpRequest for progress tracking
+      const xhr = new XMLHttpRequest()
+      
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100)
+          setUploadStatus(`Uploading video... ${percent}%`)
+        }
       }
 
-      // Save frames for auto-description on future rings
-      try {
-        await fetch(`/api/sim/videos/frames?device=${device}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ frames }),
-        })
-      } catch (e) {
-        console.warn('Failed to save frames:', e)
-        // Non-fatal: video upload succeeded, frames are optional
+      xhr.onload = async () => {
+        if (xhr.status === 200) {
+          setUploadStatus('Video uploaded successfully')
+          
+          // Extract frames for AI description
+          setExtracting(true)
+          setUploadStatus('Extracting frames for AI...')
+          try {
+            const frames = await extractFrames(file)
+            if (!validateFramesSize(frames)) {
+              setError('Frames too large. Max 1.5 MB total. Video uploaded but AI unavailable.')
+              setUploadStatus('Video uploaded (AI unavailable)')
+            } else {
+              // Save frames for auto-description on future rings
+              const framesResponse = await fetch(`/api/sim/videos/frames?device=${device}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ frames }),
+              })
+              
+              if (framesResponse.ok) {
+                setUploadStatus('Video uploaded, AI frames saved')
+              } else {
+                const data = await framesResponse.json().catch(() => ({}))
+                setError(`Video uploaded, AI frames could not be saved: ${data.error || 'Unknown error'}`)
+                setUploadStatus('Video uploaded (AI frames failed)')
+              }
+            }
+          } catch (e) {
+            console.error('Frame extraction failed:', e)
+            setError(`Video uploaded, frame extraction failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
+            setUploadStatus('Video uploaded (AI unavailable)')
+          } finally {
+            setExtracting(false)
+          }
+
+          // Cleanup
+          setFile(null)
+          setPreview(null)
+          if (previewUrl) {
+            URL.revokeObjectURL(previewUrl)
+            setPreviewUrl(null)
+          }
+          setDuration(null)
+          await loadExistingClip()
+          onUploadComplete?.()
+        } else {
+          const data = JSON.parse(xhr.responseText)
+          throw new Error(data.error || 'Upload failed')
+        }
       }
 
-      setProgress(100)
-      setFile(null)
-      setPreview(null)
-      setDuration(null)
-      onUploadComplete?.()
+      xhr.onerror = () => {
+        setError('Network error during upload')
+        setUploadStatus(null)
+      }
+
+      xhr.open('POST', `/api/sim/videos?device=${device}`)
+      xhr.send(file)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
+      setUploadStatus(null)
     } finally {
       setUploading(false)
-      setExtracting(false)
     }
   }
 
   const handleDelete = async () => {
     if (!confirm('Delete this video?')) return
+
+    setError(null)
+    setUploadStatus('Deleting...')
 
     try {
       const response = await fetch(`/api/sim/videos?device=${device}`, {
@@ -126,13 +230,32 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
       })
 
       if (!response.ok) {
-        throw new Error('Delete failed')
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'Delete failed')
       }
 
+      setUploadedClip(null)
+      setUploadStatus('Video deleted')
       onUploadComplete?.()
     } catch (e) {
-      setError('Failed to delete video')
+      setError(e instanceof Error ? e.message : 'Failed to delete video')
+      setUploadStatus(null)
     }
+  }
+
+  const handleCancel = () => {
+    setFile(null)
+    setPreview(null)
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl)
+      setPreviewUrl(null)
+    }
+    setDuration(null)
+    setError(null)
+    setUploadStatus(null)
+    // Reset file input
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    if (input) input.value = ''
   }
 
   return (
@@ -146,23 +269,55 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           className="text-xs text-slate-400"
         />
         {file && (
-          <button
-            onClick={handleUpload}
-            disabled={uploading || !!error}
-            className="rounded-lg bg-cyan-600 px-3 py-1 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-40"
-          >
-            {extracting ? 'Extracting frames…' : uploading ? `Uploading ${progress}%` : 'Upload'}
-          </button>
+          <>
+            <button
+              onClick={handleUpload}
+              disabled={uploading || !!error}
+              className="rounded-lg bg-cyan-600 px-3 py-1 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-40"
+            >
+              {extracting ? 'Extracting frames…' : uploading ? uploadStatus : 'Upload'}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={uploading}
+              className="rounded-lg bg-slate-600 px-3 py-1 text-xs hover:bg-slate-500 disabled:opacity-40"
+            >
+              Cancel
+            </button>
+          </>
         )}
-        {!file && (
+        {!file && uploadedClip && (
           <button
             onClick={handleDelete}
-            className="rounded-lg bg-red-700 px-3 py-1 text-xs hover:bg-red-600"
+            disabled={uploading}
+            className="rounded-lg bg-red-700 px-3 py-1 text-xs hover:bg-red-600 disabled:opacity-40"
           >
             Delete
           </button>
         )}
       </div>
+
+      {loadingClip && (
+        <p className="text-xs text-slate-500">Loading clip status...</p>
+      )}
+
+      {!loadingClip && !uploadedClip && !file && (
+        <p className="text-xs text-slate-500">No clip uploaded for this device</p>
+      )}
+
+      {!loadingClip && uploadedClip && !file && (
+        <div className="mt-2 p-2 bg-slate-800 rounded-lg">
+          <p className="text-xs text-slate-300">
+            Uploaded clip ({(uploadedClip.size / (1024 * 1024)).toFixed(2)} MB)
+          </p>
+          <video
+            src={`/api/sim/videos/${device}`}
+            controls
+            className="w-full rounded-lg bg-black mt-2"
+            style={{ maxHeight: '200px' }}
+          />
+        </div>
+      )}
 
       {preview && (
         <div className="mt-2">
@@ -182,6 +337,10 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
       {error && (
         <p className="text-xs text-red-400">{error}</p>
+      )}
+
+      {uploadStatus && !error && (
+        <p className="text-xs text-emerald-400">{uploadStatus}</p>
       )}
 
       <p className="text-xs text-slate-500">

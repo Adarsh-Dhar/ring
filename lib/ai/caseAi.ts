@@ -10,6 +10,20 @@ export async function setCaseAi(caseId: string, data: {
   clipActions?: string[]; clipPeopleCount?: number; clipApproachedDoor?: boolean
 }) {
   try {
+    // Read existing case before updating to detect first result
+    const existing = await getDb().case.findUnique({
+      where: { id: caseId },
+      select: { id: true, householdId: true, visitorSummary: true, clipDescription: true, riskFlags: true },
+    })
+
+    if (!existing) {
+      console.error('[AI] Case not found for setCaseAi:', caseId)
+      return
+    }
+
+    const isFirstResult = !existing.visitorSummary && !existing.clipDescription && 
+                           (!existing.riskFlags || (Array.isArray(existing.riskFlags) && existing.riskFlags.length === 0))
+
     const d: any = {}
     if ('visitorSummary' in data) d.visitorSummary = data.visitorSummary
     if ('riskFlags' in data) d.riskFlags = data.riskFlags
@@ -22,28 +36,19 @@ export async function setCaseAi(caseId: string, data: {
     await getDb().case.update({ where: { id: caseId }, data: d })
 
     // Push notification to helpers when AI results arrive for the first time
-    if ((data.visitorSummary || data.clipDescription) && caseId) {
-      const existing = await getDb().case.findUnique({
-        where: { id: caseId },
-        select: { id: true, householdId: true, visitorSummary: true, clipDescription: true }
-      })
-      if (existing && existing.householdId) {
-        const isFirstResult = !existing.visitorSummary && !existing.clipDescription
-        if (isFirstResult) {
-          const memberships = await getApprovedMemberships(existing.householdId)
-          const helperMemberships = memberships.filter(m => m.role === 'helper')
-          for (const m of helperMemberships) {
-            const body = data.visitorSummary
-              ? `Visitor said: ${data.visitorSummary.slice(0, 100)}${data.visitorSummary.length > 100 ? '...' : ''}`
-              : 'AI description available'
-            await pushToMembership(m.id, {
-              title: '🎙️ Doorbell AI update',
-              body,
-              tag: `case:${caseId}`,
-              url: '/helper'
-            }).catch(e => console.error('[AI] push failed', e))
-          }
-        }
+    if (isFirstResult && (data.visitorSummary || data.clipDescription) && existing.householdId) {
+      const memberships = await getApprovedMemberships(existing.householdId)
+      const helperMemberships = memberships.filter(m => m.role === 'helper')
+      for (const m of helperMemberships) {
+        const body = data.visitorSummary
+          ? `Visitor said: ${data.visitorSummary.slice(0, 100)}${data.visitorSummary.length > 100 ? '...' : ''}`
+          : 'AI description available'
+        await pushToMembership(m.id, {
+          title: '🎙️ Doorbell AI update',
+          body,
+          tag: `case:${caseId}`,
+          url: '/helper'
+        }).catch(e => console.error('[AI] push failed', e))
       }
     }
   } catch (e) { console.error('[AI] setCaseAi failed', e) }

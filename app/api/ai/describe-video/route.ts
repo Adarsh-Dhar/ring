@@ -2,55 +2,103 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { authorize, fail } from '@/lib/guard'
 import { describeClip } from '@/lib/ai/agents/videoDescriber'
-import { saveFrames, readFrames } from '@/lib/sim-videos/store'
+import { aiFlags } from '@/lib/ai/caseAi'
 import { hit } from '@/lib/ratelimit'
+import { getDb } from '@/lib/db/client'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 const RequestSchema = z.object({
-  caseId: z.string(),
+  caseId: z.string().min(1).max(100),
   frames: z.array(z.string()).min(1).max(6),
 })
 
+const DATA_URL_PREFIX = 'data:image/jpeg;base64,'
+const MAX_FRAME_SIZE = 500_000 // 500 KB per frame
+const MAX_TOTAL_SIZE = 3_000_000 // 3 MB total
+
+/**
+ * Validate a data URL is a JPEG image.
+ */
+function isValidDataURL(str: string): boolean {
+  if (!str.startsWith(DATA_URL_PREFIX)) return false
+  const base64 = str.slice(DATA_URL_PREFIX.length)
+  try {
+    const decoded = Buffer.from(base64, 'base64')
+    return decoded.length >= 2 && decoded[0] === 0xFF && decoded[1] === 0xD8
+  } catch {
+    return false
+  }
+}
+
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'any')
+  const a = await authorize(req, 'helper', 'guardian')
   if (a.ok === false) return a.res
 
   const householdId = a.session!.householdId
   if (!householdId) return fail('No household selected', 400)
+
+  // Check AI settings for this household
+  const flags = await aiFlags(householdId)
+  if (!flags.aiEnabled) {
+    return fail('AI is disabled for this household', 409)
+  }
 
   // Rate limit: 10 requests per minute per household
   if (!hit(`ai:video:${householdId}`, 10, 60_000)) {
     return fail('Too many video description requests. Please wait.', 429)
   }
 
-  // Check AI flags
-  if (process.env.AI_FLAGS?.includes('off')) {
-    return fail('AI is disabled', 409)
-  }
-
   const p = await req.json().catch(() => ({}))
   const parse = RequestSchema.safeParse(p)
   if (!parse.success) {
-    return fail('Invalid request: frames array required (1-6 base64 images)', 400)
+    return fail(`Invalid request: ${parse.error.issues.map(i => i.message).join(', ')}`, 400)
   }
 
   const { caseId, frames } = parse.data
 
-  // Validate total size (approx 3 MB max)
+  // Verify case ownership
+  const db = getDb()
+  const caseData = await db.case.findFirst({
+    where: {
+      id: caseId,
+      householdId,
+    },
+    select: { id: true, householdId: true },
+  })
+
+  if (!caseData) {
+    return fail('Case not found or does not belong to this household', 404)
+  }
+
+  // Validate each frame
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i]
+    if (!isValidDataURL(frame)) {
+      return fail(`Frame ${i + 1} is not a valid JPEG data URL`, 400)
+    }
+    const base64 = frame.slice(DATA_URL_PREFIX.length)
+    const size = Buffer.byteLength(base64, 'base64')
+    if (size > MAX_FRAME_SIZE) {
+      return fail(`Frame ${i + 1} too large. Maximum ${MAX_FRAME_SIZE / 1024} KB.`, 400)
+    }
+  }
+
+  // Calculate total size
   let totalSize = 0
   for (const frame of frames) {
-    totalSize += frame.length
+    const base64 = frame.slice(DATA_URL_PREFIX.length)
+    totalSize += Buffer.byteLength(base64, 'base64')
   }
-  if (totalSize > 3_000_000) {
-    return fail('Frames too large. Maximum 3 MB total.', 400)
+  if (totalSize > MAX_TOTAL_SIZE) {
+    return fail(`Total payload too large. Maximum ${MAX_TOTAL_SIZE / 1024 / 1024} MB.`, 400)
   }
 
   try {
     const result = await describeClip(householdId, caseId, frames)
     if (!result) {
-      return fail('Video description failed', 500)
+      return fail('Video description failed (AI unavailable or error)', 500)
     }
     return NextResponse.json(result)
   } catch (e) {

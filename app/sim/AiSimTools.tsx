@@ -75,6 +75,11 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
   }
 
   async function describeVideo(file: File) {
+    if (!caseId) {
+      setStatus('Ring the doorbell first to create an active case')
+      return
+    }
+    
     setBusy(true); setStatus('Extracting frames…')
     try {
       const frames = await extractFrames(file)
@@ -85,7 +90,7 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
       setStatus('Describing video…')
       const r = await fetch('/api/ai/describe-video', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId: caseId || undefined, frames }),
+        body: JSON.stringify({ caseId, frames }),
       })
       const j = await r.json()
       if (r.ok) {

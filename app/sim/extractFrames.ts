@@ -1,13 +1,23 @@
 /**
  * Extract frames from a video file in the browser.
- * Returns base64-encoded JPEG frames.
+ * Returns base64-encoded JPEG frames with timestamps.
  */
 
 const MAX_WIDTH = 640
 const JPEG_QUALITY = 0.7
 const NUM_FRAMES = 6
 
+export interface ExtractedFrame {
+  dataUrl: string
+  timestamp: number // seconds into the video
+}
+
 export async function extractFrames(videoFile: File): Promise<string[]> {
+  const result = await extractFramesWithTimestamps(videoFile)
+  return result.map(f => f.dataUrl)
+}
+
+export async function extractFramesWithTimestamps(videoFile: File): Promise<ExtractedFrame[]> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
     video.preload = 'auto'
@@ -19,7 +29,15 @@ export async function extractFrames(videoFile: File): Promise<string[]> {
 
     video.onloadedmetadata = () => {
       const duration = video.duration
-      const frames: string[] = []
+      
+      // Validate duration
+      if (!isFinite(duration) || duration === 0 || duration < 0) {
+        URL.revokeObjectURL(url)
+        reject(new Error('Invalid video duration'))
+        return
+      }
+
+      const frames: ExtractedFrame[] = []
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
 
@@ -33,6 +51,12 @@ export async function extractFrames(videoFile: File): Promise<string[]> {
       const scale = Math.min(1, MAX_WIDTH / video.videoWidth)
       canvas.width = video.videoWidth * scale
       canvas.height = video.videoHeight * scale
+
+      if (canvas.width === 0 || canvas.height === 0) {
+        URL.revokeObjectURL(url)
+        reject(new Error('Invalid video dimensions'))
+        return
+      }
 
       let frameIndex = 0
 
@@ -49,15 +73,23 @@ export async function extractFrames(videoFile: File): Promise<string[]> {
       }
 
       video.onseeked = () => {
-        // Draw current frame to canvas
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        try {
+          // Draw current frame to canvas
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-        // Export as JPEG
-        const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
-        frames.push(dataUrl)
+          // Export as JPEG
+          const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
+          frames.push({
+            dataUrl,
+            timestamp: video.currentTime,
+          })
 
-        frameIndex++
-        captureFrame()
+          frameIndex++
+          captureFrame()
+        } catch (e) {
+          URL.revokeObjectURL(url)
+          reject(new Error(`Failed to extract frame ${frameIndex + 1}`))
+        }
       }
 
       video.onerror = () => {

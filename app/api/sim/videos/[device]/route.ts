@@ -17,19 +17,16 @@ export async function GET(
 
   const { device } = await params
 
-  // Reject non-sim devices
-  if (!device.startsWith('sim-')) {
-    return fail('Only simulator devices are allowed', 403)
+  // Validate device is in allowlist
+  if (!sanitiseDevice(device)) {
+    return fail('Invalid device name', 400)
   }
 
-  const sanitised = sanitiseDevice(device)
-  if (!sanitised) return fail('Invalid device name', 400)
-
   try {
-    const stats = await statVideo(householdId, sanitised)
+    const stats = await statVideo(householdId, device)
     if (!stats) return fail('Video not found', 404)
 
-    const buffer = await readVideo(householdId, sanitised)
+    const buffer = await readVideo(householdId, device)
     if (!buffer) return fail('Video not found', 404)
 
     // Handle Range requests for video streaming
@@ -40,8 +37,13 @@ export async function GET(
       const end = parts[1] ? parseInt(parts[1], 10) : buffer.length - 1
       const chunkSize = end - start + 1
 
-      if (start >= buffer.length || end >= buffer.length || start > end) {
-        return new NextResponse('Requested range not satisfiable', { status: 416 })
+      if (start >= buffer.length || end >= buffer.length || start > end || start < 0) {
+        return new NextResponse('Requested range not satisfiable', { 
+          status: 416,
+          headers: {
+            'Content-Range': `bytes */${buffer.length}`,
+          }
+        })
       }
 
       const chunk = buffer.slice(start, end + 1)
@@ -52,7 +54,7 @@ export async function GET(
           'Content-Range': `bytes ${start}-${end}/${buffer.length}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': chunkSize.toString(),
-          'Content-Type': 'video/mp4',
+          'Content-Type': stats.contentType,
           'Cache-Control': 'private, no-store',
         },
       })
@@ -62,8 +64,9 @@ export async function GET(
     return new NextResponse(buffer, {
       headers: {
         'Content-Length': buffer.length.toString(),
-        'Content-Type': 'video/mp4',
+        'Content-Type': stats.contentType,
         'Cache-Control': 'private, no-store',
+        'Accept-Ranges': 'bytes',
       },
     })
   } catch (e) {
