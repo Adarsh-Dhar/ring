@@ -8,6 +8,8 @@ export interface VideoStorage {
   saveVideo(householdId: string, device: string, buffer: Buffer, metadata: VideoMetadata): Promise<void>
   readVideo(householdId: string, device: string): Promise<Buffer | null>
   statVideo(householdId: string, device: string): Promise<VideoMetadata | null>
+  /** Stream bytes [start, end] (inclusive) without loading the whole file. */
+  streamVideo(householdId: string, device: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null>
   deleteVideo(householdId: string, device: string): Promise<void>
   listVideos(householdId: string): Promise<Array<{ device: string; metadata: VideoMetadata }>>
   saveFrames(householdId: string, device: string, frames: string[]): Promise<void>

@@ -58,11 +58,9 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
     const checkUploadedClip = async () => {
       setLoading(true)
       try {
-        const url = new URL(uploadedClipUrl, window.location.origin)
-        url.searchParams.set('device', label)
-        const response = await fetch(url.toString())
-        const data = await response.json()
-        setHasUploadedClip(data.exists === true)
+        // HEAD: cheap existence check (200 = uploaded clip exists, 404 = none). Never downloads the video.
+        const response = await fetch(uploadedClipUrl, { method: 'HEAD', cache: 'no-store' })
+        setHasUploadedClip(response.ok)
       } catch (e) {
         console.error('[SimVideo] Failed to check uploaded clip:', e)
         setHasUploadedClip(false)
@@ -75,13 +73,13 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
 
   const handleError = () => {
     console.warn(`[SimVideo] Failed to load source ${srcIndex}: ${currentSrc}`)
-    
+
     // If uploaded clip exists and fails, show error instead of falling back
     if (srcIndex === 0 && hasUploadedClip === true) {
       setError('Failed to play uploaded video')
       return
     }
-    
+
     // Otherwise, try next source
     if (srcIndex < sources.length - 1) {
       setSrcIndex(srcIndex + 1)
@@ -95,6 +93,11 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
   const handleLoad = () => {
     setError(null)
   }
+
+  // Once we know there is no uploaded clip, skip straight to the packaged samples
+  React.useEffect(() => {
+    if (hasUploadedClip === false) setSrcIndex((i) => (i === 0 ? 1 : i))
+  }, [hasUploadedClip])
 
   // Reset when label changes (device changed)
   React.useEffect(() => {

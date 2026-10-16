@@ -4,6 +4,8 @@
  */
 
 import fs from 'fs/promises'
+import { createReadStream } from 'fs'
+import { Readable } from 'stream'
 import path from 'path'
 import { mkdir } from 'fs/promises'
 import type { VideoStorage, VideoMetadata } from './storage'
@@ -108,6 +110,18 @@ export class LocalVideoStorage implements VideoStorage {
       if ((e as any).code === 'ENOENT') return null
       throw e
     }
+  }
+
+  async streamVideo(householdId: string, device: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null> {
+    const sanitised = sanitiseDevice(device)
+    if (!sanitised) return null
+    const filePath = getVideoPath(householdId, sanitised)
+    try {
+      await fs.access(filePath)
+    } catch {
+      return null
+    }
+    return Readable.toWeb(createReadStream(filePath, { start, end })) as unknown as ReadableStream<Uint8Array>
   }
 
   async deleteVideo(householdId: string, device: string): Promise<void> {

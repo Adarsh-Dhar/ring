@@ -4,10 +4,10 @@ Five advisory agents. **None of them is on the alert path**: the helper push/SMS
 screen behave exactly as before if AI is off, slow, over quota or wrong.
 
 ## Turn it on
-1. `npx prisma migrate deploy` (migration `20261015000000_ai_agents`, additive only).
+1. `npx prisma migrate deploy` (migrations `20261015000000_ai_agents` and `20261016000000_clip_fields`, both additive only).
 2. Set `GEMINI_API_KEY` and the model IDs in `.env` (see `.env.example`).
 3. Guardian: `POST /api/ai/kill {"aiEnabled": true, "aiGreeter": true}` (both default to **false** per household).
-4. Run the worker (`npm run worker`) so the jobs and the weekly digest cron run. Without a worker, the hook runs the describer/greeter inline.
+4. **Where AI jobs run.** By default the describer and greeter run **inline** in the web process, so no worker is needed (this is also how Docker runs out of the box). Set `AI_USE_QUEUE=1` only if you run a worker (`npm run worker`, or `docker compose --profile worker up -d`); jobs for real devices are then queued, and any queue failure falls back to inline. Simulator devices (`sim-*`) always run inline because their frames live on the web server's disk. The worker is still needed for the Monday digest schedule.
 
 ## Agents
 | Agent | Model role | Trigger | Output (who sees it) |

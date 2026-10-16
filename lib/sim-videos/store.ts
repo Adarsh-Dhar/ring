@@ -35,6 +35,13 @@ export async function readVideo(householdId: string, device: string): Promise<Bu
 }
 
 /**
+ * Stream a byte range of a video (inclusive bounds). Never loads the whole file.
+ */
+export async function streamVideo(householdId: string, device: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null> {
+  return storage.streamVideo(householdId, device, start, end)
+}
+
+/**
  * Get file stats for a video.
  */
 export async function statVideo(householdId: string, device: string): Promise<VideoMetadata | null> {

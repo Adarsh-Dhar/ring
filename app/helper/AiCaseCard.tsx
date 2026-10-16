@@ -19,31 +19,24 @@ export default function AiCaseCard({ caseId }: { caseId: string }) {
 
   useEffect(() => {
     let stop = false
+    const startedAt = Date.now()
+    const MAX_POLL_MS = 90_000   // never poll forever (AI off, quota spent, or nothing to analyse)
     const load = async () => {
       try {
         const r = await fetch(`/api/ai/cases/${encodeURIComponent(caseId)}`, { cache: 'no-store' })
-        if (r.ok && !stop) {
-          const data = await r.json()
-          setAi(data)
+        if (!r.ok || stop) { setAnalyzing(false); return }
+        const data = await r.json()
+        setAi(data)
 
-          // Keep polling while greeter is active or case is waiting
-          const isActive = data.greeterState === 'greeting' || data.greeterState === 'listening'
-          const isWaiting = data.visitorSummary === null && data.clipDescription === null
-          const isUnsupported = data.greeterState === 'unsupported'
+        const greeterActive = data.greeterState === 'greeting' || data.greeterState === 'listening'
+        const haveClip = !!data.clipDescription
+        const finished = (haveClip && !greeterActive) || data.greeterState === 'unsupported'
+        const timedOut = Date.now() - startedAt > MAX_POLL_MS
+        if (finished || timedOut) { setAnalyzing(false); return }
 
-          // Stop polling if done, failed, unsupported, or we have results
-          if (!isActive && !isWaiting && !isUnsupported) {
-            setAnalyzing(false)
-            return
-          }
-
-          // Continue polling every 3-5 seconds
-          if (!stop) {
-            setAnalyzing(true)
-            setTimeout(load, 4000)
-          }
-        }
-      } catch { /* AI is optional */ }
+        setAnalyzing(true)
+        setTimeout(load, 4000)
+      } catch { setAnalyzing(false) /* AI is optional */ }
     }
     void load()
     return () => { stop = true }
@@ -87,10 +80,10 @@ export default function AiCaseCard({ caseId }: { caseId: string }) {
           <b>Actions:</b> {ai.clipActions.join(', ')}
         </p>
       )}
-      {(ai?.clipPeopleCount !== undefined || ai?.clipApproachedDoor !== undefined) && (
+      {ai?.clipDescription && ((ai.clipPeopleCount ?? 0) > 0 || (ai.clipActions?.length ?? 0) > 0) && (
         <p className="text-xs text-slate-300">
-          {ai.clipPeopleCount !== undefined && <span><b>People:</b> {ai.clipPeopleCount} · </span>}
-          {ai.clipApproachedDoor !== undefined && <span><b>Approached door:</b> {ai.clipApproachedDoor ? 'Yes' : 'No'}</span>}
+          <span><b>People:</b> {ai.clipPeopleCount}</span>
+          {ai.clipApproachedDoor != null && <span> · <b>Approached door:</b> {ai.clipApproachedDoor ? 'Yes' : 'No'}</span>}
         </p>
       )}
       {flags.length > 0 && (

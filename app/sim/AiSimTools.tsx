@@ -79,7 +79,7 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
       setStatus('Ring the doorbell first to create an active case')
       return
     }
-    
+
     setBusy(true); setStatus('Extracting frames…')
     try {
       const frames = await extractFrames(file)
@@ -106,6 +106,26 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
     } finally { setBusy(false) }
   }
 
+  /** Analyse the frames saved when the clip was uploaded for this case's simulator device (no re-select needed). */
+  async function describeStored() {
+    if (!caseId) { setStatus('Ring the doorbell first to create an active case'); return }
+    setBusy(true); setStatus('Describing the uploaded clip…')
+    try {
+      const r = await fetch('/api/ai/describe-video', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseId, useStored: true }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok) {
+        setStatus(`🎞 ${j.summary}${j.actions?.length ? `\nActions: ${j.actions.join(', ')}` : ''}`)
+      } else {
+        setStatus(j.error || 'Video description failed')
+      }
+    } catch (e: any) {
+      setStatus(e?.message || 'Video description failed')
+    } finally { setBusy(false) }
+  }
+
   return (
     <section className="mt-4 rounded-xl border border-slate-700 p-3 text-sm text-slate-200">
       <h2 className="mb-2 font-semibold">🤖 AI tools (sim)</h2>
@@ -116,6 +136,7 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
           <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void describe(f); e.currentTarget.value = '' }} />
         </label>
+        <button disabled={busy || !caseId} onClick={describeStored} className="rounded-lg bg-slate-700 px-3 py-2 disabled:opacity-50">🎞 Describe stored clip</button>
         <label className="rounded-lg bg-slate-700 px-3 py-2 cursor-pointer">
           🎞 Describe video
           <input type="file" accept="video/mp4,video/webm" className="hidden"

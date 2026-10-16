@@ -5,11 +5,6 @@ import { saveVideo, listVideos, deleteVideo, statVideo, sanitiseDevice } from '@
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-// DEMO_MODE check
-if (process.env.DEMO_MODE !== '1') {
-  console.warn('[SIM VIDEOS] Demo mode is not enabled. Simulator video upload is disabled.')
-}
-
 export async function GET(req: NextRequest) {
   if (process.env.DEMO_MODE !== '1') {
     return fail('Simulator video upload is disabled in production', 403)

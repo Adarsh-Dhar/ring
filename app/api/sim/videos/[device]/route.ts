@@ -1,72 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorize, fail } from '@/lib/guard'
-import { readVideo, statVideo, sanitiseDevice } from '@/lib/sim-videos/store'
+import { statVideo, streamVideo, sanitiseDevice } from '@/lib/sim-videos/store'
+import { parseRange } from '@/lib/sim-videos/range'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ device: string }> }
-) {
+type Ctx = { params: Promise<{ device: string }> }
+
+const BASE_HEADERS = {
+  'Accept-Ranges': 'bytes',
+  'Cache-Control': 'private, no-store',
+  'X-Content-Type-Options': 'nosniff',
+}
+
+async function resolve(req: NextRequest, ctx: Ctx) {
   const a = await authorize(req, 'any')
-  if (a.ok === false) return a.res
-
+  if (a.ok === false) return { res: a.res } as const
   const householdId = a.session!.householdId
-  if (!householdId) return fail('No household selected', 400)
+  if (!householdId) return { res: fail('No household selected', 400) } as const
+  const { device } = await ctx.params
+  if (!sanitiseDevice(device)) return { res: fail('Invalid device name', 400) } as const
+  const stats = await statVideo(householdId, device)
+  if (!stats) return { res: fail('Video not found', 404) } as const
+  return { householdId, device, stats } as const
+}
 
-  const { device } = await params
-
-  // Validate device is in allowlist
-  if (!sanitiseDevice(device)) {
-    return fail('Invalid device name', 400)
-  }
-
+/**
+ * HEAD = "is there an uploaded clip?" (200 + headers, or 404). The player uses it instead of downloading the file.
+ */
+export async function HEAD(req: NextRequest, ctx: Ctx) {
   try {
-    const stats = await statVideo(householdId, device)
-    if (!stats) return fail('Video not found', 404)
+    const r = await resolve(req, ctx)
+    if ('res' in r) return new NextResponse(null, { status: r.res.status })
+    return new NextResponse(null, {
+      status: 200,
+      headers: { ...BASE_HEADERS, 'Content-Length': String(r.stats.size), 'Content-Type': r.stats.contentType },
+    })
+  } catch (e) {
+    console.error('[SIM VIDEOS DEVICE HEAD]', e)
+    return new NextResponse(null, { status: 500 })
+  }
+}
 
-    const buffer = await readVideo(householdId, device)
-    if (!buffer) return fail('Video not found', 404)
+export async function GET(req: NextRequest, ctx: Ctx) {
+  try {
+    const r = await resolve(req, ctx)
+    if ('res' in r) return r.res
+    const { householdId, device, stats } = r
 
-    // Handle Range requests for video streaming
-    const range = req.headers.get('range')
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-')
-      const start = parseInt(parts[0], 10)
-      const end = parts[1] ? parseInt(parts[1], 10) : buffer.length - 1
-      const chunkSize = end - start + 1
-
-      if (start >= buffer.length || end >= buffer.length || start > end || start < 0) {
-        return new NextResponse('Requested range not satisfiable', { 
-          status: 416,
-          headers: {
-            'Content-Range': `bytes */${buffer.length}`,
-          }
-        })
-      }
-
-      const chunk = buffer.slice(start, end + 1)
-
-      return new NextResponse(chunk, {
-        status: 206,
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${buffer.length}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize.toString(),
-          'Content-Type': stats.contentType,
-          'Cache-Control': 'private, no-store',
-        },
+    const range = parseRange(req.headers.get('range'), stats.size)
+    if (range === 'unsatisfiable') {
+      return new NextResponse('Requested range not satisfiable', {
+        status: 416,
+        headers: { ...BASE_HEADERS, 'Content-Range': `bytes */${stats.size}` },
       })
     }
 
-    // Full file response
-    return new NextResponse(buffer, {
+    const start = range ? range.start : 0
+    const end = range ? range.end : stats.size - 1
+    const body = await streamVideo(householdId, device, start, end)
+    if (!body) return fail('Video not found', 404)
+
+    return new NextResponse(body, {
+      status: range ? 206 : 200,
       headers: {
-        'Content-Length': buffer.length.toString(),
+        ...BASE_HEADERS,
         'Content-Type': stats.contentType,
-        'Cache-Control': 'private, no-store',
-        'Accept-Ranges': 'bytes',
+        'Content-Length': String(end - start + 1),
+        ...(range ? { 'Content-Range': `bytes ${start}-${end}/${stats.size}` } : {}),
       },
     })
   } catch (e) {

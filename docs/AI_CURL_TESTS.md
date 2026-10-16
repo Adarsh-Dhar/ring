@@ -19,7 +19,7 @@ Everything here was written from reading the routes and agents in `ring-main (3)
 
 **Tools:** `curl`, `jq`, and `node` (for timestamps). For the greeter test also `espeak-ng` (Linux: `sudo apt install espeak-ng`) or macOS `say`.
 
-**Server:** `DEMO_MODE=1`, `GEMINI_API_KEY` set, app running (`npm run dev`). You do not need `npm run worker` for these tests. The web process has no queue, so the AI hook runs inline. The worker matters only for the Monday digest schedule and for real Ring webhooks.
+**Server:** `DEMO_MODE=1`, `GEMINI_API_KEY` set, app running (`npm run dev`). You do not need `npm run worker` for these tests. With `AI_USE_QUEUE` unset (the default) the AI hook runs inline. The worker matters only for the Monday digest schedule and for real Ring webhooks.
 
 **Login is Google-only**, so copy the session cookies from the browser (DevTools → Application → Cookies):
 

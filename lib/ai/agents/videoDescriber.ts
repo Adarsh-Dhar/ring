@@ -3,6 +3,7 @@ import { VideoDescriberOut, type VideoDescriberResult } from '@/lib/ai/schemas'
 import { VIDEO_DESCRIBER_SYSTEM } from '@/lib/ai/prompts/videoDescriber'
 import { setCaseAi } from '@/lib/ai/caseAi'
 import { clampWords, hasBannedPhrase } from '@/lib/ai/guard'
+import { validateFrames, FRAME_DATA_URL_PREFIX } from '@/lib/ai/frameLimits'
 
 /**
  * Agent: describes a video clip from multiple frames.
@@ -13,14 +14,12 @@ export async function describeClip(
   caseId: string,
   frames: string[] // base64-encoded JPEG frames
 ): Promise<VideoDescriberResult | null> {
-  if (frames.length === 0 || frames.length > 6) return null
-
-  // Calculate total size (approximate from base64)
-  let totalSize = 0
-  for (const frame of frames) {
-    totalSize += frame.length
+  // Same rules as the API routes (decoded bytes). Invalid input returns null; it never throws.
+  const check = validateFrames(frames)
+  if (check.ok === false) {
+    console.warn('[VIDEO DESCRIBER] rejected frames:', check.error)
+    return null
   }
-  if (totalSize > 3_000_000) return null // ~3 MB max
 
   // Build parts: text prompt followed by each frame as inline data
   const parts: Part[] = [
@@ -32,20 +31,9 @@ export async function describeClip(
         'Do not infer identity, intent, or whether the visitor is safe.',
       ].join(' '),
     },
-    ...frames.map((frame) => {
-      const prefix = 'data:image/jpeg;base64,'
-
-      if (!frame.startsWith(prefix)) {
-        throw new Error('Invalid JPEG frame')
-      }
-
-      return {
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: frame.slice(prefix.length),
-        },
-      }
-    }),
+    ...frames.map((frame) => ({
+      inlineData: { mimeType: 'image/jpeg', data: frame.slice(FRAME_DATA_URL_PREFIX.length) },
+    })),
   ]
 
   const out = await generateJson({
