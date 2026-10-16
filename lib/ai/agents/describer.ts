@@ -27,6 +27,9 @@ export async function describeForCase(householdId: string, caseId: string, devic
   if (!deviceId || deviceId.startsWith('sim-')) return null   // /sim uploads go through POST /api/ai/describe
   const { fetchRingSnapshot } = await import('@/face/camera')
   const buf = await fetchRingSnapshot(householdId, deviceId)
-  if (!buf) return null
+  if (!buf) {
+    console.log('[DESCRIBER] Ring snapshot unavailable, no fallback - helper will see no description')
+    return null
+  }
   return describeSnapshot(householdId, caseId, buf)
 }

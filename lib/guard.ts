@@ -5,9 +5,6 @@ import { getMembershipEpoch } from './db/memberships'
 import type { z } from 'zod'
 import { getDb } from './db/client'
 
-// TEST MODE: Skip authentication for AI agent testing (development only)
-const TEST_MODE = process.env.TEST_AUTH_BYPASS === '1' && !IS_PROD
-
 export const COOKIE = 'db_session'
 export const DEVICE_COOKIE = 'db_device'
 export const HOUSEHOLD_COOKIE = 'db_household'
@@ -219,23 +216,6 @@ export function isParseOk<T>(p: ParseResult<T>): p is { ok: true; data: T } { re
  * Supports both old-style cookie sessions and new v2 device sessions.
  */
 export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Auth> {
-  // TEST MODE: Bypass authentication for AI agent testing
-  if (TEST_MODE) {
-    // Get test household from env or use first available
-    const testHouseholdId = process.env.TEST_HOUSEHOLD_ID || 'test-household'
-    const testUserId = process.env.TEST_USER_ID || 'test-user'
-
-    // Return a mock guardian session
-    const session: Session = {
-      kind: 'user',
-      userId: testUserId,
-      householdId: testHouseholdId,
-      role: 'guardian',
-      membershipId: 'test-membership'
-    }
-    return { ok: true as const, session }
-  }
-
   if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) {
     return { ok: false as const, res: fail('Cross-origin requests are not allowed', 403) }
   }

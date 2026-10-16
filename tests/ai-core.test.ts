@@ -82,6 +82,7 @@ describe('fixed lines, wav, digest helpers', () => {
     const f = { from: '2026-10-05', to: '2026-10-12', totalRings: 3, byVisitor: { unknown: 1 }, noResponse: 1, flaggedRings: 1, topFlags: [{ flag: 'Claims urgency', count: 1 }], repeatVisitors: 0 }
     expect(templateText(f)).toContain('3 rings')
     expect(templateText({ ...f, totalRings: 0 })).toContain('No visitors')
-    expect(weekStartFor(new Date('2026-10-15T10:00:00Z')).toISOString()).toBe('2026-10-08T00:00:00.000Z')
+    // weekStartFor now returns 7 days before the given time (rolling window)
+    expect(weekStartFor(new Date('2026-10-15T10:00:00Z')).toISOString()).toBe('2026-10-08T10:00:00.000Z')
   })
 })

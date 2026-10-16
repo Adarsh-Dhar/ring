@@ -37,6 +37,9 @@ interface HouseholdData {
   plannedMode?: 'helper' | 'resident' | 'all-helper'
   requireResidentOk?: boolean
   visitLink?: { active: boolean; createdAt: number | null }
+  aiEnabled?: boolean
+  aiGreeter?: boolean
+  googleCalendarConnected?: boolean
 }
 
 const BADGE: Record<string, string> = {
@@ -73,6 +76,11 @@ function SetupPage() {
   const [quiet,              setQuietForm]          = useState({ enabled: false, startHour: 22, endHour: 6 })
   const [plannedMode,        setPlannedModeLocal]   = useState<'helper' | 'resident' | 'all-helper'>('helper')
   const [requireResidentOk,  setRequireResidentOk]  = useState(false)
+  const [aiEnabled,         setAiEnabled]           = useState(false)
+  const [aiGreeter,         setAiGreeter]           = useState(false)
+  const [aiConsent,          setAiConsent]            = useState(false)
+  const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
+  const [digests,           setDigests]             = useState<any[]>([])
   const [visitLinkUrl,       setVisitLinkUrl]       = useState('')
   const [visitLinkActive,    setVisitLinkActive]    = useState(false)
   const [visitLinkCreatedAt, setVisitLinkCreatedAt] = useState<number | null>(null)
@@ -122,8 +130,14 @@ function SetupPage() {
     setQuietForm(d.quiet)
     setPlannedModeLocal(d.plannedMode ?? 'helper')
     setRequireResidentOk(d.requireResidentOk ?? false)
+    setAiEnabled(d.aiEnabled ?? false)
+    setAiGreeter(d.aiGreeter ?? false)
     setVisitLinkActive(d.visitLink?.active ?? false)
     setVisitLinkCreatedAt(d.visitLink?.createdAt ?? null)
+
+    // Check Google Calendar connection for AI intake hint
+    const hasGoogle = d.members.some((m: any) => m.user?.googleRefreshToken)
+    setGoogleCalendarConnected(hasGoogle)
 
     // Load face recognition status and enrolled faces
     try {
@@ -150,6 +164,17 @@ function SetupPage() {
       }
     } catch {
       // Sightings may fail
+    }
+
+    // Load digests
+    try {
+      const dr = await fetch('/api/ai/digests', { cache: 'no-store' })
+      if (dr.ok) {
+        const dd = await dr.json()
+        setDigests(dd.digests ?? [])
+      }
+    } catch {
+      // Digests may fail
     }
   }, [router])
 
@@ -303,6 +328,20 @@ function SetupPage() {
     } else {
       setErr('Failed to delete face')
     }
+  }
+
+  const generateDigest = async () => {
+    setErr('')
+    setLoading(true)
+    const r = await fetch('/api/ai/digests/run', { method: 'POST' })
+    const j = await r.json().catch(() => ({}))
+    setLoading(false)
+    if (!r.ok) {
+      setErr(j.error || 'Could not generate digest')
+      return
+    }
+    setNote('Digest generated successfully')
+    load()
   }
 
   if (!data) return <main className="p-6 text-slate-400">Loading…</main>
@@ -510,6 +549,83 @@ function SetupPage() {
       {requireResidentOk && (
         <p className="text-xs text-slate-400 mb-4">The resident only sees requests a helper has already approved.</p>
       )}
+
+      {/* ── AI Helpers ───────────────────────────────────────────────── */}
+      <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">AI Helpers</h2>
+      <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={aiEnabled} onChange={e => setAiEnabled(e.target.checked)} disabled={loading} />
+            <span className="text-sm">Enable AI features</span>
+          </label>
+        </div>
+        {aiEnabled && (
+          <>
+            <p className="text-xs text-slate-400">
+              ⚠️ Audio and camera pictures are sent to Google Gemini for processing. Enable only if you consent to this.
+            </p>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={aiConsent}
+                  onChange={e => setAiConsent(e.target.checked)}
+                  disabled={loading}
+                />
+                <span className="text-sm">I consent to sending audio and camera data to Google Gemini</span>
+              </label>
+            </div>
+            {aiConsent && (
+              <>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={aiGreeter} onChange={e => setAiGreeter(e.target.checked)} disabled={loading} />
+                    <span className="text-sm">Enable AI greeter (asks visitors who they are)</span>
+                  </label>
+                </div>
+                {!googleCalendarConnected && (
+                  <p className="text-xs text-amber-400">
+                    ℹ️ Connect Google Calendar for better visit request verification. Without it, AI intake can only match against planned visits.
+                  </p>
+                )}
+              </>
+            )}
+          </>
+        )}
+        <button
+          onClick={() => act('/api/household', { action: 'aiSettings', aiEnabled: aiEnabled && aiConsent, aiGreeter: aiEnabled && aiConsent && aiGreeter })}
+          disabled={loading || (aiEnabled && !aiConsent)}
+          className={btn}
+        >
+          Save AI settings
+        </button>
+      </div>
+
+      {/* ── Weekly Digests ───────────────────────────────────────────── */}
+      <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">Weekly Digests</h2>
+      <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm">AI-generated weekly summaries of doorbell activity</span>
+          <button onClick={generateDigest} disabled={loading} className={`${btn} bg-cyan-700`}>
+            Generate now
+          </button>
+        </div>
+        {digests.length === 0 ? (
+          <p className="text-xs text-slate-400">No digests generated yet.</p>
+        ) : (
+          <ul className="space-y-2 max-h-64 overflow-y-auto">
+            {digests.map(d => (
+              <li key={d.id} className="rounded-lg bg-slate-700 px-3 py-2 text-sm">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-slate-400 text-xs">{d.weekStart}</span>
+                </div>
+                <p className="text-slate-200">{d.text}</p>
+                <p className="text-xs text-slate-400 mt-1">AI description, may be wrong.</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <RegularVisitorsAdmin registerUrl={visitLinkUrl ? `${visitLinkUrl}/register` : undefined} />
 

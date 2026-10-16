@@ -40,9 +40,15 @@ export async function GET(req: NextRequest) {
     return fail('Unable to load household details. Please try again.', 503)
   }
 
+  // Check if any guardian has Google Calendar connected
+  const hasGoogleCalendar = setup.members.some((m: any) => m.user?.googleRefreshToken)
+
   return NextResponse.json({
     ...setup,
     requireResidentOk: !!(hh as any)?.requireResidentOk,
+    aiEnabled: !!(hh as any)?.aiEnabled,
+    aiGreeter: !!(hh as any)?.aiGreeter,
+    googleCalendarConnected: hasGoogleCalendar,
     visitLink: link
       ? { active: true,  createdAt: link.createdAt.getTime() }
       : { active: false, createdAt: null },
@@ -72,6 +78,7 @@ const Body = z.discriminatedUnion('action', [
     mode:   z.enum([...PLANNED_MODES] as [string, ...string[]]),
   }),
   z.object({ action: z.literal('requireResidentOk'), value: z.boolean() }),
+  z.object({ action: z.literal('aiSettings'), aiEnabled: z.boolean(), aiGreeter: z.boolean() }),
 ])
 
 export async function POST(req: NextRequest) {
@@ -236,6 +243,10 @@ export async function POST(req: NextRequest) {
 
       case 'requireResidentOk':
         await updateHousehold(householdId, { requireResidentOk: b.value })
+        return NextResponse.json({ ok: true })
+
+      case 'aiSettings':
+        await updateHousehold(householdId, { aiEnabled: b.aiEnabled, aiGreeter: b.aiGreeter })
         return NextResponse.json({ ok: true })
     }
   } catch (e) {

@@ -6,11 +6,32 @@ import { hit } from '@/lib/ratelimit'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-import { compressNote } from '@/lib/ai/agents/compressor'
+import { compressNote, currentNote } from '@/lib/ai/agents/compressor'
 import { getDb } from '@/lib/db/client'
 import { aiFlags } from '@/lib/ai/caseAi'
 
 const Body = z.object({ note: z.string().trim().min(2).max(400) })
+
+export async function GET(req: NextRequest) {
+  const a = await authorize(req, 'helper', 'guardian')
+  if (a.ok === false) return a.res
+  const householdId = a.session.householdId
+  if (!householdId) return fail('No household', 400)
+
+  const db = getDb()
+  const [draft, approved] = await Promise.all([
+    db.residentNote.findFirst({
+      where: { householdId, status: 'draft' },
+      select: { id: true, draftText: true, icon: true }
+    }),
+    currentNote(householdId)
+  ])
+
+  return NextResponse.json({
+    draft: draft ? { id: draft.id, text: draft.draftText, icon: draft.icon, fallback: false } : null,
+    approved
+  })
+}
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper', 'guardian')

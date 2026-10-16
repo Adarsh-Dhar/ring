@@ -14,6 +14,8 @@ interface VisitReq {
   endsAt:      number
   createdAt:   number
   helperOk:    boolean
+  intakeStatus: string | null
+  verdict:     string | null
 }
 
 const fmt = (ms: number) =>
@@ -63,6 +65,17 @@ export default function VisitRequests({ requireResidentOk }: { requireResidentOk
 
   const purpose = (k: string) => (PURPOSES as any)[k] ?? PURPOSES.other
 
+  const intakeBadge = (status: string | null, verdict: string | null) => {
+    if (!status) return null
+    if (status === 'open') return <span className="rounded-full bg-amber-600 px-2 py-1 text-xs">AI asking…</span>
+    if (status === 'done') {
+      if (verdict === 'match') return <span className="rounded-full bg-emerald-600 px-2 py-1 text-xs">Matches</span>
+      if (verdict === 'no_match') return <span className="rounded-full bg-red-700 px-2 py-1 text-xs">No match</span>
+      return <span className="rounded-full bg-slate-600 px-2 py-1 text-xs">Could not confirm</span>
+    }
+    return null
+  }
+
   return (
     <section className="mb-6">
       <h2 className="text-sm uppercase tracking-wide text-slate-400 mb-3">Visit requests</h2>
@@ -78,6 +91,7 @@ export default function VisitRequests({ requireResidentOk }: { requireResidentOk
                   <span>{p.icon}</span>
                   <span>{r.name}</span>
                   <span className="text-sm text-slate-400">{p.label}</span>
+                  {intakeBadge(r.intakeStatus, r.verdict)}
                 </div>
                 <span className="text-xs text-slate-500 shrink-0">{ago(r.createdAt)}</span>
               </div>

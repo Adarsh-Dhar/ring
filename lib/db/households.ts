@@ -75,6 +75,8 @@ export async function updateHousehold(householdId: string, data: {
   emergencyNumber?: string
   plannedMode?: string
   requireResidentOk?: boolean
+  aiEnabled?: boolean
+  aiGreeter?: boolean
 }) {
   const db = getDb()
   return db.household.update({

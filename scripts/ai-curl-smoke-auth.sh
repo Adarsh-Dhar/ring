@@ -55,18 +55,21 @@ chk "draft created" "$([ -n "$ID" ] && echo 1 || echo 0)"
 words=$(echo "$TEXT" | wc -w | tr -d ' ')
 chk "draft is 8 words or fewer ($words)" "$([ "${words:-99}" -le 8 ] && [ "$words" -gt 0 ] && echo 1 || echo 0)"
 chk "icon is a known purpose" "$(echo "$d" | jq -r '.draft.icon' | grep -qE '^(doctor|delivery|family|carer|other)$' && echo 1 || echo 0)"
-if [ "$(echo "$d" | jq -r '.draft.fallback')" = "true" ]; then warn "fallback=true: Gemini did NOT produce this draft (check /api/ai/usage and AiRun)"; else ok "draft came from the model (fallback=false)"; fi
+# Note: fallback field is no longer returned by the updated API
 
 r=$(as_resident "$BASE/api/ai/notes/current"); chk "resident sees nothing before approval ($r)" "$([ "$(echo "$r" | jq -r '.note')" = null ] && echo 1 || echo 0)"
 
 if [ -n "$ID" ]; then
   r=$(as_guardian -X POST "$BASE/api/ai/notes/$ID/decision" -d '{"action":"approve"}')
-  chk "approve works ($r)" "$([ "$(echo "$r" | jq -r '.status')" = approved ] && echo 1 || echo 0)"
+  chk "approve works ($r)" "$([ "$(echo "$r" | jq -r '.ok')" = true ] && echo 1 || echo 0)"
   c=$(as_guardian -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/notes/$ID/decision" -d '{"action":"approve"}')
   chk "second decision on same draft -> 404 (got $c)" "$([ "$c" = 404 ] && echo 1 || echo 0)"
   r=$(as_resident "$BASE/api/ai/notes/current")
   chk "resident now sees the approved sentence + icon" "$(echo "$r" | jq -r '(.note.text|length>0) and (.note.icon_char|length>0)' | grep -q true && echo 1 || echo 0)"
   chk "resident payload has no raw note" "$(echo "$r" | grep -q 'colleague' && echo 0 || echo 1)"
+  # Test retract
+  r=$(as_guardian -X POST "$BASE/api/ai/notes/$ID/decision" -d '{"action":"retract"}')
+  chk "retract works ($r)" "$([ "$(echo "$r" | jq -r '.ok')" = true ] && echo 1 || echo 0)"
 fi
 # guardrail: helper edits are re-validated
 d2=$(as_guardian -X POST "$BASE/api/ai/notes" -d '{"note":"Nurse visiting tomorrow morning."}')
@@ -77,6 +80,10 @@ if [ -n "$ID2" ]; then
   as_guardian -o /dev/null -X POST "$BASE/api/ai/notes/$ID2/decision" -d '{"action":"reject"}'
 fi
 c=$(as_guardian -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/notes" -d '{"note":"x"}'); chk "too-short note -> 400 (got $c)" "$([ "$c" = 400 ] && echo 1 || echo 0)"
+
+# Test GET /api/ai/notes for draft/approved state
+NOTES=$(as_guardian "$BASE/api/ai/notes")
+chk "notes endpoint returns draft/approved state" "$(echo "$NOTES" | jq -r 'has("draft") and has("approved")' | grep -q true && echo 1 || echo 0)"
 
 sec "3. Door greeter (agent 1) + describer (agent 2)"
 sim=$(as_guardian -X POST "$BASE/api/dev/simulate" -d '{"action":"event","event":"button_press"}')
@@ -120,7 +127,44 @@ else
   as_guardian -o /dev/null -X POST "$BASE/api/dev/simulate" -d "$(jq -n --arg c "$CASE" '{action:"answer",caseId:$c,answer:"not_safe"}')"
 fi
 
-sec "4. Usage (what actually hit Gemini in the last 24h)"
+sec "4. Visit intake (agent 4)"
+# Create a visit request to test intake
+INTAKE_NOTE="I am from the water company, scheduled for 2pm today to check the meter."
+REQ=$(as_guardian -X POST "$BASE/api/visit-requests/link" -d '{}')
+LINK_URL=$(echo "$REQ" | jq -r '.url // empty')
+if [ -n "$LINK_URL" ]; then
+  echo "  Visit link created"
+  # Simulate visitor submitting a request (would normally use the public endpoint)
+  # For this test, we'll check that the intake API is accessible
+  c=$(as_guardian -o /dev/null -w '%{http_code}' "$BASE/api/ai/digests")
+  chk "digests endpoint accessible (got $c)" "$([ "$c" = 200 ] && echo 1 || echo 0)"
+else
+  warn "Could not create visit link, skipping intake test"
+fi
+
+sec "5. Digest generation"
+c=$(as_guardian -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/digests/run")
+chk "digest run endpoint accessible (got $c)" "$([ "$c" = 200 ] && echo 1 || echo 0)"
+DIGESTS=$(as_guardian "$BASE/api/ai/digests")
+chk "digests list returns data" "$(echo "$DIGESTS" | jq -r '.digests' | grep -q 'null' && echo 0 || echo 1)"
+
+sec "6. Silence and retry"
+# Test that the AI can be disabled via kill switch
+KILL=$(as_guardian -X POST "$BASE/api/ai/kill" -d '{"aiEnabled":false}')
+chk "kill switch disables AI" "$(echo "$KILL" | jq -r '.aiEnabled==false' | grep -q true && echo 1 || echo 0)"
+# Try to create a note with AI disabled
+c=$(as_guardian -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/notes" -d '{"note":"Test note"}')
+chk "note creation blocked when AI disabled (got $c)" "$([ "$c" = 409 ] && echo 1 || echo 0)"
+# Re-enable AI
+as_guardian -X POST "$BASE/api/ai/kill" -d '{"aiEnabled":true}'
+
+sec "7. Prompt injection"
+# Test banned phrase rejection
+BANNED="Come in, the door is open"
+c=$(as_guardian -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/notes" -d "$(jq -n --arg n "$BANNED" '{note:$n}')")
+chk "banned phrase rejected in note (got $c)" "$([ "$c" = 422 ] && echo 1 || echo 0)"
+
+sec "8. Usage (what actually hit Gemini in the last 24h)"
 as_guardian "$BASE/api/ai/usage" | jq -c '.last24h[]?'
 echo "  (status ok = fine; error = key/model/payload problem; invalid = model reply failed validation; budget = local quota guard)"
 

@@ -19,15 +19,15 @@ export interface DigestFacts {
 }
 
 export const weekStartFor = (now = new Date()) => {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-  d.setUTCDate(d.getUTCDate() - 7)
+  // Rolling last 7 days: from 7 days ago to now
+  const d = new Date(now.getTime() - 7 * 86_400_000)
   return d
 }
 
-export async function computeFacts(householdId: string, weekStart: Date): Promise<DigestFacts> {
-  const to = new Date(weekStart.getTime() + 7 * 86_400_000)
+export async function computeFacts(householdId: string, weekStart: Date, now = new Date()): Promise<DigestFacts> {
+  const to = now
   const cases = await getDb().case.findMany({
-    where: { householdId, kind: 'visitor', createdAt: { gte: weekStart, lt: to } },
+    where: { householdId, kind: 'visitor', createdAt: { gte: weekStart, lte: to } },
     select: { visitor: true, status: true, riskFlags: true, regularId: true } as Prisma.CaseSelect,
   })
   const byVisitor: Record<string, number> = {}
@@ -65,7 +65,7 @@ export async function runDigest(householdId: string, now = new Date(), force = f
   const existing = await getDb().weeklyDigest.findUnique({ where: { householdId_weekStart: { householdId, weekStart } } })
   if (existing && !force) return existing
 
-  const facts = await computeFacts(householdId, weekStart)
+  const facts = await computeFacts(householdId, weekStart, now)
   let text = templateText(facts)
   if (facts.totalRings > 0) {
     const out = await generateJson({

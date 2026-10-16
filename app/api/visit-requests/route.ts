@@ -5,6 +5,7 @@ import { getHousehold } from '@/lib/db/households'
 import { listRequests } from '@/lib/db/visit-requests'
 import { decideRequest } from '@/lib/doorbell/requests'
 import { sweepRequests } from '@/lib/doorbell/request-lifecycle'
+import { getDb } from '@/lib/db/client'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -27,26 +28,39 @@ export async function GET(req: NextRequest) {
     return fail(`Failed to load visit requests: ${msg}`, 503)
   }
 
-  const shape = (r: any) => ({
-    id:          r.id,
-    name:        r.name,
-    purpose:     r.purpose,
-    note:        r.note,
-    riskNote:    r.riskNote ?? null,
-    contactKind: r.contactKind,
-    startsAt:    r.startsAt.getTime(),
-    endsAt:      r.endsAt.getTime(),
-    createdAt:   r.createdAt.getTime(),
-    helperOk:    !!r.helperOkAt,
-    // Contact details are never returned to any client
+  // Load intake status for all requests
+  const requestIds = rows.map(r => r.id)
+  const intakes = await getDb().visitIntake.findMany({
+    where: { requestId: { in: requestIds } },
+    select: { requestId: true, status: true, verdict: true }
   })
+  const intakeMap = new Map(intakes.map(i => [i.requestId, i]))
+
+  const shape = (r: any) => {
+    const intake = intakeMap.get(r.id)
+    return {
+      id:          r.id,
+      name:        r.name,
+      purpose:     r.purpose,
+      note:        r.note,
+      riskNote:    r.riskNote ?? null,
+      contactKind: r.contactKind,
+      startsAt:    r.startsAt.getTime(),
+      endsAt:      r.endsAt.getTime(),
+      createdAt:   r.createdAt.getTime(),
+      helperOk:    !!r.helperOkAt,
+      intakeStatus: intake?.status ?? null,
+      verdict:     intake?.verdict ?? null,
+      // Contact details are never returned to any client
+    }
+  }
 
   if (s.kind === 'resident') {
     if (!(hh as any)?.requireResidentOk) return NextResponse.json({ requests: [] })
     return NextResponse.json({
       requests: rows
         .filter(r => r.helperOkAt && !r.residentOkAt)
-        .map(r => ({ ...shape(r), note: null, riskNote: null })),
+        .map(r => ({ ...shape(r), note: null, riskNote: null, intakeStatus: null, verdict: null })),
     })
   }
 

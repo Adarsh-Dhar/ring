@@ -1,6 +1,9 @@
 /** Registers the AI jobs on the existing pg-boss worker. Call once from workers/timer-worker.ts. */
 import type { PgBoss } from 'pg-boss'
 import { JOB_NAMES, type AiCaseJob, type AiIntakeJob, type AiDigestJob } from '@/lib/queue/jobs'
+import { getApprovedMemberships } from '@/lib/db/memberships'
+import { pushToMembership } from '@/lib/doorbell/notify'
+import { getDb } from '@/lib/db/client'
 
 export async function registerAiWorkers(boss: PgBoss) {
   const each = (name: string, fn: (data: any) => Promise<void>) =>
@@ -19,7 +22,22 @@ export async function registerAiWorkers(boss: PgBoss) {
   })
   await each(JOB_NAMES.AI_DIGEST_WEEKLY, async (d: AiDigestJob) => {
     const { runDigest, householdsForDigest } = await import('./agents/digest')
-    if (d.householdId) { await runDigest(d.householdId); return }
+    if (d.householdId) {
+      const digest = await runDigest(d.householdId)
+      // Create notification and push to guardians after digest is generated
+      if (digest) {
+        const memberships = await getApprovedMemberships(d.householdId)
+        const guardians = memberships.filter(m => m.role === 'guardian')
+        for (const g of guardians) {
+          await pushToMembership(g.id, {
+            title: '📊 Weekly digest ready',
+            body: digest.text.slice(0, 100),
+            url: '/setup'
+          }).catch(e => console.error('[WORKER] digest push failed', e))
+        }
+      }
+      return
+    }
     // Fan-out: stagger one household every 20 minutes.
     const { enqueueJob } = await import('@/lib/queue')
     const ids = await householdsForDigest()

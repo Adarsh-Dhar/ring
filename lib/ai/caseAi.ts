@@ -1,5 +1,7 @@
 import { getDb } from '@/lib/db/client'
 import type { Prisma } from '@prisma/client'
+import { getApprovedMemberships } from '@/lib/db/memberships'
+import { pushToMembership } from '@/lib/doorbell/notify'
 
 /** AI fields live on Case but are written ONLY here, never through the escalation store. */
 export async function setCaseAi(caseId: string, data: {
@@ -14,6 +16,32 @@ export async function setCaseAi(caseId: string, data: {
     if ('clipTags' in data) d.clipTags = data.clipTags
     if ('greeterState' in data) d.greeterState = data.greeterState
     await getDb().case.update({ where: { id: caseId }, data: d })
+
+    // Push notification to helpers when AI results arrive for the first time
+    if ((data.visitorSummary || data.clipDescription) && caseId) {
+      const existing = await getDb().case.findUnique({
+        where: { id: caseId },
+        select: { id: true, householdId: true, visitorSummary: true, clipDescription: true }
+      })
+      if (existing && existing.householdId) {
+        const isFirstResult = !existing.visitorSummary && !existing.clipDescription
+        if (isFirstResult) {
+          const memberships = await getApprovedMemberships(existing.householdId)
+          const helperMemberships = memberships.filter(m => m.role === 'helper')
+          for (const m of helperMemberships) {
+            const body = data.visitorSummary
+              ? `Visitor said: ${data.visitorSummary.slice(0, 100)}${data.visitorSummary.length > 100 ? '...' : ''}`
+              : 'AI description available'
+            await pushToMembership(m.id, {
+              title: '🎙️ Doorbell AI update',
+              body,
+              tag: `case:${caseId}`,
+              url: '/helper'
+            }).catch(e => console.error('[AI] push failed', e))
+          }
+        }
+      }
+    }
   } catch (e) { console.error('[AI] setCaseAi failed', e) }
 }
 
