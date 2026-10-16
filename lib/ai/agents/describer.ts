@@ -24,7 +24,21 @@ export async function describeSnapshot(
   return result
 }
 
-/** Used by the job: fetch the Ring snapshot (or skip for sim devices) and describe it. */
+/** Used by the job: fetch the Ring snapshot (or skip for sim devices) and describe it.
+ * 
+ * For simulator devices (deviceId starts with 'sim-'):
+ * 1. Reads stored frames from storage (extracted during upload)
+ * 2. Sends frames to video describer AI
+ * 3. Saves results to the case (triggers helper push notification)
+ * 
+ * For real Ring devices:
+ * 1. Fetches snapshot from Ring API
+ * 2. Sends snapshot to image describer AI
+ * 3. Saves results to the case
+ * 
+ * This function is called by the AI_DESCRIBE job in lib/ai/workers.ts.
+ * The job is enqueued by lib/ai/hooks.ts onDoorEvent when AI is enabled.
+ */
 export async function describeForCase(householdId: string, caseId: string, deviceId: string | null) {
   if (!deviceId) {
     console.log('[DESCRIBER] No device ID, skipping description')

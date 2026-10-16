@@ -14,7 +14,7 @@ interface UploadedClip {
   mtime: number
 }
 
-const ALLOWED_MIME_TYPES = ['video/mp4', 'video/webm']
+const ALLOWED_MIME_TYPES = ['video/mp4']
 
 export default function VideoUpload({ device, onUploadComplete }: VideoUploadProps) {
   const [file, setFile] = useState<File | null>(null)
@@ -68,7 +68,10 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
     // Validate file type explicitly
     if (!ALLOWED_MIME_TYPES.includes(selected.type)) {
-      setError('Please select an MP4 or WebM video file')
+      setError('Please select an MP4 video file')
+      // Cleanup if file is rejected
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      if (input) input.value = ''
       return
     }
 
@@ -76,6 +79,9 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
     const sizeMB = selected.size / (1024 * 1024)
     if (sizeMB > MAX_SIZE_MB) {
       setError(`File too large. Maximum ${MAX_SIZE_MB} MB.`)
+      // Cleanup if file is rejected
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      if (input) input.value = ''
       return
     }
 
@@ -102,6 +108,8 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           URL.revokeObjectURL(previewUrl)
           setPreviewUrl(null)
         }
+        const input = document.querySelector('input[type="file"]') as HTMLInputElement
+        if (input) input.value = ''
         return
       }
       
@@ -113,6 +121,8 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           URL.revokeObjectURL(previewUrl)
           setPreviewUrl(null)
         }
+        const input = document.querySelector('input[type="file"]') as HTMLInputElement
+        if (input) input.value = ''
       } else {
         setDuration(video.duration)
       }
@@ -126,6 +136,8 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
         URL.revokeObjectURL(previewUrl)
         setPreviewUrl(null)
       }
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      if (input) input.value = ''
     }
 
     video.onloadedmetadata = handleMetadata
@@ -142,74 +154,78 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
     try {
       // Upload video with XMLHttpRequest for progress tracking
-      const xhr = new XMLHttpRequest()
-      
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const percent = Math.round((e.loaded / e.total) * 100)
-          setUploadStatus(`Uploading video... ${percent}%`)
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100)
+            setUploadStatus(`Uploading video... ${percent}%`)
+          }
         }
-      }
 
-      xhr.onload = async () => {
-        if (xhr.status === 200) {
-          setUploadStatus('Video uploaded successfully')
-          
-          // Extract frames for AI description
-          setExtracting(true)
-          setUploadStatus('Extracting frames for AI...')
-          try {
-            const frames = await extractFrames(file)
-            if (!validateFramesSize(frames)) {
-              setError('Frames too large. Max 1.5 MB total. Video uploaded but AI unavailable.')
-              setUploadStatus('Video uploaded (AI unavailable)')
-            } else {
-              // Save frames for auto-description on future rings
-              const framesResponse = await fetch(`/api/sim/videos/frames?device=${device}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ frames }),
-              })
-              
-              if (framesResponse.ok) {
-                setUploadStatus('Video uploaded, AI frames saved')
+        xhr.onload = async () => {
+          if (xhr.status === 200) {
+            setUploadStatus('Video uploaded successfully')
+            
+            // Extract frames for AI description
+            setExtracting(true)
+            setUploadStatus('Extracting frames for AI...')
+            try {
+              const frames = await extractFrames(file)
+              if (!validateFramesSize(frames)) {
+                setError('Frames too large. Max 1.5 MB total. Video uploaded but AI unavailable.')
+                setUploadStatus('Video uploaded (AI unavailable)')
               } else {
-                const data = await framesResponse.json().catch(() => ({}))
-                setError(`Video uploaded, AI frames could not be saved: ${data.error || 'Unknown error'}`)
-                setUploadStatus('Video uploaded (AI frames failed)')
+                // Save frames for auto-description on future rings
+                const framesResponse = await fetch(`/api/sim/videos/frames?device=${device}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ frames }),
+                })
+                
+                if (framesResponse.ok) {
+                  setUploadStatus('Video uploaded, AI frames saved')
+                } else {
+                  const data = await framesResponse.json().catch(() => ({}))
+                  setError(`Video uploaded, AI frames could not be saved: ${data.error || 'Unknown error'}`)
+                  setUploadStatus('Video uploaded (AI frames failed)')
+                }
               }
+            } catch (e) {
+              console.error('Frame extraction failed:', e)
+              setError(`Video uploaded, frame extraction failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
+              setUploadStatus('Video uploaded (AI unavailable)')
+            } finally {
+              setExtracting(false)
             }
-          } catch (e) {
-            console.error('Frame extraction failed:', e)
-            setError(`Video uploaded, frame extraction failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
-            setUploadStatus('Video uploaded (AI unavailable)')
-          } finally {
-            setExtracting(false)
-          }
 
-          // Cleanup
-          setFile(null)
-          setPreview(null)
-          if (previewUrl) {
-            URL.revokeObjectURL(previewUrl)
-            setPreviewUrl(null)
+            // Cleanup
+            setFile(null)
+            setPreview(null)
+            if (previewUrl) {
+              URL.revokeObjectURL(previewUrl)
+              setPreviewUrl(null)
+            }
+            setDuration(null)
+            await loadExistingClip()
+            onUploadComplete?.()
+            resolve()
+          } else {
+            const data = JSON.parse(xhr.responseText)
+            reject(new Error(data.error || 'Upload failed'))
           }
-          setDuration(null)
-          await loadExistingClip()
-          onUploadComplete?.()
-        } else {
-          const data = JSON.parse(xhr.responseText)
-          throw new Error(data.error || 'Upload failed')
         }
-      }
 
-      xhr.onerror = () => {
-        setError('Network error during upload')
-        setUploadStatus(null)
-      }
+        xhr.onerror = () => {
+          setError('Network error during upload')
+          setUploadStatus(null)
+          reject(new Error('Network error'))
+        }
 
-      xhr.open('POST', `/api/sim/videos?device=${device}`)
-      xhr.send(file)
+        xhr.open('POST', `/api/sim/videos?device=${device}`)
+        xhr.send(file)
+      })
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
       setUploadStatus(null)
@@ -263,7 +279,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
       <div className="flex items-center gap-2">
         <input
           type="file"
-          accept="video/mp4,video/webm"
+          accept="video/mp4"
           onChange={handleFileSelect}
           disabled={uploading}
           className="text-xs text-slate-400"
@@ -344,7 +360,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
       )}
 
       <p className="text-xs text-slate-500">
-        Max {MAX_SIZE_MB} MB, {MAX_DURATION_SEC} seconds. MP4 or WebM.
+        Max {MAX_SIZE_MB} MB, {MAX_DURATION_SEC} seconds. MP4 only.
       </p>
     </div>
   )
