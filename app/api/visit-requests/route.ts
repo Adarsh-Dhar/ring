@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
     name:        r.name,
     purpose:     r.purpose,
     note:        r.note,
+    riskNote:    r.riskNote ?? null,
     contactKind: r.contactKind,
     startsAt:    r.startsAt.getTime(),
     endsAt:      r.endsAt.getTime(),
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       requests: rows
         .filter(r => r.helperOkAt && !r.residentOkAt)
-        .map(r => ({ ...shape(r), note: null })),
+        .map(r => ({ ...shape(r), note: null, riskNote: null })),
     })
   }
 
