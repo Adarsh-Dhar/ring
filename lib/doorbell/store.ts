@@ -150,7 +150,33 @@ async function getOrCreateState(householdId: string): Promise<HouseholdState> {
 async function loadStateFromDB(householdId: string): Promise<void> {
   try {
     const household = await getHousehold(householdId)
-    if (!household) { console.error(`[STORE] Household not found: ${householdId}`); return }
+    if (!household) {
+      console.error(`[STORE] Household not found: ${householdId}`)
+      // TEST MODE: Create a minimal test household for AI testing
+      if (process.env.TEST_AUTH_BYPASS === '1' && householdId === 'test-household') {
+        console.log(`[STORE] TEST MODE: Creating minimal test household state`)
+        householdStates.set(householdId, {
+          householdId,
+          timezone: 'Asia/Kolkata',
+          plannedMode: 'helper',
+          cases: [],
+          offline: false,
+          dbHealthy: true,
+          timeoutSec: 30,
+          quiet: { enabled: false, startHour: 22, endHour: 6 },
+          expected: [],
+          recurring: [],
+          checkinAt: null,
+          missedAlertDay: null,
+          devices: {},
+          lastTickAt: Date.now(),
+          lastRequestSweepAt: Date.now(),
+          loaded: true,
+        })
+        return
+      }
+      return
+    }
 
     const dbCases = await getCasesForHousehold(householdId, 200)
     const cases: DoorCase[] = dbCases.map(c => ({
