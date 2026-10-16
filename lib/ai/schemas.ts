@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { PURPOSE_KEYS } from '@/lib/doorbell/purposes'
+import { LEVELS, RISK_CATEGORIES } from '@/lib/ai/risk/combine'
 
 export const InterrogatorTurnOut = z.object({
   transcript:          z.string().max(600),
@@ -13,9 +14,11 @@ export const InterrogatorTurnOut = z.object({
   }),
   inconsistencies:     z.array(z.string().max(100)).max(5).default([]),
   evasive:             z.boolean().default(false),
-  nextQuestion:       z.string().max(20).nullable().default(null),
-  realReasonSummary:  z.string().max(100).nullable().default(null),
+  nextQuestion:       z.string().max(200).nullable().default(null),   // 20 WORDS (checked by validQuestion), not 20 characters
+  realReasonSummary:  z.string().max(250).nullable().default(null),
   verdict:            z.enum(['consistent', 'inconsistent', 'evasive', 'unclear']).default('unclear'),
+  /** Running gut-check shown live to helpers. Ungrounded, so the code caps it at 'medium'. */
+  riskHint:           z.enum(LEVELS).default('none'),
 })
 export type InterrogatorTurnResult = z.infer<typeof InterrogatorTurnOut>
 
@@ -36,3 +39,10 @@ export const IntakeTurnOut = z.object({
 export type IntakeTurn = z.infer<typeof IntakeTurnOut>
 
 export const DigestOut = z.object({ text: z.string().max(700) })
+
+/** Final risk judgement. Every non-trivial claim must carry a verbatim quote; code verifies the quotes. */
+export const RiskJudgeOut = z.object({
+  level:     z.enum(LEVELS),
+  evidence:  z.array(z.object({ category: z.enum(RISK_CATEGORIES), quote: z.string().max(200) })).max(6).default([]),
+  rationale: z.string().max(400).default(''),
+})

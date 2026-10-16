@@ -1,6 +1,6 @@
 # AI agents
 
-Four advisory agents. **None of them is on the alert path**: the helper push/SMS, escalation timer and resident
+Five advisory agents. **None of them is on the alert path**: the helper push/SMS, escalation timer and resident
 screen behave exactly as before if AI is off, slow, over quota or wrong.
 
 ## Turn it on
@@ -13,6 +13,7 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 | Agent | Model role | Trigger | Output (who sees it) |
 |---|---|---|---|
 | Door Interrogator | workhorse (audio) | ring (`AI_INTERROGATOR_START`), reply via `POST /api/ai/interrogator/audio` | real-reason summary + verdict + claims + risk flags → helper (unplanned visits only) |
+| Risk Judge | workhorse (text, may fall back to Gemma) | end of every interrogation, plus a live hint on each turn | risk level (none/low/medium/high) + categories + quoted evidence + one-line reason → helper (helper-only) |
 | Note Compressor | workhorse → Gemma fallback | `POST /api/ai/notes` | ≤8-word sentence + icon; **resident sees it only after helper approval** |
 | Visit Intake | workhorse (text) | `POST /api/visit-requests/public/[token]/intake` | verdict note on the VisitRequest → helper |
 | Digest | quality | weekly cron / `POST /api/ai/digests/run` | ~80-word weekly summary → guardian |
@@ -24,7 +25,7 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 - Intake: the LLM only extracts claims and words one ≤20-word question. Calendar/known-visit lookups are done by code
   (±2h of the claimed time, minimal fields) and the verdict is computed deterministically. The visitor is never told
   what is or isn't expected. Calendar text is never sent to the model.
-- Risk flags are regex (+ optional embedding similarity) and are helper-only.
+- Risk level = max(AI judge, keyword-rule floor). The model can raise a level but never lower it below the rules. Every model claim must quote the visitor and the quote is checked against the real transcript in code; a medium/high verdict with no verifiable quote is capped at low. If the judge is off, slow (`AI_RISK_TIMEOUT_MS`) or over budget, the rules still produce a level. Risk output is helper-only and never reaches the visitor or resident. Set `AI_RISK_JUDGE=0` to use keyword rules only.
 - Budgets (`lib/ai/budget.ts`) are per model RPM/RPD in Redis (in-memory fallback). Out of budget ⇒ degrade, never error.
 - Audio/images never fall back to the text-only Gemma model.
 - Every call is logged to `AiRun`; `GET /api/ai/usage` shows the last 24h.

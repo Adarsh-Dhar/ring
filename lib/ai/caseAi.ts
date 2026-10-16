@@ -7,12 +7,13 @@ import { pushToMembership } from '@/lib/doorbell/notify'
 export async function setCaseAi(caseId: string, data: {
   visitorSummary?: string | null; riskFlags?: string[]; interrogationState?: string | null;
   interrogationTurns?: any; interrogationVerdict?: string | null; interrogationClaims?: any
+  riskLevel?: string | null; riskAssessment?: any
 }) {
   try {
     // Read existing case before updating to detect first result
     const existing = await getDb().case.findUnique({
       where: { id: caseId },
-      select: { id: true, householdId: true, visitorSummary: true, riskFlags: true, interrogationState: true },
+      select: { id: true, householdId: true, interrogationState: true },
     })
 
     if (!existing) {
@@ -20,8 +21,8 @@ export async function setCaseAi(caseId: string, data: {
       return
     }
 
-    const isFirstResult = !existing.visitorSummary &&
-                           (!existing.riskFlags || (Array.isArray(existing.riskFlags) && existing.riskFlags.length === 0))
+    // First time this case reaches 'done' (risk flags are now written live, so they can no longer signal "first").
+    const isFirstResult = existing.interrogationState !== 'done'
 
     const d: any = {}
     if ('visitorSummary' in data) d.visitorSummary = data.visitorSummary
@@ -30,6 +31,8 @@ export async function setCaseAi(caseId: string, data: {
     if ('interrogationTurns' in data) d.interrogationTurns = data.interrogationTurns
     if ('interrogationVerdict' in data) d.interrogationVerdict = data.interrogationVerdict
     if ('interrogationClaims' in data) d.interrogationClaims = data.interrogationClaims
+    if ('riskLevel' in data) d.riskLevel = data.riskLevel
+    if ('riskAssessment' in data) d.riskAssessment = data.riskAssessment
     await getDb().case.update({ where: { id: caseId }, data: d })
 
     // Push notification to helpers when interrogation completes (state === 'done')
@@ -37,20 +40,22 @@ export async function setCaseAi(caseId: string, data: {
       const memberships = await getApprovedMemberships(existing.householdId)
       const helperMemberships = memberships.filter(m => m.role === 'helper')
       const verdict = data.interrogationVerdict || 'unclear'
-      const body = `Visitor claims: ${data.visitorSummary.slice(0, 80)}${data.visitorSummary.length > 80 ? '...' : ''}. Verdict: ${verdict}.`
+      const risk = data.riskLevel ?? 'none'
+      const title = risk === 'high' ? '⚠️ Doorbell: high-risk visitor' : risk === 'medium' ? '⚠️ Doorbell: check this visitor' : '🎙️ Doorbell AI update'
+      const body = `Visitor claims: ${data.visitorSummary.slice(0, 80)}${data.visitorSummary.length > 80 ? '...' : ''}. Verdict: ${verdict}.${risk !== 'none' ? ` Risk: ${risk}.` : ''}`
       for (const m of helperMemberships) {
         // In-app notification (separate from web push; failure must not block the push or the save)
         await getDb().notification.create({
           data: {
             type: 'alert',
-            title: '🎙️ Doorbell AI update',
+            title,
             message: body,
             toUserId: m.userId,
             metadata: { householdId: existing.householdId, caseId, url: '/helper', source: 'ai' },
           },
         }).catch(e => console.error('[AI] in-app notification failed', e))
         await pushToMembership(m.id, {
-          title: '🎙️ Doorbell AI update',
+          title,
           body,
           tag: `case:${caseId}`,
           url: '/helper'
@@ -80,6 +85,8 @@ export async function getCaseAi(householdId: string, caseId: string) {
       interrogationTurns: true,
       interrogationVerdict: true,
       interrogationClaims: true,
+      riskLevel: true,
+      riskAssessment: true,
     } as Prisma.CaseSelect,
   })
   if (!c) return null

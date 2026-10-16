@@ -5,8 +5,20 @@ import { useEffect, useState } from 'react'
 type InterrogationTurn = { question: string; transcript: string; timestamp: number }
 type Claims = { name: string | null; organisation: string | null; reason: string | null; forWhom: string | null; time: string | null }
 
+type RiskLevel = 'none' | 'low' | 'medium' | 'high'
+type Risk = {
+  level: RiskLevel
+  labels?: string[]
+  evidence?: { category: string; quote: string }[]
+  rationale?: string
+  action?: string | null
+  source?: 'ai+rules' | 'rules' | 'live'
+}
+
 type Ai = {
   visitorSummary: string | null
+  riskLevel?: RiskLevel | null
+  riskAssessment?: Risk | null
   riskFlags: string[] | unknown
   interrogationState: string | null
   interrogationTurns: InterrogationTurn[] | unknown
@@ -27,6 +39,26 @@ const VERDICT_BADGE: Record<string, string> = {
   inconsistent: 'bg-amber-700',
   evasive: 'bg-red-700',
   unclear: 'bg-slate-700',
+}
+
+const LABEL_BY_CAT: Record<string, string> = {
+  urgency_pressure: 'Pressure to act quickly', payment_request: 'Money or card details',
+  official_impersonation: 'Claims to be an official', entry_request: 'Wants to come inside',
+  home_probing: 'Asked who else is at home', unsolicited_work: 'Unrequested work offer',
+  story_mismatch: 'Answers do not add up', evasive_answers: 'Avoided answering',
+  manipulation_attempt: 'Tried to steer the assistant', known_scam_wording: 'Matches known tricks', other: 'Other',
+}
+const RISK_BOX: Record<RiskLevel, string> = {
+  none: 'bg-emerald-900/40 text-emerald-100',
+  low: 'bg-slate-700 text-slate-100',
+  medium: 'bg-amber-800/80 text-amber-50',
+  high: 'bg-red-800/90 text-red-50',
+}
+const RISK_HEADLINE: Record<RiskLevel, string> = {
+  none: '✅ No warning signs heard',
+  low: 'ℹ️ Low concern',
+  medium: '⚠️ Check this visitor',
+  high: '🚨 High risk: classic doorstep-scam signs',
 }
 
 /** Advisory AI info for an open case. Renders nothing for planned visits. */
@@ -81,6 +113,9 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const turns = Array.isArray(ai?.interrogationTurns) ? (ai.interrogationTurns as InterrogationTurn[]) : []
   const claims = ai?.interrogationClaims as Claims | null
   const verdict = ai?.interrogationVerdict || 'unclear'
+  const risk = ai?.riskAssessment ?? null
+  const riskLevel: RiskLevel = (ai?.riskLevel as RiskLevel) || risk?.level || 'none'
+  const hasRisk = riskLevel === 'medium' || riskLevel === 'high' || riskLevel === 'low'
 
   // Show unsupported message
   if (ai?.interrogationState === 'unsupported') {
@@ -92,7 +127,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   }
 
   // Show analyzing state
-  if (analyzing && !ai?.visitorSummary && flags.length === 0) {
+  if (analyzing && !ai?.visitorSummary && flags.length === 0 && !hasRisk) {
     const stateText = ai?.interrogationState === 'asking' ? '🎙️ Doorbell is asking a question…'
                     : ai?.interrogationState === 'listening' ? '🎙️ Doorbell is listening…'
                     : '🔍 AI is analysing…'
@@ -104,7 +139,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   }
 
   // Show active interrogator state without results yet
-  if (!ai?.visitorSummary && flags.length === 0) {
+  if (!ai?.visitorSummary && flags.length === 0 && !hasRisk) {
     return ai?.interrogationState === 'listening' || ai?.interrogationState === 'asking'
       ? <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">🎙️ Doorbell is asking the visitor questions…</p>
       : null
@@ -112,6 +147,32 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
 
   return (
     <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm space-y-3">
+      {/* Risk assessment: the first thing a helper reads */}
+      {(hasRisk || ai?.interrogationState === 'done') && (
+        <div className={`rounded-lg p-3 ${RISK_BOX[riskLevel]}`}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-semibold">{RISK_HEADLINE[riskLevel]}</p>
+            {risk?.source === 'live' && <span className="text-xs opacity-80">still talking…</span>}
+          </div>
+          {risk?.rationale && <p className="mt-1">{risk.rationale}</p>}
+          {Array.isArray(risk?.evidence) && risk!.evidence!.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {risk!.evidence!.map((e, i) => (
+                <li key={i} className="text-xs">
+                  <span className="opacity-80">{LABEL_BY_CAT[e.category] ?? e.category}:</span> "{e.quote}"
+                </li>
+              ))}
+            </ul>
+          )}
+          {!risk?.evidence?.length && flags.length > 0 && (
+            <ul className="mt-1 text-xs">{flags.map((f) => <li key={f}>• {f}</li>)}</ul>
+          )}
+          {risk?.action && <p className="mt-2 font-medium">{risk.action}</p>}
+          <p className="mt-2 text-xs opacity-70">
+            {risk?.source === 'ai+rules' ? 'AI judgement + keyword check' : 'Keyword check only (AI was unavailable)'}. Never open the door because of this alone.
+          </p>
+        </div>
+      )}
       {/* Real reason summary and verdict */}
       {ai?.visitorSummary && (
         <div>
@@ -155,7 +216,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
       )}
 
       {/* Risk flags */}
-      {flags.length > 0 && (
+      {flags.length > 0 && !risk && (
         <ul className="rounded-lg bg-amber-900/60 p-2 text-amber-100">
           {flags.map((f) => <li key={f}>⚠️ {f}</li>)}
         </ul>

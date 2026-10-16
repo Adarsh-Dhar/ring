@@ -2,6 +2,8 @@ import { generateJson } from '@/lib/ai/client'
 import { InterrogatorTurnOut, type InterrogatorTurnResult } from '@/lib/ai/schemas'
 import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
 import { riskFlagsFor, semanticFlag } from './risk'
+import { assessRisk } from './riskJudge'
+import { liveAssessment } from '@/lib/ai/risk/combine'
 import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
 import { pickTalkback, interrogatorLines, LISTEN_SECONDS } from '@/lib/ai/talkback'
 import { clampWords, hasBannedPhrase, validQuestion } from '@/lib/ai/guard'
@@ -14,9 +16,10 @@ const MAX_TURNS = 4
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
 
 interface InterrogationTurn {
-  question: string
+  question: string      // the question this answer replies to
   transcript: string
   timestamp: number
+  next?: string | null  // the follow-up we asked after this answer (becomes the next turn's question)
 }
 
 /** Entry point from the job. Checks the gate, then starts the interrogation. Never throws. */
@@ -115,22 +118,28 @@ export async function processAnswer(
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    // Save the turn
+    // Save the turn. The question it answers is the follow-up we asked last time (or the greeting on turn 1).
+    const asked = turns.length > 0 ? (turns[turns.length - 1].next ?? interrogatorLines(null).greet) : interrogatorLines(null).greet
     const newTurn: InterrogationTurn = {
-      question: turns.length > 0 ? turns[turns.length - 1].question : interrogatorLines(null).greet,
+      question: asked,
       transcript: out.transcript,
       timestamp: Date.now(),
+      next: out.nextQuestion,
     }
     const updatedTurns = [...turns, newTurn]
 
-    // If no next question, we're done
-    if (!out.nextQuestion) {
+    // No next question, or that was the last allowed answer: we're done
+    if (!out.nextQuestion || updatedTurns.length >= MAX_TURNS) {
       await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    // Save the turn and continue
-    await setCaseAi(caseId, { interrogationTurns: updatedTurns as any, interrogationState: 'asking' })
+    // Save the turn and continue. Risk is updated live so helpers see it while the visitor is still at the door.
+    const live = liveAssessment(riskFlagsFor(updatedTurns.map(t => t.transcript).join(' ')), out.riskHint)
+    await setCaseAi(caseId, {
+      interrogationTurns: updatedTurns as any, interrogationState: 'asking',
+      riskLevel: live.level, riskFlags: live.labels, riskAssessment: live as any,
+    })
     return { question: out.nextQuestion, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
@@ -148,14 +157,21 @@ async function finishInterrogation(
 ) {
   const finalTurn = turns[turns.length - 1]
   const allTranscripts = turns.map(t => t.transcript).join(' ')
-  const flags = riskFlagsFor(allTranscripts)
-  if (!flags.length) { const s = await semanticFlag(householdId, allTranscripts); if (s) flags.push(s) }
 
-  // Add inconsistency and evasive flags from model output
-  if (modelResult) {
-    if (modelResult.inconsistencies.length > 0) flags.push('Inconsistent answers')
-    if (modelResult.evasive) flags.push('Evasive answers')
-  }
+  // Layer 1: deterministic keyword rules (+ optional embedding match). Always runs, never fails.
+  const ruleFlags = riskFlagsFor(allTranscripts)
+  if (!ruleFlags.length) { const s = await semanticFlag(householdId, allTranscripts); if (s) ruleFlags.push(s) }
+
+  // Layer 2: the AI risk judge reads the whole conversation. Layer 3 (in code) combines both and checks the model's quotes.
+  const risk = await assessRisk({
+    householdId, caseId,
+    turns: turns.map(t => ({ question: t.question, transcript: t.transcript })),
+    ruleFlags,
+    inconsistencies: modelResult?.inconsistencies ?? [],
+    evasive: !!modelResult?.evasive || reason === 'evasive',
+    liveHint: modelResult?.riskHint ?? 'none',
+  })
+  const flags = risk.labels
 
   const summary = modelResult?.realReasonSummary || clampWords(finalTurn.transcript || 'Visitor spoke but the reason is unclear.', 30)
   const verdict = modelResult?.verdict || 'unclear'
@@ -164,6 +180,8 @@ async function finishInterrogation(
   await setCaseAi(caseId, {
     visitorSummary: summary,
     riskFlags: flags,
+    riskLevel: risk.level,
+    riskAssessment: risk as any,
     interrogationTurns: turns as any,
     interrogationVerdict: verdict,
     interrogationClaims: claims as any,

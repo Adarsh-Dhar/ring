@@ -184,6 +184,8 @@ model Case {
   interrogationTurns    Json      @default("[]")
   interrogationVerdict   String?
   interrogationClaims   Json?
+  riskLevel             String?   // none | low | medium | high (helper-only, advisory)
+  riskAssessment        Json?     // { level, categories, evidence[{category,quote}], rationale, action, source }
   household             Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
