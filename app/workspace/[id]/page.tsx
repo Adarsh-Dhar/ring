@@ -101,9 +101,6 @@ export default function WorkspacePage() {
       console.error('Failed to load dashboard data', e)
     }
   }, [workspaceId, currentMonth])
-  const connectGoogleCalendar = () => {
-    window.location.href = `/api/google-calendar/oauth/start?h=${workspaceId}`
-  }
 
   const checkRingStatus = async () => {
     try {
@@ -541,14 +538,6 @@ export default function WorkspacePage() {
             <div className="bg-white rounded-lg shadow-md p-6 mb-8">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-900">Google Calendar</h3>
-                {!dashboardData?.googleCalendarConnected && (
-                  <button
-                    onClick={connectGoogleCalendar}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors text-sm"
-                  >
-                    Connect Calendar
-                  </button>
-                )}
               </div>
               {dashboardData?.googleCalendarConnected ? (
                 <div>
@@ -642,26 +631,11 @@ export default function WorkspacePage() {
                   <svg className="w-12 h-12 mx-auto mb-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  <p>Connect your Google Calendar to view and manage events</p>
+                  <p>No Google Calendar connected. Sign in with Google to view your calendar events.</p>
                 </div>
               )}
             </div>
-            {isResidentView && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                <h3 className="text-lg font-semibold text-blue-900 mb-2">
-                  Connect Your Ring Doorbell
-                </h3>
-                <p className="text-blue-800 mb-4">
-                  Link your Ring account to start receiving doorbell events.
-                </p>
-                <button
-                  onClick={handleConnectRing}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  Connect Ring Account
-                </button>
-              </div>
-            )}
+
           </div>
         )}
 
@@ -721,6 +695,23 @@ export default function WorkspacePage() {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'helpers' && (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Helper Management</h2>
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <p className="text-gray-600 mb-4">
+                Add trusted family members or friends as helpers. They can create visitor passes and receive doorbell alerts.
+              </p>
+              <Link
+                href={`/workspace/${workspaceId}/add-helper`}
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+              >
+                Add Helper
+              </Link>
             </div>
           </div>
         )}

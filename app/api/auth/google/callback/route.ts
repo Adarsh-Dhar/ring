@@ -6,6 +6,7 @@ import { sign, createSession } from '@/lib/auth'
 import { COOKIE, cookieOpts } from '@/lib/guard'
 import { normalizeEmail } from '@/lib/identity'
 import { buildUrl } from '@/lib/redirect'
+import { encrypt } from '@/lib/auth'
 import crypto from 'crypto'
 
 export const dynamic = 'force-dynamic'
@@ -158,18 +159,39 @@ export async function GET(req: NextRequest) {
           },
         })
       } else {
-        // Create new user (do NOT store Google tokens - those are for Calendar only)
+        // Create new user and store Google tokens for Calendar access
+        const encryptedAccessToken = encrypt(tokens.access_token)
+        const encryptedRefreshToken = encrypt(tokens.refresh_token)
+        
         user = await db.user.create({
           data: {
             email: normalizedEmail,
             name,
             googleSub,
+            googleAccessToken: encryptedAccessToken,
+            googleRefreshToken: encryptedRefreshToken,
+            googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
             sessionVersion: 1,
           },
         })
       }
+    } else {
+      // Update existing user with Google tokens if they don't have them
+      if (!user.googleRefreshToken) {
+        const encryptedAccessToken = encrypt(tokens.access_token)
+        const encryptedRefreshToken = encrypt(tokens.refresh_token)
+        
+        user = await db.user.update({
+          where: { id: user.id },
+          data: {
+            googleAccessToken: encryptedAccessToken,
+            googleRefreshToken: encryptedRefreshToken,
+            googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
+            sessionVersion: { increment: 1 },
+          },
+        })
+      }
     }
-    // Do NOT update Google tokens on login - tokens are only for Calendar
 
     // Create session
     const session = createSession(user.id, 'user', '', undefined, user.sessionVersion || 1)

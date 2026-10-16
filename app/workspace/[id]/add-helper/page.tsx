@@ -44,12 +44,15 @@ export default function AddHelperPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setError(data.error || 'Failed to add helper')
+        console.error('Add helper error:', data)
+        const errorMessage = data.error || data.message || data.details || `Failed to add helper (Status: ${res.status})`
+        setError(errorMessage)
         return
       }
 
       router.push(`/workspace/${workspaceId}?role=${role}`)
-    } catch {
+    } catch (err) {
+      console.error('Add helper network error:', err)
       setError('Network error. Please try again.')
     } finally {
       setLoading(false)

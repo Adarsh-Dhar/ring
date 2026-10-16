@@ -58,10 +58,13 @@ export async function GET(req: NextRequest) {
 const Body = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('invite'),
-    email:  z.string().email(),
+    email:  z.string().email().optional(),
+    phone:  z.string().optional(),
     name:   z.string().trim().min(1).max(60),
     role:   z.enum(['guardian', 'helper']),
     emoji:  z.string().max(8).default('🙂'),
+  }).refine(data => data.email || data.phone, {
+    message: "Either email or phone must be provided"
   }),
   z.object({ action: z.literal('remove'),  id: z.string().max(80) }),
   z.object({ action: z.literal('move'),    id: z.string().max(80), dir: z.union([z.literal(-1), z.literal(1)]) }),
@@ -79,7 +82,10 @@ export async function POST(req: NextRequest) {
   const householdId = a.session!.householdId
 
   const p = await parse(req, Body)
-  if (p.ok === false) return p.res
+  if (p.ok === false) {
+    console.error('[MEMBERS POST] Validation error:', p.res)
+    return p.res
+  }
   const b = p.data
 
   let db
@@ -93,24 +99,38 @@ export async function POST(req: NextRequest) {
   try {
     switch (b.action) {
       case 'invite': {
-        if (!b.email) {
-          return fail('An email address is required to invite a member.', 400)
+        if (!b.email && !b.phone) {
+          return fail('An email address or phone number is required to invite a member.', 400)
         }
 
         // Prevent inviting yourself
-        if (b.email.toLowerCase() === a.session!.userId) {
+        if (b.email && b.email.toLowerCase() === a.session!.userId) {
           return fail('You cannot invite yourself.', 400)
         }
 
-        const email = normalizeEmail(b.email)
+        const email = b.email ? normalizeEmail(b.email) : null
+        const phone = b.phone ? b.phone.trim() : null
 
-        // Check if user exists
-        let user = await db.user.findUnique({ where: { email } })
+        console.log('[MEMBERS POST] invite request:', { name: b.name, email, phone, role: b.role })
+
+        // Check if user exists by email or phone
+        let user = null
+        if (email) {
+          user = await db.user.findUnique({ where: { email } })
+        }
+        if (!user && phone) {
+          user = await db.user.findUnique({ where: { phone } })
+        }
+
         if (!user) {
-          // Create new user without password (Google-only auth)
-          user = await db.user.create({
-            data: { email, name: b.name },
-          })
+          // User not found in database - return error instead of creating
+          const contactInfo = email || phone
+          return fail(`Helper not found in database. No user exists with ${contactInfo}. Please ask them to sign up first.`, 404)
+        }
+
+        // Verify the name matches the user found (case-insensitive)
+        if (user.name && user.name.toLowerCase() !== b.name.toLowerCase()) {
+          return fail(`Helper not found. No user exists with this name and contact information.`, 404)
         }
 
         // Check if they're already a member

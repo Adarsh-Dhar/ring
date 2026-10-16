@@ -38,11 +38,12 @@ export async function GET(req: NextRequest) {
         `client_id=${GOOGLE_CLIENT_ID}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=code&` +
-        `scope=${encodeURIComponent('openid email profile')}&` +
+        `scope=${encodeURIComponent('openid email profile https://www.googleapis.com/auth/calendar.events')}&` +
         `state=${state}&` +
         `code_challenge=${codeChallenge}&` +
         `code_challenge_method=S256&` +
-        `prompt=select_account`
+        `prompt=select_account&` +
+        `access_type=offline`
     )
   )
 
