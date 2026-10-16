@@ -47,11 +47,42 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
   const [srcIndex, setSrcIndex] = useState(0)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hasUploadedClip, setHasUploadedClip] = useState<boolean | null>(null)
+  const [loading, setLoading] = useState(true)
 
   const currentSrc = sources[srcIndex]
+  const uploadedClipUrl = sources[0] // First source is the uploaded clip
+
+  // Check if uploaded clip exists
+  React.useEffect(() => {
+    const checkUploadedClip = async () => {
+      setLoading(true)
+      try {
+        const url = new URL(uploadedClipUrl, window.location.origin)
+        url.searchParams.set('device', label)
+        const response = await fetch(url.toString())
+        const data = await response.json()
+        setHasUploadedClip(data.exists === true)
+      } catch (e) {
+        console.error('[SimVideo] Failed to check uploaded clip:', e)
+        setHasUploadedClip(false)
+      } finally {
+        setLoading(false)
+      }
+    }
+    checkUploadedClip()
+  }, [label, uploadedClipUrl])
 
   const handleError = () => {
     console.warn(`[SimVideo] Failed to load source ${srcIndex}: ${currentSrc}`)
+    
+    // If uploaded clip exists and fails, show error instead of falling back
+    if (srcIndex === 0 && hasUploadedClip === true) {
+      setError('Failed to play uploaded video')
+      return
+    }
+    
+    // Otherwise, try next source
     if (srcIndex < sources.length - 1) {
       setSrcIndex(srcIndex + 1)
       setError(null)
@@ -70,7 +101,26 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
     setSrcIndex(0)
     setMissing(false)
     setError(null)
+    setHasUploadedClip(null)
   }, [label])
+
+  if (loading) {
+    return (
+      <div className="rounded-xl bg-slate-800 aspect-video flex items-center justify-center text-slate-400 text-sm">
+        Loading video…
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl bg-slate-800 aspect-video flex flex-col items-center justify-center gap-2 text-slate-400 text-sm text-center px-6">
+        <p className="text-2xl">⚠️</p>
+        <p>{error}</p>
+        <p className="text-xs text-slate-500">Device: {label}</p>
+      </div>
+    )
+  }
 
   if (missing) {
     return (
@@ -101,11 +151,6 @@ function SimVideo({ sources, label }: { sources: string[]; label: string }) {
       <div className="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-0.5 text-xs text-slate-300">
         🎬 Sim · {label}
       </div>
-      {error && (
-        <div className="absolute top-2 right-2 rounded bg-red-900/80 px-2 py-0.5 text-xs text-red-200">
-          {error}
-        </div>
-      )}
     </div>
   )
 }

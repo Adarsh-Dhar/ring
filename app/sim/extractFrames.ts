@@ -109,14 +109,25 @@ export async function extractFramesWithTimestamps(videoFile: File): Promise<Extr
 }
 
 /**
- * Check if the total size of frames is within limits (approx 1.5 MB).
+ * Check if the total size of frames is within limits.
+ * Server limits: 500 KB per frame, 3 MB total.
  */
 export function validateFramesSize(frames: string[]): boolean {
-  let totalSize = 0
+  const MAX_FRAME_SIZE = 500_000 // 500 KB per frame
+  const MAX_TOTAL_SIZE = 3_000_000 // 3 MB total
+  
   for (const frame of frames) {
     // Base64 encoded size is roughly 4/3 of binary size
     const binarySize = (frame.length * 3) / 4
+    if (binarySize > MAX_FRAME_SIZE) {
+      return false
+    }
+  }
+  
+  let totalSize = 0
+  for (const frame of frames) {
+    const binarySize = (frame.length * 3) / 4
     totalSize += binarySize
   }
-  return totalSize < 1.5 * 1024 * 1024 // 1.5 MB
+  return totalSize < MAX_TOTAL_SIZE
 }

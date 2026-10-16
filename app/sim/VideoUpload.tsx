@@ -28,6 +28,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
   const [uploadedClip, setUploadedClip] = useState<UploadedClip | null>(null)
   const [loadingClip, setLoadingClip] = useState(true)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const MAX_SIZE_MB = 50
   const MAX_DURATION_SEC = 30
@@ -45,6 +46,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
 
   const loadExistingClip = async () => {
     setLoadingClip(true)
+    setUploadedClip(null) // Clear previous device's clip
     try {
       const response = await fetch('/api/sim/videos')
       if (response.ok) {
@@ -70,8 +72,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
     if (!ALLOWED_MIME_TYPES.includes(selected.type)) {
       setError('Please select an MP4 video file')
       // Cleanup if file is rejected
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement
-      if (input) input.value = ''
+      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
@@ -80,8 +81,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
     if (sizeMB > MAX_SIZE_MB) {
       setError(`File too large. Maximum ${MAX_SIZE_MB} MB.`)
       // Cleanup if file is rejected
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement
-      if (input) input.value = ''
+      if (fileInputRef.current) fileInputRef.current.value = ''
       return
     }
 
@@ -108,7 +108,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           URL.revokeObjectURL(previewUrl)
           setPreviewUrl(null)
         }
-        const input = document.querySelector('input[type="file"]') as HTMLInputElement
+        const input = fileInputRef.current
         if (input) input.value = ''
         return
       }
@@ -121,7 +121,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           URL.revokeObjectURL(previewUrl)
           setPreviewUrl(null)
         }
-        const input = document.querySelector('input[type="file"]') as HTMLInputElement
+        const input = fileInputRef.current
         if (input) input.value = ''
       } else {
         setDuration(video.duration)
@@ -136,8 +136,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
         URL.revokeObjectURL(previewUrl)
         setPreviewUrl(null)
       }
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement
-      if (input) input.value = ''
+        if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
     video.onloadedmetadata = handleMetadata
@@ -153,9 +152,9 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
     setUploadStatus('Uploading video...')
 
     try {
-      // Upload video with XMLHttpRequest for progress tracking
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest()
+        const UPLOAD_TIMEOUT_MS = 120000 // 2 minutes timeout
         
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
@@ -165,12 +164,25 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
         }
 
         xhr.onload = async () => {
-          if (xhr.status === 200) {
+          try {
+            if (xhr.status < 200 || xhr.status >= 300) {
+              let message = `Upload failed (HTTP ${xhr.status})`
+
+              try {
+                const data = JSON.parse(xhr.responseText)
+                message = data.error || message
+              } catch {
+                // Keep the useful HTTP status when the body isn't JSON
+              }
+
+              throw new Error(message)
+            }
+
+            // Upload succeeded, now extract frames for AI description
             setUploadStatus('Video uploaded successfully')
-            
-            // Extract frames for AI description
             setExtracting(true)
             setUploadStatus('Extracting frames for AI...')
+            
             try {
               const frames = await extractFrames(file)
               if (!validateFramesSize(frames)) {
@@ -211,9 +223,12 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
             await loadExistingClip()
             onUploadComplete?.()
             resolve()
-          } else {
-            const data = JSON.parse(xhr.responseText)
-            reject(new Error(data.error || 'Upload failed'))
+          } catch (error) {
+            reject(
+              error instanceof Error
+                ? error
+                : new Error('Upload failed')
+            )
           }
         }
 
@@ -223,6 +238,19 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
           reject(new Error('Network error'))
         }
 
+        xhr.onabort = () => {
+          setError('Upload cancelled')
+          setUploadStatus(null)
+          reject(new Error('Upload cancelled'))
+        }
+
+        xhr.ontimeout = () => {
+          setError('Upload timed out')
+          setUploadStatus(null)
+          reject(new Error('Upload timed out'))
+        }
+
+        xhr.timeout = UPLOAD_TIMEOUT_MS
         xhr.open('POST', `/api/sim/videos?device=${device}`)
         xhr.send(file)
       })
@@ -270,14 +298,14 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
     setError(null)
     setUploadStatus(null)
     // Reset file input
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    if (input) input.value = ''
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <input
+          ref={fileInputRef}
           type="file"
           accept="video/mp4"
           onChange={handleFileSelect}

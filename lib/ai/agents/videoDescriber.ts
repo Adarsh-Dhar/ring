@@ -1,4 +1,4 @@
-import { generateJson } from '@/lib/ai/client'
+import { generateJson, type Part } from '@/lib/ai/client'
 import { VideoDescriberOut, type VideoDescriberResult } from '@/lib/ai/schemas'
 import { VIDEO_DESCRIBER_SYSTEM } from '@/lib/ai/prompts/videoDescriber'
 import { setCaseAi } from '@/lib/ai/caseAi'
@@ -22,11 +22,31 @@ export async function describeClip(
   }
   if (totalSize > 3_000_000) return null // ~3 MB max
 
-  // Build parts: each frame as an inline data image
-  const parts = frames.map((frame, i) => ({
-    inlineData: { mimeType: 'image/jpeg', data: frame.split(',')[1] }, // Remove data URL prefix
-    text: i === 0 ? 'Describe this video sequence.' : '',
-  }))
+  // Build parts: text prompt followed by each frame as inline data
+  const parts: Part[] = [
+    {
+      text: [
+        'The following images are frames from one doorbell video.',
+        'They are supplied in chronological order.',
+        'Summarize visible actions, clothing and objects.',
+        'Do not infer identity, intent, or whether the visitor is safe.',
+      ].join(' '),
+    },
+    ...frames.map((frame) => {
+      const prefix = 'data:image/jpeg;base64,'
+
+      if (!frame.startsWith(prefix)) {
+        throw new Error('Invalid JPEG frame')
+      }
+
+      return {
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: frame.slice(prefix.length),
+        },
+      }
+    }),
+  ]
 
   const out = await generateJson({
     agent: 'videoDescriber',

@@ -12,8 +12,8 @@ if (process.env.DEMO_MODE !== '1') {
 }
 
 const MAX_FRAMES = 6
-const MAX_FRAME_SIZE = 500_000 // 500 KB per frame
-const MAX_TOTAL_SIZE = 3_000_000 // 3 MB total
+const MAX_FRAME_SIZE = 500_000 // 500 KB per frame (decoded)
+const MAX_TOTAL_SIZE = 3_000_000 // 3 MB total (decoded)
 
 const RequestSchema = z.object({
   frames: z.array(z.string()).min(1).max(MAX_FRAMES),
@@ -22,7 +22,7 @@ const RequestSchema = z.object({
 const DATA_URL_PREFIX = 'data:image/jpeg;base64,'
 
 /**
- * Validate a data URL is a JPEG image.
+ * Validate a data URL is a valid JPEG image.
  */
 function isValidDataURL(str: string): boolean {
   if (!str.startsWith(DATA_URL_PREFIX)) return false
@@ -35,6 +35,13 @@ function isValidDataURL(str: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Calculate decoded size from base64 string.
+ */
+function decodedSize(base64: string): number {
+  return (base64.length * 3) / 4
 }
 
 export async function POST(req: NextRequest) {
@@ -72,7 +79,7 @@ export async function POST(req: NextRequest) {
       return fail(`Frame ${i + 1} is not a valid JPEG data URL`, 400)
     }
     const base64 = frame.slice(DATA_URL_PREFIX.length)
-    const size = Buffer.byteLength(base64, 'base64')
+    const size = decodedSize(base64)
     if (size > MAX_FRAME_SIZE) {
       return fail(`Frame ${i + 1} too large. Maximum ${MAX_FRAME_SIZE / 1024} KB.`, 400)
     }
@@ -82,7 +89,7 @@ export async function POST(req: NextRequest) {
   let totalSize = 0
   for (const frame of frames) {
     const base64 = frame.slice(DATA_URL_PREFIX.length)
-    totalSize += Buffer.byteLength(base64, 'base64')
+    totalSize += decodedSize(base64)
   }
   if (totalSize > MAX_TOTAL_SIZE) {
     return fail(`Total payload too large. Maximum ${MAX_TOTAL_SIZE / 1024 / 1024} MB.`, 400)

@@ -21,7 +21,20 @@ export async function GET(req: NextRequest) {
   const householdId = a.session!.householdId
   if (!householdId) return fail('No household selected', 400)
 
+  const url = new URL(req.url)
+  const device = url.searchParams.get('device')
+
   try {
+    if (device) {
+      // Check if a specific device has an uploaded clip
+      const metadata = await statVideo(householdId, device)
+      if (!metadata) {
+        return NextResponse.json({ exists: false })
+      }
+      return NextResponse.json({ exists: true, metadata })
+    }
+
+    // List all videos
     const videos = await listVideos(householdId)
     return NextResponse.json({ videos })
   } catch (e) {
