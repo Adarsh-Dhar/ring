@@ -7,6 +7,7 @@ import { pushToMembership } from '@/lib/doorbell/notify'
 export async function setCaseAi(caseId: string, data: {
   visitorSummary?: string | null; riskFlags?: string[]; clipDescription?: string | null
   clipTags?: unknown; greeterState?: string | null
+  clipActions?: string[]; clipPeopleCount?: number; clipApproachedDoor?: boolean
 }) {
   try {
     const d: any = {}
@@ -15,6 +16,9 @@ export async function setCaseAi(caseId: string, data: {
     if ('clipDescription' in data) d.clipDescription = data.clipDescription
     if ('clipTags' in data) d.clipTags = data.clipTags
     if ('greeterState' in data) d.greeterState = data.greeterState
+    if ('clipActions' in data) d.clipActions = data.clipActions
+    if ('clipPeopleCount' in data) d.clipPeopleCount = data.clipPeopleCount
+    if ('clipApproachedDoor' in data) d.clipApproachedDoor = data.clipApproachedDoor
     await getDb().case.update({ where: { id: caseId }, data: d })
 
     // Push notification to helpers when AI results arrive for the first time
@@ -48,7 +52,17 @@ export async function setCaseAi(caseId: string, data: {
 export async function getCaseAi(householdId: string, caseId: string) {
   const c = await getDb().case.findFirst({
     where: { id: caseId, householdId },
-    select: { id: true, visitorSummary: true, riskFlags: true, clipDescription: true, clipTags: true, greeterState: true } as Prisma.CaseSelect,
+    select: {
+      id: true,
+      visitorSummary: true,
+      riskFlags: true,
+      clipDescription: true,
+      clipTags: true,
+      greeterState: true,
+      clipActions: true,
+      clipPeopleCount: true,
+      clipApproachedDoor: true,
+    } as Prisma.CaseSelect,
   })
   return c
 }

@@ -13,6 +13,7 @@ out/
 
 # Data directory
 data/
+.data/
 
 # Redis dump files
 dump.rdb

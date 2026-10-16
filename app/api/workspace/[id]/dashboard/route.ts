@@ -65,10 +65,28 @@ export async function GET(
     })
 
     // Get pending cases (doorbell alerts that need response)
-    const pendingCases = await db.case.count({
+    const pendingCasesCount = await db.case.count({
       where: {
         householdId,
         status: 'waiting',
+      },
+    })
+
+    // Get detailed pending cases for display
+    const pendingCases = await db.case.findMany({
+      where: {
+        householdId,
+        status: 'waiting',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        createdAt: true,
+        eventType: true,
+        kind: true,
+        deadlineAt: true,
+        helperIndex: true,
       },
     })
 
@@ -109,7 +127,8 @@ export async function GET(
 
     return NextResponse.json({
       ringStatus: ringConnection ? 'connected' : 'not_connected',
-      pendingAlerts: pendingCases,
+      pendingAlerts: pendingCasesCount,
+      pendingCases: pendingCases,
       scheduledVisits: scheduledVisits,
       activePasses: activePasses,
       googleCalendarConnected: !!(user?.googleRefreshToken || user?.googleAccessToken),

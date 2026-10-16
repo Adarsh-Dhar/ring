@@ -3,6 +3,8 @@ import { DescriberOut, type DescriberResult } from '@/lib/ai/schemas'
 import { DESCRIBER_SYSTEM } from '@/lib/ai/prompts/describer'
 import { setCaseAi } from '@/lib/ai/caseAi'
 import { clampWords, hasBannedPhrase } from '@/lib/ai/guard'
+import { readFrames } from '@/lib/sim-videos/store'
+import { describeClip } from './videoDescriber'
 
 /** Agent 2. Vision only; describes clothing and objects. Evidence for the helper, never a decision. */
 export async function describeSnapshot(
@@ -24,7 +26,20 @@ export async function describeSnapshot(
 
 /** Used by the job: fetch the Ring snapshot (or skip for sim devices) and describe it. */
 export async function describeForCase(householdId: string, caseId: string, deviceId: string | null) {
-  if (!deviceId || deviceId.startsWith('sim-')) return null   // /sim uploads go through POST /api/ai/describe
+  if (!deviceId) return null
+
+  // For simulator devices, check if stored frames exist and use video describer
+  if (deviceId.startsWith('sim-')) {
+    const frames = await readFrames(householdId, deviceId)
+    if (frames && frames.length > 0) {
+      console.log('[DESCRIBER] Using stored frames for sim device')
+      return describeClip(householdId, caseId, frames)
+    }
+    // No stored frames, fall through to null
+    return null
+  }
+
+  // Real Ring device: fetch snapshot
   const { fetchRingSnapshot } = await import('@/face/camera')
   const buf = await fetchRingSnapshot(householdId, deviceId)
   if (!buf) {

@@ -131,7 +131,7 @@ export default function HelperPage() {
             )}
           </div>
 
-          {c.kind === 'sos' ? (
+          {c.kind === 'sos' || c.deviceId?.startsWith('sim-') ? (
             c.deviceId ? (
               <LiveView caseId={c.id} deviceId={c.deviceId} />
             ) : (

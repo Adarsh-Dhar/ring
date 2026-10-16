@@ -290,6 +290,51 @@ async function loadStateFromDB(householdId: string): Promise<void> {
   }
 }
 
+// ── Refresh cases from database ───────────────────────────────────────────────
+// Reusable function to reload cases from PostgreSQL and sync with in-memory state.
+// This ensures that events created by webhooks or other server instances are visible.
+
+async function refreshCasesFromDB(
+  householdId: string,
+  state: HouseholdState
+) {
+  const rows = await getCasesForHousehold(householdId, 10);
+
+  state.cases = rows.map((row) => ({
+    id: row.id,
+    kind: row.kind as CaseKind,
+    eventType: row.eventType,
+    createdAt: row.createdAt.getTime(),
+    helperIndex: row.helperIndex,
+    deadlineAt: row.deadlineAt.getTime(),
+    status: row.status as CaseStatus,
+    answer: row.answer as Answer | undefined,
+    answeredBy: row.answeredBy || undefined,
+    resolvedAt: row.resolvedAt?.getTime(),
+    log: (row.log as any) || [],
+    visitor: row.visitor as Visitor | undefined,
+    confirmedAt: row.confirmedAt?.getTime(),
+    declinedAt: row.declinedAt?.getTime(),
+    chain: (row.chain as any) || [],
+    deviceId: row.deviceId,
+    ackedBy: row.ackedBy || undefined,
+    ackedAt: row.ackedAt?.getTime(),
+    lane: row.lane as 'normal' | 'expected' | undefined,
+    recurringId: row.recurringId || undefined,
+    visitIcon: row.visitIcon || undefined,
+    visitLabel: row.visitLabel || undefined,
+    checkWho: (row as any).checkWho || undefined,
+    checkWord: (row as any).checkWord || undefined,
+    checkMode: (row as any).checkMode || undefined,
+    checkAttempts: (row as any).checkAttempts ?? 0,
+    expectedId: (row as any).expectedId || undefined,
+    selfVerifiedAt: (row as any).selfVerifiedAt
+      ? new Date((row as any).selfVerifiedAt).getTime()
+      : undefined,
+    regularId: (row as any).regularId || undefined,
+  }));
+}
+
 // ── State persistence ─────────────────────────────────────────────────────────
 // Only cases and household settings are persisted on every save.
 // Visits are written once (on add) and never re-created here.
@@ -472,6 +517,10 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
   const state     = await getOrCreateState(householdId)
   const household = await getHousehold(householdId)
   if (!household) return null
+
+  // Read recently persisted cases so this process sees events
+  // created by a webhook or another server instance.
+  await refreshCasesFromDB(householdId, state);
 
   await tick(householdId)
   const now      = Date.now()
@@ -665,11 +714,18 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   if (!TRIGGER_EVENTS.has(event.event_type)) return null
 
   await tick(householdId)
-  const existing = activeCase(state)
-  if (existing && existing.status === 'waiting') {
-    addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
-    await updateCase(existing.id, existing)
-    return null  // Return null to indicate the event was merged into an existing case
+
+  // Check database for open waiting cases to prevent duplicates across instances
+  const openCases = await getOpenCasesForHousehold(householdId)
+  if (openCases.length > 0) {
+    // Merge the event into the most recent waiting case
+    const existingId = openCases[0].id
+    const existing = state.cases.find(c => c.id === existingId)
+    if (existing && existing.status === 'waiting') {
+      addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
+      await updateCase(existing.id, existing)
+      return null  // Return null to indicate the event was merged into an existing case
+    }
   }
 
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)

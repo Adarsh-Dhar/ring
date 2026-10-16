@@ -11,6 +11,19 @@ export const DescriberOut = z.object({
 })
 export type DescriberResult = z.infer<typeof DescriberOut>
 
+export const VideoDescriberOut = z.object({
+  summary: z.string().max(100),
+  actions: z.array(z.string().max(50)).max(5),
+  tags: z.object({
+    uniform:    z.boolean().default(false),
+    parcel:     z.boolean().default(false),
+    vehicle:    z.boolean().default(false),
+    peopleCount: z.number().int().min(0).max(10).default(0),
+    approachedDoor: z.boolean().default(false),
+  }).default({ uniform: false, parcel: false, vehicle: false, peopleCount: 0, approachedDoor: false }),
+})
+export type VideoDescriberResult = z.infer<typeof VideoDescriberOut>
+
 export const GreeterOut = z.object({
   transcript:          z.string().max(600),
   claimedIdentity:     z.string().max(80).nullable().default(null),

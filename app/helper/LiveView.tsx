@@ -16,22 +16,23 @@ export default function LiveView({ caseId, deviceId }: { caseId: string; deviceI
 
   // ── Simulated video path ────────────────────────────────────────────────────
   // Pick a clip based on the device name so different "cameras" can show different clips.
-  // Place MP4 files in public/sim/videos/. Names should match the sim- suffix: e.g.
-  //   sim-front-door  →  /sim/videos/front-door.mp4
-  //   sim-back-door   →  /sim/videos/back-door.mp4
-  //   sim-device-1    →  /sim/videos/default.mp4  (fallback)
-  function simVideoSrc(id: string): string {
+  // Source chain (tried in order):
+  //   1. /api/sim/videos/<device> (uploaded video for this household)
+  //   2. /sim/videos/<suffix>.mp4 (public folder, device-specific)
+  //   3. /sim/videos/default.mp4 (public folder, fallback)
+  function simVideoSources(id: string): string[] {
     const suffix = id.replace(/^sim-/, '')
-    // Try the specific clip; fall back to default.mp4
-    // The <video> element will silently fall back to the source that loads.
-    return `/sim/videos/${suffix}.mp4`
+    return [
+      `/api/sim/videos/${id}`,
+      `/sim/videos/${suffix}.mp4`,
+      '/sim/videos/default.mp4',
+    ]
   }
 
   if (isSim) {
     return (
       <SimVideo
-        primarySrc={simVideoSrc(deviceId!)}
-        fallbackSrc="/sim/videos/default.mp4"
+        sources={simVideoSources(deviceId!)}
         label={deviceId!}
       />
     )
@@ -42,13 +43,15 @@ export default function LiveView({ caseId, deviceId }: { caseId: string; deviceI
 
 // ── Sim video component ────────────────────────────────────────────────────────
 
-function SimVideo({ primarySrc, fallbackSrc, label }: { primarySrc: string; fallbackSrc: string; label: string }) {
-  const [src, setSrc] = useState(primarySrc)
+function SimVideo({ sources, label }: { sources: string[]; label: string }) {
+  const [srcIndex, setSrcIndex] = useState(0)
   const [missing, setMissing] = useState(false)
 
+  const currentSrc = sources[srcIndex]
+
   const handleError = () => {
-    if (src !== fallbackSrc) {
-      setSrc(fallbackSrc)
+    if (srcIndex < sources.length - 1) {
+      setSrcIndex(srcIndex + 1)
     } else {
       setMissing(true)
     }
@@ -70,8 +73,8 @@ function SimVideo({ primarySrc, fallbackSrc, label }: { primarySrc: string; fall
   return (
     <div className="rounded-xl bg-black aspect-video relative overflow-hidden">
       <video
-        key={src}
-        src={src}
+        key={currentSrc}
+        src={currentSrc}
         autoPlay
         loop
         muted

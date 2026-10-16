@@ -41,6 +41,7 @@ services:
       TRUST_X_FORWARDED_FOR: "true"
     volumes:
       - ./videos:/usr/src/app/videos:ro    # door camera mp4s
+      - sim_videos:/usr/src/app/.data/sim-videos  # simulator video clips
 
   # HTTPS in front of the app. Web push and Ring webhooks both need a real https address.
   caddy:
@@ -60,3 +61,4 @@ services:
 volumes:
   pg_data:
   caddy_data:
+  sim_videos:

@@ -7,6 +7,9 @@ type Ai = {
   riskFlags: string[] | unknown
   clipDescription: string | null
   greeterState: string | null
+  clipActions?: string[] | null
+  clipPeopleCount?: number | null
+  clipApproachedDoor?: boolean | null
 }
 
 /** Advisory AI info for an open case. Renders nothing when there is none (AI off, or not ready yet). */
@@ -64,6 +67,17 @@ export default function AiCaseCard({ caseId }: { caseId: string }) {
     <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm space-y-2">
       {ai.visitorSummary && <p>🎙️ <b>Visitor said:</b> {ai.visitorSummary}</p>}
       {ai.clipDescription && <p>📷 {ai.clipDescription}</p>}
+      {ai.clipActions && ai.clipActions.length > 0 && (
+        <p className="text-xs text-slate-300">
+          <b>Actions:</b> {ai.clipActions.join(', ')}
+        </p>
+      )}
+      {(ai.clipPeopleCount !== undefined || ai.clipApproachedDoor !== undefined) && (
+        <p className="text-xs text-slate-300">
+          {ai.clipPeopleCount !== undefined && <span><b>People:</b> {ai.clipPeopleCount} · </span>}
+          {ai.clipApproachedDoor !== undefined && <span><b>Approached door:</b> {ai.clipApproachedDoor ? 'Yes' : 'No'}</span>}
+        </p>
+      )}
       {flags.length > 0 && (
         <ul className="rounded-lg bg-amber-900/60 p-2 text-amber-100">
           {flags.map((f) => <li key={f}>⚠️ {f}</li>)}

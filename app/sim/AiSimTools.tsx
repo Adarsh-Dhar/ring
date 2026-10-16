@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { extractFrames, validateFramesSize } from './extractFrames'
 
 const b64 = (blob: Blob) => new Promise<string>((res, rej) => {
   const r = new FileReader()
@@ -21,6 +22,7 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const rec = useRef<MediaRecorder | null>(null)
+  const [videoFile, setVideoFile] = useState<File | null>(null)
 
   async function recordOnce(seconds: number): Promise<{ data: string; mimeType: string } | null> {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -72,6 +74,33 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
     } finally { setBusy(false) }
   }
 
+  async function describeVideo(file: File) {
+    setBusy(true); setStatus('Extracting frames…')
+    try {
+      const frames = await extractFrames(file)
+      if (!validateFramesSize(frames)) {
+        setStatus('Frames too large. Max 1.5 MB total.')
+        return
+      }
+      setStatus('Describing video…')
+      const r = await fetch('/api/ai/describe-video', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ caseId: caseId || undefined, frames }),
+      })
+      const j = await r.json()
+      if (r.ok) {
+        setStatus(`🎞 ${j.summary}`)
+        if (j.actions && j.actions.length > 0) {
+          setStatus(s => `${s}\nActions: ${j.actions.join(', ')}`)
+        }
+      } else {
+        setStatus(j.error || 'Video description failed')
+      }
+    } catch (e: any) {
+      setStatus(e?.message || 'Failed to extract frames')
+    } finally { setBusy(false) }
+  }
+
   return (
     <section className="mt-4 rounded-xl border border-slate-700 p-3 text-sm text-slate-200">
       <h2 className="mb-2 font-semibold">🤖 AI tools (sim)</h2>
@@ -82,8 +111,13 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
           <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) void describe(f); e.currentTarget.value = '' }} />
         </label>
+        <label className="rounded-lg bg-slate-700 px-3 py-2 cursor-pointer">
+          🎞 Describe video
+          <input type="file" accept="video/mp4,video/webm" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void describeVideo(f); e.currentTarget.value = '' }} />
+        </label>
       </div>
-      {status && <p className="mt-2 text-slate-300" role="status">{status}</p>}
+      {status && <p className="mt-2 text-slate-300 whitespace-pre-line" role="status">{status}</p>}
     </section>
   )
 }

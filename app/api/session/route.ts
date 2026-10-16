@@ -95,6 +95,13 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  if (s.kind === 'resident') {
+    return NextResponse.json({
+      kind: 'resident',
+      householdId: s.householdId ?? null,
+    })
+  }
+
   return fail('Unrecognised session type. Please sign in again.', 400)
 }
 

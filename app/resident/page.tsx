@@ -24,12 +24,8 @@ export default function ResidentPage() {
           const data = await res.json()
           if (data.kind === 'resident') {
             setHouseholdId(data.householdId)
-            // Use the device cookie as token for SSE
-            const cookies = document.cookie.split(';')
-            const deviceCookie = cookies.find(c => c.trim().startsWith('device='))
-            if (deviceCookie) {
-              setToken(deviceCookie.split('=')[1])
-            }
+            // Token is not needed for SSE - the HttpOnly cookie is sent automatically
+            setToken('auto')
           }
         }
       } catch (e) {
@@ -38,6 +34,9 @@ export default function ResidentPage() {
     }
     fetchSession()
   }, [])
+
+  // Primary polling (always running, used when SSE is down or unavailable)
+  const { snap, error, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
 
   // SSE connection (if householdId is available)
   const { state: realtimeState, connected: sseConnected, error: sseError } = useRealtime({
@@ -48,9 +47,9 @@ export default function ResidentPage() {
       setSseLost(true)
       refresh()
     },
-    onStateChange: (state) => {
-      console.log('[RESIDENT] SSE state update received:', state?.state)
-      // Could integrate SSE state with polling state here
+    onStateChange: () => {
+      console.log('[RESIDENT] SSE state update received, refreshing snapshot')
+      void refresh()
     },
   })
 
@@ -60,9 +59,6 @@ export default function ResidentPage() {
       setSseLost(false)
     }
   }, [sseConnected])
-
-  // Primary polling (always running, used when SSE is down or unavailable)
-  const { snap, error, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
   const [, force] = useState(0)
   const [sound, setSound] = useState(false) // read aloud + beeps. Turning it on is also the tap browsers need for audio.
   const [showVideo, setShowVideo] = useState(false) // toggle to show/hide video feed

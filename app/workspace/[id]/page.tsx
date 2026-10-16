@@ -18,6 +18,14 @@ interface WorkspaceData {
 interface DashboardData {
   ringStatus: string
   pendingAlerts: number
+  pendingCases: Array<{
+    id: string
+    createdAt: string
+    eventType: string
+    kind: string
+    deadlineAt: string
+    helperIndex: number
+  }>
   scheduledVisits: number
   activePasses: number
   googleCalendarConnected: boolean
@@ -534,6 +542,45 @@ export default function WorkspacePage() {
                 <div className="text-gray-600">Active Visitor Passes</div>
               </div>
             </div>
+
+            {/* Pending Doorbell Alerts */}
+            {dashboardData?.pendingCases && dashboardData.pendingCases.length > 0 && (
+              <div className="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Pending Doorbell Alerts</h3>
+                <div className="space-y-3">
+                  {dashboardData.pendingCases.map((pendingCase) => (
+                    <div
+                      key={pendingCase.id}
+                      className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200"
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div className="text-2xl">🚪</div>
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {pendingCase.kind === 'visitor' ? 'Someone at the door' : 'Alert'}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {new Date(pendingCase.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-600">
+                          Expires in {Math.max(0, Math.ceil((new Date(pendingCase.deadlineAt).getTime() - Date.now()) / 1000))}s
+                        </p>
+                        <Link
+                          href="/helper"
+                          className="inline-block mt-1 text-sm text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          Respond →
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Google Calendar */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-8">
               <div className="flex items-center justify-between mb-4">

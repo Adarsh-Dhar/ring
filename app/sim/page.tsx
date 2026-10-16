@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AiSimTools from './AiSimTools'
+import VideoUpload from './VideoUpload'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -405,9 +406,15 @@ export default function SimPage() {
             </button>
           </section>
 
-          {/* G. Scenario presets */}
+          {/* G. Video upload for simulator */}
           <section className={SECTION}>
-            <h2 className={H2}>F. Scenario presets</h2>
+            <h2 className={H2}>G. Simulator video clip</h2>
+            <VideoUpload device={device} onUploadComplete={refreshState} />
+          </section>
+
+          {/* H. Scenario presets */}
+          <section className={SECTION}>
+            <h2 className={H2}>H. Scenario presets</h2>
             <div className="space-y-2">
               {PRESETS.map(p => (
                 <button key={p.id} disabled={!!presetBusy || busy}
@@ -435,9 +442,9 @@ export default function SimPage() {
         {/* ── RIGHT COLUMN — live state panel ──────────────────────────────── */}
         <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
 
-          {/* H. Current case */}
+          {/* I. Current case */}
           <section>
-            <h2 className={H2}>G. Live state <span className="normal-case font-normal text-slate-500">(auto-refreshes every 2 s)</span></h2>
+            <h2 className={H2}>I. Live state <span className="normal-case font-normal text-slate-500">(auto-refreshes every 2 s)</span></h2>
             {!liveState ? (
               <p className="text-slate-500 text-sm">Waiting…</p>
             ) : !cur ? (
@@ -510,7 +517,7 @@ export default function SimPage() {
 
           {/* Helpers */}
           <section>
-            <h2 className={H2}>I. Helpers</h2>
+            <h2 className={H2}>J. Helpers</h2>
             <ul className="space-y-1">
               {(liveState?.helpers ?? []).map((h, i) => (
                 <li key={h.id} className="flex items-center gap-2 text-sm">
@@ -526,7 +533,7 @@ export default function SimPage() {
 
           {/* Devices */}
           <section>
-            <h2 className={H2}>J. Devices</h2>
+            <h2 className={H2}>K. Devices</h2>
             {Object.keys(liveState?.devices ?? {}).length === 0
               ? <p className="text-slate-500 text-sm">No devices seen yet</p>
               : (
@@ -545,7 +552,7 @@ export default function SimPage() {
           {/* Settings summary */}
           {liveState && (
             <section>
-              <h2 className={H2}>K. Current settings</h2>
+              <h2 className={H2}>L. Current settings</h2>
               <ul className="text-xs text-slate-400 space-y-0.5">
                 <li>Timeout: <strong className="text-slate-200">{liveState.timeoutSec}s</strong></li>
                 <li>Planned mode: <strong className="text-slate-200">{liveState.plannedMode}</strong></li>
@@ -556,7 +563,7 @@ export default function SimPage() {
 
           {/* Action log */}
           <section>
-            <h2 className={H2}>L. Action log</h2>
+            <h2 className={H2}>M. Action log</h2>
             <ul ref={logRef} className="space-y-0.5 max-h-52 overflow-y-auto text-xs">
               {log.length === 0 && <li className="text-slate-500">Nothing sent yet.</li>}
               {log.map((entry, i) => (
