@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AiSimTools from './AiSimTools'
 import VideoUpload from './VideoUpload'
+import LiveView from '../helper/LiveView'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ interface LiveState {
     log: { t: number; msg: string }[]
     deadlineAt: number
     ackedAt?: number
+    deviceId?: string | null
   } | null
   helpers:     { id: string; name: string; emoji: string }[]
   devices:     Record<string, { online: boolean; since: number }>
@@ -515,6 +517,14 @@ export default function SimPage() {
             )}
           </section>
 
+          {/* Doorbell camera */}
+          {cur && cur.deviceId && (
+            <section>
+              <h2 className={H2}>Doorbell camera</h2>
+              <LiveView caseId={cur.id} deviceId={cur.deviceId} />
+            </section>
+          )}
+
           {/* Helpers */}
           <section>
             <h2 className={H2}>J. Helpers</h2>
@@ -576,7 +586,7 @@ export default function SimPage() {
           </section>
         </div>
       </div>
-      <AiSimTools caseId={caseId} />
+      <AiSimTools caseId={caseId} lane={(liveState?.current?.lane as 'normal' | 'expected' | null) ?? null} />
     </main>
   )
 }

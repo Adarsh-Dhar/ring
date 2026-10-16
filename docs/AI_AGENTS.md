@@ -1,25 +1,24 @@
 # AI agents
 
-Five advisory agents. **None of them is on the alert path**: the helper push/SMS, escalation timer and resident
+Four advisory agents. **None of them is on the alert path**: the helper push/SMS, escalation timer and resident
 screen behave exactly as before if AI is off, slow, over quota or wrong.
 
 ## Turn it on
-1. `npx prisma migrate deploy` (migrations `20261015000000_ai_agents` and `20261016000000_clip_fields`, both additive only).
+1. `npx prisma migrate deploy` (migrations `20261015000000_ai_agents`, additive only).
 2. Set `GEMINI_API_KEY` and the model IDs in `.env` (see `.env.example`).
-3. Guardian: `POST /api/ai/kill {"aiEnabled": true, "aiGreeter": true}` (both default to **false** per household).
-4. **Where AI jobs run.** By default the describer and greeter run **inline** in the web process, so no worker is needed (this is also how Docker runs out of the box). Set `AI_USE_QUEUE=1` only if you run a worker (`npm run worker`, or `docker compose --profile worker up -d`); jobs for real devices are then queued, and any queue failure falls back to inline. Simulator devices (`sim-*`) always run inline because their frames live on the web server's disk. The worker is still needed for the Monday digest schedule.
+3. Guardian: `POST /api/ai/kill {"aiEnabled": true, "aiInterrogator": true}` (both default to **false** per household).
+4. **Where AI jobs run.** By default the interrogator runs **inline** in the web process, so no worker is needed (this is also how Docker runs out of the box). Set `AI_USE_QUEUE=1` only if you run a worker (`npm run worker`, or `docker compose --profile worker up -d`); jobs for real devices are then queued, and any queue failure falls back to inline. Simulator devices (`sim-*`) always run inline. The worker is still needed for the Monday digest schedule.
 
 ## Agents
 | Agent | Model role | Trigger | Output (who sees it) |
 |---|---|---|---|
-| Describer | workhorse (vision) | ring (`AI_DESCRIBE` job) or `POST /api/ai/describe` | ≤15-word clothing/object description + tags → helper |
-| Door Greeter | workhorse (audio) | ring (`AI_GREETER_START`), reply via `POST /api/ai/greeter/audio` | one-line visitor summary + risk flags → helper |
+| Door Interrogator | workhorse (audio) | ring (`AI_INTERROGATOR_START`), reply via `POST /api/ai/interrogator/audio` | real-reason summary + verdict + claims + risk flags → helper (unplanned visits only) |
 | Note Compressor | workhorse → Gemma fallback | `POST /api/ai/notes` | ≤8-word sentence + icon; **resident sees it only after helper approval** |
 | Visit Intake | workhorse (text) | `POST /api/visit-requests/public/[token]/intake` | verdict note on the VisitRequest → helper |
 | Digest | quality | weekly cron / `POST /api/ai/digests/run` | ~80-word weekly summary → guardian |
 
 ## Safety rules (enforced in code, covered by `tests/ai-core.test.ts`)
-- The doorbell only ever says 3 fixed lines (`lib/ai/talkback/lines.ts`). Models never generate speech.
+- The doorbell only ever says 3 fixed lines for the opener, reprompt, and close (`lib/ai/talkback/lines.ts`). Follow-up questions are model-worded but validated (≤20 words, no banned phrases, no resident name).
 - Visitor/calendar/helper text is wrapped in `<untrusted_data>` blocks and sanitised; it never reaches the instruction part of a prompt.
 - Every model output is zod-validated, word-clamped and checked against banned phrases; failure ⇒ "no AI result".
 - Intake: the LLM only extracts claims and words one ≤20-word question. Calendar/known-visit lookups are done by code
@@ -32,8 +31,7 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 
 ## Not done / needs your input
 - **Ring talk-back**: `lib/ai/talkback/ring.ts` is a stub. No speaker/two-way audio endpoint is verified in
-  `lib/ring/client.ts`. Until implemented, real rings set `greeterState = 'unsupported'`; the greeter works in `/sim`.
-- **Snapshot**: `fetchRingSnapshot` is already marked UNVERIFIED in `face/camera.ts`; the Describer inherits that.
+  `lib/ring/client.ts`. Until implemented, real rings set `interrogationState = 'unsupported'`; the interrogator works in `/sim`.
 - **Model IDs** are placeholders (could not be verified as API IDs). Set them in `.env`.
 - **Calendar owner**: intake checks *every* approved guardian who connected Google Calendar (union).
 - **Privacy**: free-tier Gemini data may be used for training. Use a paid key before sending real door audio/images.

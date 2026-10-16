@@ -5,8 +5,8 @@
 #   BASE=http://localhost:3000 \
 #   bash scripts/ai-curl-smoke-noauth.sh
 #
-# Needs: curl, jq. For the greeter audio test also espeak-ng (Linux) or say (macOS).
-# The greeter part needs DEMO_MODE=1 on the server. It rings the simulated doorbell once.
+# Needs: curl, jq. For the interrogator audio test also espeak-ng (Linux) or say (macOS).
+# The interrogator part needs DEMO_MODE=1 on the server. It rings the simulated doorbell once.
 set -u
 BASE=${BASE:-http://localhost:3000}
 command -v jq >/dev/null || { echo "jq is required"; exit 2; }
@@ -34,8 +34,8 @@ else
 fi
 
 sec "1. Turn AI on for this household"
-r=$(api_call -X POST "$BASE/api/ai/kill" -d '{"aiEnabled":true,"aiGreeter":true}')
-chk "kill route returns aiEnabled+aiGreeter true ($r)" "$(echo "$r" | jq -r '(.aiEnabled==true and .aiGreeter==true)' 2>/dev/null | grep -q true && echo 1 || echo 0)"
+r=$(api_call -X POST "$BASE/api/ai/kill" -d '{"aiEnabled":true,"aiInterrogator":true}')
+chk "kill route returns aiEnabled+aiInterrogator true ($r)" "$(echo "$r" | jq -r '(.aiEnabled==true and .aiInterrogator==true)' 2>/dev/null | grep -q true && echo 1 || echo 0)"
 
 sec "2. Note scribe (agent 3)"
 NOTE="Dr Rao can't come, her colleague Mark is coming at 3 instead."
@@ -64,18 +64,18 @@ if [ -n "$ID2" ]; then
 fi
 c=$(api_call -o /dev/null -w '%{http_code}' -X POST "$BASE/api/ai/notes" -d '{"note":"x"}'); chk "too-short note -> 400 (got $c)" "$([ "$c" = 400 ] && echo 1 || echo 0)"
 
-sec "3. Door greeter (agent 1) + describer (agent 2)"
+sec "3. Door interrogator (agent 1)"
 sim=$(api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"event","event":"button_press"}')
 CASE=$(echo "$sim" | jq -r '.caseId // empty')
 if [ -z "$CASE" ]; then
-  warn "could not ring the simulated doorbell: $sim  (needs DEMO_MODE=1 and no open case) -- skipping greeter checks"
+  warn "could not ring the simulated doorbell: $sim  (needs DEMO_MODE=1 and no open case) -- skipping interrogator checks"
 else
   ok "simulated ring -> case $CASE"
   sleep 2
   ai=$(api_call "$BASE/api/ai/cases/$CASE"); echo "  case AI: $ai"
-  chk "greeterState is 'greeting' (hook fired)" "$([ "$(echo "$ai" | jq -r '.greeterState')" = greeting ] && echo 1 || echo 0)"
+  chk "interrogationState is 'asking' (hook fired)" "$([ "$(echo "$ai" | jq -r '.interrogationState')" = asking ] && echo 1 || echo 0)"
   chk "label says AI may be wrong" "$(echo "$ai" | jq -r '.label' | grep -qi 'may be wrong' && echo 1 || echo 0)"
-  s=$(api_call "$BASE/api/ai/greeter/script")
+  s=$(api_call "$BASE/api/ai/interrogator/script?caseId=$CASE")
   chk "script has 3 fixed lines" "$(echo "$s" | jq -r '.lines|length==3' | grep -q true && echo 1 || echo 0)"
   chk "script never says anyone is home / door open" "$(echo "$s" | jq -r '.lines|tostring' | grep -qiE 'is home|come in|door is open|alone' && echo 0 || echo 1)"
 
@@ -86,8 +86,8 @@ else
   if [ -s "$AUDIO" ]; then
     base64 < "$AUDIO" | tr -d '\n' > "$TMP/a.b64"
     jq -n --arg caseId "$CASE" --rawfile audio "$TMP/a.b64" '{caseId:$caseId,audio:$audio,mimeType:"audio/wav"}' > "$TMP/body.json"
-    r=$(api_call -X POST "$BASE/api/ai/greeter/audio" -d @"$TMP/body.json"); echo "  device reply: $r"
-    chk "device only gets final/close (no transcript leaked)" "$(echo "$r" | jq -r 'has("transcript")|not' | grep -q true && echo 1 || echo 0)"
+    r=$(api_call -X POST "$BASE/api/ai/interrogator/audio" -d @"$TMP/body.json"); echo "  device reply: $r"
+    chk "device only gets question/final/close (no transcript leaked)" "$(echo "$r" | jq -r 'has("transcript")|not' | grep -q true && echo 1 || echo 0)"
     sleep 1
     ai=$(api_call "$BASE/api/ai/cases/$CASE"); echo "  case AI: $ai"
     chk "visitorSummary filled" "$([ -n "$(echo "$ai" | jq -r '.visitorSummary // empty')" ] && echo 1 || echo 0)"

@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { extractFrames, validateFramesSize } from './extractFrames'
 
 interface VideoUploadProps {
   device: string
@@ -24,7 +23,6 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
   const [uploadStatus, setUploadStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [duration, setDuration] = useState<number | null>(null)
-  const [extracting, setExtracting] = useState(false)
   const [uploadedClip, setUploadedClip] = useState<UploadedClip | null>(null)
   const [loadingClip, setLoadingClip] = useState(true)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -178,39 +176,8 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
               throw new Error(message)
             }
 
-            // Upload succeeded, now extract frames for AI description
-            setUploadStatus('Video uploaded successfully')
-            setExtracting(true)
-            setUploadStatus('Extracting frames for AI...')
-            
-            try {
-              const frames = await extractFrames(file)
-              if (!validateFramesSize(frames)) {
-                setError('Frames too large. Max 1.5 MB total. Video uploaded but AI unavailable.')
-                setUploadStatus('Video uploaded (AI unavailable)')
-              } else {
-                // Save frames for auto-description on future rings
-                const framesResponse = await fetch(`/api/sim/videos/frames?device=${device}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ frames }),
-                })
-                
-                if (framesResponse.ok) {
-                  setUploadStatus('Video uploaded, AI frames saved')
-                } else {
-                  const data = await framesResponse.json().catch(() => ({}))
-                  setError(`Video uploaded, AI frames could not be saved: ${data.error || 'Unknown error'}`)
-                  setUploadStatus('Video uploaded (AI frames failed)')
-                }
-              }
-            } catch (e) {
-              console.error('Frame extraction failed:', e)
-              setError(`Video uploaded, frame extraction failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
-              setUploadStatus('Video uploaded (AI unavailable)')
-            } finally {
-              setExtracting(false)
-            }
+            // Upload succeeded
+            setUploadStatus('Video uploaded')
 
             // Cleanup
             setFile(null)
@@ -319,7 +286,7 @@ export default function VideoUpload({ device, onUploadComplete }: VideoUploadPro
               disabled={uploading || !!error}
               className="rounded-lg bg-cyan-600 px-3 py-1 text-xs font-semibold hover:bg-cyan-500 disabled:opacity-40"
             >
-              {extracting ? 'Extracting frames…' : uploading ? uploadStatus : 'Upload'}
+              {uploading ? uploadStatus : 'Upload'}
             </button>
             <button
               onClick={handleCancel}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test only the untested AI agents: Clip Describer (Agent 2) and Weekly Digest (Agent 5)
+# Test only the untested AI agents: Weekly Digest (Agent 4)
 #
 #   BASE=http://localhost:3000 \
 #   bash scripts/test-remaining-agents.sh
@@ -22,62 +22,7 @@ code_of() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 
-sec "1. Clip Describer (Agent 2) - Image description"
-# Download a test image
-echo "  Downloading test image..."
-curl -s "https://images.unsplash.com/photo-1560250097-0b93528c311a?w=200&h=200&fit=crop" -o "$TMP/test-image.jpg" 2>/dev/null
-if [ ! -s "$TMP/test-image.jpg" ]; then
-  warn "Failed to download test image - skipping describer test"
-else
-  base64 -i "$TMP/test-image.jpg" -o "$TMP/image.b64"
-  IMG_SIZE=$(wc -c < "$TMP/image.b64" | tr -d ' ')
-  echo "  Image base64 size: $IMG_SIZE bytes"
-
-  # Create a test case
-  CASE=$(api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"event","event":"button_press"}' | jq -r .caseId)
-  if [ -z "$CASE" ] || [ "$CASE" = "null" ]; then
-    api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"reset"}' > /dev/null
-    CASE=$(api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"event","event":"button_press"}' | jq -r .caseId)
-  fi
-
-  if [ -n "$CASE" ] && [ "$CASE" != "null" ]; then
-    echo "  Test case: $CASE"
-    jq -n --arg c "$CASE" --rawfile image "$TMP/image.b64" '{caseId:$c,image:$image,mimeType:"image/jpeg"}' > "$TMP/img.json"
-
-    # Test describer
-    r=$(api_call -X POST "$BASE/api/ai/describe" -d @"$TMP/img.json")
-    echo "  Response: $r"
-
-    RESULT=$(echo "$r" | jq -r '.result')
-    if [ "$RESULT" = "null" ]; then
-      bad "describer returned null - check API quota or model availability"
-    else
-      ok "describer returned a result"
-      DESC=$(echo "$r" | jq -r '.result.description // empty')
-      if [ -n "$DESC" ]; then
-        WORDS=$(echo "$DESC" | wc -w | tr -d ' ')
-        chk "description provided" "1"
-        chk "description is 15 words or fewer" "$([ "$WORDS" -le 15 ] && echo 1 || echo 0)"
-      else
-        bad "description missing"
-      fi
-
-      TAGS=$(echo "$r" | jq -r '.result.tags // {}')
-      if [ "$TAGS" != "{}" ] && [ "$TAGS" != "null" ]; then
-        ok "tags provided"
-      else
-        warn "tags not provided (may be acceptable for certain images)"
-      fi
-    fi
-
-    # Clean up the case
-    api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"reset"}' > /dev/null
-  else
-    bad "could not create test case for describer"
-  fi
-fi
-
-sec "2. Weekly Digest (Agent 5) - Summary generation"
+sec "1. Weekly Digest (Agent 5) - Summary generation"
 # Reset any existing digest
 echo "  Creating test cases for digest..."
 api_call -X POST "$BASE/api/dev/simulate" -d '{"action":"reset"}' > /dev/null
@@ -127,8 +72,8 @@ else
   bad "digest generation failed"
 fi
 
-sec "3. Check AI usage for these agents"
-api_call "$BASE/api/ai/usage" | jq -c '.last24h[]? | select(.agent == "describer" or .agent == "digest")'
+sec "2. Check AI usage for these agents"
+api_call "$BASE/api/ai/usage" | jq -c '.last24h[]? | select(.agent == "digest")'
 echo "  (status ok = fine; error = key/model/payload problem; invalid = model reply failed validation; budget = local quota guard)"
 
 printf '\nResult: %d passed, %d failed, %d warnings\n' "$PASS" "$FAIL" "$WARN"

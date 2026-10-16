@@ -9,8 +9,7 @@ export const JOB_NAMES = {
   DEVICE_ONLINE: 'device-online',
   CHECKIN_REMINDER: 'checkin-reminder',
   VISIT_EXPIRY: 'visit-expiry',
-  AI_DESCRIBE: 'ai-describe',
-  AI_GREETER_START: 'ai-greeter-start',
+  AI_INTERROGATOR_START: 'ai-interrogator-start',
   AI_INTAKE_EVAL: 'ai-intake-eval',
   AI_DIGEST_WEEKLY: 'ai-digest-weekly',
 } as const

@@ -33,6 +33,8 @@ const BANNED = [
   /\b(is|are) (home|here|inside|alone)\b/i, /\bnot (home|here|in)\b/i,
   /\bpassword\b/i, /\bpin\b/i, /\bwait here\b/i, /\bi promise\b/i, /\bguarantee\b/i,
   /\bcalendar\b/i, /\bappointment (is|was) (not )?(scheduled|booked)\b/i,
+  // Accusation and threat words
+  /\bscam\b/i, /\bfraud\b/i, /\b liar\b/i, /\bpolice\b/i, /\barrest/i,
 ]
 export const hasBannedPhrase = (s: string) => BANNED.some(r => r.test(s))
 

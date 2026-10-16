@@ -4,7 +4,7 @@ import { riskFlagsFor } from '@/lib/ai/agents/risk'
 import { chainFor, limitsFor } from '@/lib/ai/models'
 import { reserve, _resetBudget } from '@/lib/ai/budget'
 import { wrapPcmAsWav } from '@/lib/ai/tts'
-import { greeterLines } from '@/lib/ai/talkback/lines'
+import { interrogatorLines } from '@/lib/ai/talkback/lines'
 import { templateText, weekStartFor } from '@/lib/ai/agents/digest'
 
 describe('guard', () => {
@@ -43,10 +43,6 @@ describe('risk flags', () => {
     expect(f).toContain('Claims urgency')
     expect(f).toContain('Claims to be officials')
   })
-  it('adds no-uniform flag only when uniform is explicitly false', () => {
-    expect(riskFlagsFor('council inspector', false)).toContain('Official claim, no uniform seen')
-    expect(riskFlagsFor('council inspector', true)).not.toContain('Official claim, no uniform seen')
-  })
   it('is quiet for an ordinary delivery', () => {
     expect(riskFlagsFor('Parcel for number twelve')).toEqual([])
   })
@@ -69,9 +65,9 @@ describe('models and budget', () => {
 })
 
 describe('fixed lines, wav, digest helpers', () => {
-  it('greeter lines never mention anyone being home or opening', () => {
-    for (const l of Object.values(greeterLines('Margaret Smith'))) expect(hasBannedPhrase(l)).toBe(false)
-    expect(greeterLines('Margaret Smith').greet).toContain("Margaret's")
+  it('interrogator lines never mention anyone being home or opening', () => {
+    for (const l of Object.values(interrogatorLines('Margaret Smith'))) expect(hasBannedPhrase(l)).toBe(false)
+    expect(interrogatorLines('Margaret Smith').greet).toContain("Margaret's")
   })
   it('wav header is valid', () => {
     const w = wrapPcmAsWav(Buffer.alloc(100).toString('base64'))

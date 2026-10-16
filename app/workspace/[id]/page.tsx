@@ -66,7 +66,7 @@ export default function WorkspacePage() {
   const [ringStatus, setRingStatus] = useState<'connected' | 'not_connected' | 'checking'>('checking')
   const [showRingModal, setShowRingModal] = useState(false)
   const [ringInstructions, setRingInstructions] = useState<any>(null)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'helpers' | 'visitors'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'helpers' | 'visitors' | 'calendar'>('dashboard')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -180,7 +180,7 @@ export default function WorkspacePage() {
     loadNotifications()
   }, [workspaceId])
   useEffect(() => {
-    if (activeTab === 'dashboard') {
+    if (activeTab === 'dashboard' || activeTab === 'calendar') {
       loadDashboardData()
     }
   }, [activeTab, loadDashboardData]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -281,8 +281,8 @@ export default function WorkspacePage() {
   }
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-slate-400">Loading...</div>
       </div>
     )
   }
@@ -499,6 +499,16 @@ export default function WorkspacePage() {
             >
               Visitors
             </button>
+            <button
+              onClick={() => setActiveTab('calendar')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'calendar'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Calendar
+            </button>
           </nav>
         </div>
       </div>
@@ -506,52 +516,28 @@ export default function WorkspacePage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'dashboard' && (
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">Dashboard</h2>
-            <div className="grid md:grid-cols-4 gap-6 mb-8">
-              <div className="bg-white rounded-lg shadow-md p-6">
-                {ringStatus === 'connected' ? (
-                  <>
-                    <div className="text-3xl font-bold text-green-600 mb-2">Connected</div>
-                    <div className="text-gray-600">Ring Doorbell Status</div>
-                  </>
-                ) : (
-                  <button
-                    onClick={handleConnectRing}
-                    className="w-full bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
-                  >
-                    Connect Ring Account
-                  </button>
-                )}
-              </div>
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <div className="text-3xl font-bold text-green-600 mb-2">
-                  {dashboardData?.pendingAlerts ?? 0}
-                </div>
-                <div className="text-gray-600">Pending Alerts</div>
-              </div>
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <div className="text-3xl font-bold text-purple-600 mb-2">
-                  {dashboardData?.scheduledVisits ?? 0}
-                </div>
-                <div className="text-gray-600">Scheduled Visits Today</div>
-              </div>
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <div className="text-3xl font-bold text-orange-600 mb-2">
-                  {dashboardData?.activePasses ?? 0}
-                </div>
-                <div className="text-gray-600">Active Visitor Passes</div>
-              </div>
-            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">What do you need?</h2>
+            <p className="text-gray-600 mb-8">Choose an option to get started</p>
 
-            {/* Pending Doorbell Alerts */}
+            {/* Pending Doorbell Alerts - Urgent */}
             {dashboardData?.pendingCases && dashboardData.pendingCases.length > 0 && (
-              <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Pending Doorbell Alerts</h3>
+              <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6 mb-8">
+                <div className="flex items-center mb-4">
+                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center mr-3">
+                    <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-red-900">Someone needs your attention!</h3>
+                    <p className="text-red-700 text-sm">{dashboardData.pendingCases.length} pending alert{dashboardData.pendingCases.length > 1 ? 's' : ''}</p>
+                  </div>
+                </div>
                 <div className="space-y-3">
                   {dashboardData.pendingCases.map((pendingCase) => (
                     <div
                       key={pendingCase.id}
-                      className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200"
+                      className="flex items-center justify-between p-4 bg-white rounded-lg border border-red-200"
                     >
                       <div className="flex items-center space-x-3">
                         <div className="text-2xl">🚪</div>
@@ -581,11 +567,132 @@ export default function WorkspacePage() {
               </div>
             )}
 
-            {/* Google Calendar */}
-            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Google Calendar</h3>
+            {/* Main Action Cards */}
+            <div className="grid md:grid-cols-2 gap-6 mb-8">
+              {/* Get Help Card */}
+              <Link
+                href="/helper"
+                className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-shadow border-2 border-transparent hover:border-blue-300"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center">
+                    <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Get help</h3>
+                    <p className="text-gray-600">Ask someone for help when you need it</p>
+                  </div>
+                </div>
+              </Link>
+
+              {/* Visits Card */}
+              <Link
+                href={`/workspace/${workspaceId}/add-visitor`}
+                className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-shadow border-2 border-transparent hover:border-green-300"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                    <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">Visits</h3>
+                    <p className="text-gray-600">Plan or check a scheduled visit</p>
+                  </div>
+                </div>
+              </Link>
+
+              {/* My People Card */}
+              {isResidentView ? (
+                <button
+                  onClick={() => setActiveTab('helpers')}
+                  className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-shadow border-2 border-transparent hover:border-purple-300 text-left w-full"
+                >
+                  <div className="flex items-start space-x-4">
+                    <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center">
+                      <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-xl font-bold text-gray-900 mb-2">My people</h3>
+                      <p className="text-gray-600">See your trusted helpers</p>
+                    </div>
+                  </div>
+                </button>
+              ) : (
+                <Link
+                  href={`/workspace/${workspaceId}/add-helper`}
+                  className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-shadow border-2 border-transparent hover:border-purple-300"
+                >
+                  <div className="flex items-start space-x-4">
+                    <div className="flex-shrink-0 w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center">
+                      <svg className="w-8 h-8 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-xl font-bold text-gray-900 mb-2">My people</h3>
+                      <p className="text-gray-600">Manage helpers for this household</p>
+                    </div>
+                  </div>
+                </Link>
+              )}
+
+              {/* My Requests Card */}
+              <button
+                onClick={() => setActiveTab('visitors')}
+                className="bg-white rounded-xl shadow-md p-8 hover:shadow-lg transition-shadow border-2 border-transparent hover:border-orange-300 text-left w-full"
+              >
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center">
+                    <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">My requests</h3>
+                    <p className="text-gray-600">Check request and visitor pass status</p>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Quick Stats */}
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Overview</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center p-4 bg-blue-50 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-600">{dashboardData?.pendingAlerts ?? 0}</div>
+                  <div className="text-sm text-gray-600">Pending Alerts</div>
+                </div>
+                <div className="text-center p-4 bg-green-50 rounded-lg">
+                  <div className="text-2xl font-bold text-green-600">{dashboardData?.scheduledVisits ?? 0}</div>
+                  <div className="text-sm text-gray-600">Visits Today</div>
+                </div>
+                <div className="text-center p-4 bg-purple-50 rounded-lg">
+                  <div className="text-2xl font-bold text-purple-600">{dashboardData?.activePasses ?? 0}</div>
+                  <div className="text-sm text-gray-600">Active Passes</div>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <div className={`text-lg font-bold ${ringStatus === 'connected' ? 'text-green-600' : 'text-gray-500'}`}>
+                    {ringStatus === 'connected' ? '✓ Connected' : 'Not connected'}
+                  </div>
+                  <div className="text-sm text-gray-600">Ring Doorbell</div>
+                </div>
               </div>
+            </div>
+
+          </div>
+        )}
+
+        {activeTab === 'calendar' && (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">Calendar</h2>
+            <div className="bg-white rounded-lg shadow-md p-6">
               {dashboardData?.googleCalendarConnected ? (
                 <div>
                   {/* Calendar Header with Navigation */}
@@ -682,7 +789,6 @@ export default function WorkspacePage() {
                 </div>
               )}
             </div>
-
           </div>
         )}
 

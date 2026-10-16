@@ -15,7 +15,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)
   const { id } = await ctx.params
-  const c = await getCaseAi(householdId, id)
-  if (!c) return fail('Case not found', 404)
-  return NextResponse.json({ ...c, label: 'AI description, may be wrong' })
+
+  try {
+    const c = await getCaseAi(householdId, id)
+    if (!c) return fail('Case not found', 404)
+    return NextResponse.json({ ...c, label: 'AI description, may be wrong' })
+  } catch (e: any) {
+    console.error('[AI CASE GET]', e)
+    return fail(`Unable to load AI info: ${e?.message || String(e)}`, 500)
+  }
 }

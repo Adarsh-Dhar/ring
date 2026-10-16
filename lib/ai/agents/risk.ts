@@ -10,10 +10,9 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote))\b/i },
 ]
 
-export function riskFlagsFor(transcript: string, uniformVisible?: boolean | null): string[] {
+export function riskFlagsFor(transcript: string): string[] {
   const flags = new Set<string>()
   for (const r of RULES) if (r.re.test(transcript)) flags.add(r.flag)
-  if (flags.has('Claims to be officials') && uniformVisible === false) flags.add('Official claim, no uniform seen')
   return [...flags]
 }
 

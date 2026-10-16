@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+type NotificationType = 'helper_invite' | 'helper_invite_accepted' | 'helper_invite_rejected' | 'visitor_request' | 'alert'
+
 interface Notification {
   id: string
-  type: 'helper_to_resident' | 'resident_to_helper' | 'visitor_approval' | 'alert'
+  type: NotificationType | string
   title: string
   message: string
   createdAt: string
@@ -17,49 +19,35 @@ export default function NotificationsPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [notifications, setNotifications] = useState<Notification[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     loadNotifications()
   }, [])
 
   const loadNotifications = async () => {
-    // Mock notifications for now - this would come from an API
-    setNotifications([
-      {
-        id: '1',
-        type: 'helper_to_resident',
-        title: 'New Visitor Pass Request',
-        message: 'Raj requested a visitor pass for Dr. Smith on Dec 15',
-        createdAt: new Date().toISOString(),
-        read: false,
-      },
-      {
-        id: '2',
-        type: 'resident_to_helper',
-        title: 'Visitor Pass Approved',
-        message: 'Your visitor pass for Dr. Smith has been approved',
-        createdAt: new Date(Date.now() - 3600000).toISOString(),
-        read: false,
-      },
-      {
-        id: '3',
-        type: 'alert',
-        title: 'Doorbell Alert',
-        message: 'Someone is at the door',
-        createdAt: new Date(Date.now() - 7200000).toISOString(),
-        read: true,
-      },
-    ])
-    setLoading(false)
+    try {
+      const res = await fetch('/api/notifications', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`Unable to load notifications (${res.status})`)
+      const data = await res.json()
+      setNotifications(data.notifications ?? [])
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to load notifications')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const getNotificationColor = (type: Notification['type']) => {
+  const getNotificationColor = (type: string) => {
     switch (type) {
-      case 'helper_to_resident':
+      case 'helper_invite':
         return 'bg-blue-50 border-blue-200 text-blue-800'
-      case 'resident_to_helper':
+      case 'helper_invite_accepted':
         return 'bg-green-50 border-green-200 text-green-800'
-      case 'visitor_approval':
+      case 'helper_invite_rejected':
+        return 'bg-gray-50 border-gray-200 text-gray-800'
+      case 'visitor_request':
         return 'bg-yellow-50 border-yellow-200 text-yellow-800'
       case 'alert':
         return 'bg-red-50 border-red-200 text-red-800'
@@ -68,13 +56,15 @@ export default function NotificationsPage() {
     }
   }
 
-  const getNotificationDot = (type: Notification['type']) => {
+  const getNotificationDot = (type: string) => {
     switch (type) {
-      case 'helper_to_resident':
+      case 'helper_invite':
         return 'bg-blue-500'
-      case 'resident_to_helper':
+      case 'helper_invite_accepted':
         return 'bg-green-500'
-      case 'visitor_approval':
+      case 'helper_invite_rejected':
+        return 'bg-gray-500'
+      case 'visitor_request':
         return 'bg-yellow-500'
       case 'alert':
         return 'bg-red-500'
@@ -85,8 +75,8 @@ export default function NotificationsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-gray-600">Loading...</div>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-slate-400">Loading...</div>
       </div>
     )
   }
@@ -118,7 +108,11 @@ export default function NotificationsPage() {
           </p>
         </div>
 
-        {notifications.length === 0 ? (
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>
+        )}
+
+        {notifications.length === 0 && !error ? (
           <div className="bg-white rounded-lg shadow-md p-8 text-center">
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No Notifications</h3>
             <p className="text-gray-600">You're all caught up!</p>

@@ -49,9 +49,7 @@ Videos are stored per household and device:
 .data/sim-videos/
 ├── <householdId>/
 │   ├── sim-front-door.mp4
-│   ├── sim-front-door.frames.json
-│   ├── sim-back-door.mp4
-│   └── sim-back-door.frames.json
+│   └── sim-back-door.mp4
 ```
 
 ## Cloud Storage (Future)
@@ -84,8 +82,6 @@ interface VideoStorage {
   statVideo(householdId: string, device: string): Promise<VideoMetadata | null>
   deleteVideo(householdId: string, device: string): Promise<void>
   listVideos(householdId: string): Promise<Array<{ device: string; metadata: VideoMetadata }>>
-  saveFrames(householdId: string, device: string, frames: string[]): Promise<void>
-  readFrames(householdId: string, device: string): Promise<string[] | null>
 }
 ```
 
@@ -106,52 +102,15 @@ Currently, only MP4 format is supported for MVP simplicity. The UI and storage v
 - Maximum size: 50 MB (configurable)
 - Maximum duration: 30 seconds (client-side validation)
 
-## AI Frames
-
-Extracted frames for AI analysis are stored alongside videos as JSON files. These are used for automatic AI description when a simulated doorbell event occurs.
-
-### Automatic AI Analysis Path
-
-When a simulated doorbell event occurs:
-
-1. **Event Trigger**: Doorbell press in simulator creates a case
-2. **AI Hook**: `lib/ai/hooks.ts` `onDoorEvent()` checks if AI is enabled
-3. **Job Enqueue**: If AI enabled, enqueues `AI_DESCRIBE` job via `lib/queue/jobs.ts`
-4. **Job Execution**: `lib/ai/workers.ts` worker calls `describeForCase()`
-5. **Device Check**: `describeForCase()` checks if device starts with `sim-`
-6. **Frame Read**: For sim devices, reads stored frames via `readFrames()`
-7. **AI Description**: Sends frames to `describeClip()` which calls the AI model
-8. **Result Save**: `setCaseAi()` saves results to the database
-9. **Push Notification**: First result triggers helper push notification
-10. **Helper UI**: `AiCaseCard` polls and displays the summary
-
-### Required AI Settings
-
-For automatic AI analysis to work:
-- `DEMO_MODE=1` (simulator enabled)
-- Household AI enabled (`aiEnabled: true` in database)
-- Frames stored for the device (uploaded via `/sim`)
-- Job queue initialized (pg-boss or inline execution)
-
-### Manual AI Description
-
-You can also manually trigger AI description from `/sim`:
-1. Select a video file
-2. Click "🎞 Describe video"
-3. Frames are extracted and sent to `/api/ai/describe-video`
-4. Results appear in the status display
-
 ## Testing the Full Flow
 
 To test locally:
 
 1. Start app with `DEMO_MODE=1`
-2. Enable AI for your household in `/setup`
-3. Go to `/sim` and upload an MP4 for `sim-front-door`
-4. Press the doorbell in the simulator
-5. Helper should see:
+2. Go to `/sim` and upload an MP4 for `sim-front-door`
+3. Press the doorbell in the simulator
+4. Helper should see:
    - Video playback from uploaded clip
-   - AI summary appear (after a few seconds)
    - Helper decision controls still work
-6. Resident should see normal waiting state
+5. Resident should see normal waiting state
 

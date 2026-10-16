@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "Case" DROP COLUMN IF EXISTS "clipDescription";
+ALTER TABLE "Case" DROP COLUMN IF EXISTS "clipTags";
+ALTER TABLE "Case" DROP COLUMN IF EXISTS "clipActions";
+ALTER TABLE "Case" DROP COLUMN IF EXISTS "clipPeopleCount";
+ALTER TABLE "Case" DROP COLUMN IF EXISTS "clipApproachedDoor";

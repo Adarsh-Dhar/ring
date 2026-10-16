@@ -41,7 +41,7 @@ model Household {
   requireResidentOk Boolean            @default(false)
   preset            String             @default("standard") // v2: standard | strict | custom
   aiEnabled         Boolean            @default(false)
-  aiGreeter         Boolean            @default(false)
+  aiInterrogator    Boolean            @default(false)
   residentNotes     ResidentNote[]
   weeklyDigests     WeeklyDigest[]
   aiRuns            AiRun[]
@@ -178,15 +178,13 @@ model Case {
   expectedId     String?
   regularId      String?
   // AI (advisory only; never read by the escalation path)
-  visitorSummary   String?
-  riskFlags        Json      @default("[]")
-  clipDescription  String?
-  clipTags         Json?
-  clipActions      Json?     @default("[]")
-  clipPeopleCount  Int?      @default(0)
-  clipApproachedDoor Boolean? @default(false)
-  greeterState     String?   // idle | greeting | listening | done | failed | unsupported
-  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  visitorSummary        String?
+  riskFlags             Json      @default("[]")
+  interrogationState    String?   // idle | asking | listening | done | failed | unsupported
+  interrogationTurns    Json      @default("[]")
+  interrogationVerdict   String?
+  interrogationClaims   Json?
+  household             Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
   @@index([createdAt])

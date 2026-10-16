@@ -4,20 +4,19 @@ Put this file at `docs/AI_CURL_TESTS.md` and `ai-curl-smoke.sh` at `scripts/ai-c
 
 Everything here was written from reading the routes and agents in `ring-main (3).zip`. The scam-flag rules and banned-phrase checks were run against sample speech. The smoke script was run only against a mock server, never against your app or the real Gemini API. So "expected" outputs below are what the code should produce, and the first real run is the real test.
 
-## The five agents and their routes
+## The four agents and their routes
 
 | # | Agent | Model role (`.env`) | Routes |
 |---|-------|---------------------|--------|
-| 1 | Door greeter | `workhorse` (audio in) | `GET /api/ai/greeter/script`, `POST /api/ai/greeter/audio`, `GET /api/ai/cases/:id` |
-| 2 | Clip describer | `workhorse` (image in) | `POST /api/ai/describe`, `GET /api/ai/cases/:id` |
-| 3 | Note scribe | `workhorse` | `POST /api/ai/notes`, `POST /api/ai/notes/:id/decision`, `GET /api/ai/notes/current` |
-| 4 | Visit intake | `workhorse` | `POST /api/visit-requests/public/:token/intake`, `GET …/intake/:statusToken` |
-| 5 | Weekly digest | `quality` | `POST /api/ai/digests/run`, `GET /api/ai/digests` |
+| 1 | Door interrogator | `workhorse` (audio in) | `GET /api/ai/interrogator/script`, `POST /api/ai/interrogator/audio`, `GET /api/ai/cases/:id` |
+| 2 | Note scribe | `workhorse` | `POST /api/ai/notes`, `POST /api/ai/notes/:id/decision`, `GET /api/ai/notes/current` |
+| 3 | Visit intake | `workhorse` | `POST /api/visit-requests/public/:token/intake`, `GET …/intake/:statusToken` |
+| 4 | Weekly digest | `quality` | `POST /api/ai/digests/run`, `GET /api/ai/digests` |
 | – | Controls | – | `POST /api/ai/kill`, `GET /api/ai/usage` |
 
 ## 0. Set up
 
-**Tools:** `curl`, `jq`, and `node` (for timestamps). For the greeter test also `espeak-ng` (Linux: `sudo apt install espeak-ng`) or macOS `say`.
+**Tools:** `curl`, `jq`, and `node` (for timestamps). For the interrogator test also `espeak-ng` (Linux: `sudo apt install espeak-ng`) or macOS `say`.
 
 **Server:** `DEMO_MODE=1`, `GEMINI_API_KEY` set, app running (`npm run dev`). You do not need `npm run worker` for these tests. With `AI_USE_QUEUE` unset (the default) the AI hook runs inline. The worker matters only for the Monday digest schedule and for real Ring webhooks.
 
@@ -91,17 +90,17 @@ BASE=$BASE GUARDIAN=<guardian token> HELPER=<helper token> RESIDENT=<device toke
   bash scripts/ai-curl-smoke.sh
 ```
 
-It checks auth, the kill switch, the note scribe end to end, the greeter (it rings the simulated doorbell once and uploads synthetic speech), the resident-never-sees-AI rules, and prints `/api/ai/usage`. It exits non-zero on any failure. `WARN` lines (for example `fallback=true`) mean the app is working but Gemini was not used.
+It checks auth, the kill switch, the note scribe end to end, the interrogator (it rings the simulated doorbell once and uploads synthetic speech), the resident-never-sees-AI rules, and prints `/api/ai/usage`. It exits non-zero on any failure. `WARN` lines (for example `fallback=true`) mean the app is working but Gemini was not used.
 
-The sections below are the same checks by hand, plus the ones the script does not cover (describer, intake, digest).
+The sections below are the same checks by hand, plus the ones the script does not cover (intake, digest).
 
 ## 3. Turn AI on
 
-AI is off by default for every household (`aiEnabled` and `aiGreeter` default to `false`). Until you do this, every hook returns silently and nothing happens.
+AI is off by default for every household (`aiEnabled` and `aiInterrogator` default to `false`). Until you do this, every hook returns silently and nothing happens.
 
 ```bash
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":true,"aiGreeter":true}'
-# → {"aiEnabled":true,"aiGreeter":true}
+curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":true,"aiInterrogator":true}'
+# → {"aiEnabled":true,"aiInterrogator":true}
 ```
 
 Auth checks:
@@ -171,9 +170,9 @@ curl -s -H "$H" -H "$J" -X POST $BASE/api/ai/notes \
 
 Pass if the draft is about Priya at 4 (or is a plain truncation with `fallback:true`) and does not say the door is open. Even if the model obeyed, approve would return 422 on that wording.
 
-## B. Door greeter (agent 1) and clip describer (agent 2)
+## B. Door interrogator (agent 1)
 
-On a real Ring the speaker is a stub (`lib/ai/talkback/ring.ts`), so the greeter runs only through `/sim`-style calls. The browser plays the fixed lines and uploads the recorded reply. These tests do the same with curl.
+On a real Ring the speaker is a stub (`lib/ai/talkback/ring.ts`), so the interrogator runs only through `/sim`-style calls. The browser plays the fixed lines and uploads the recorded reply. These tests do the same with curl.
 
 ### B1. Ring the simulated doorbell
 
@@ -187,15 +186,15 @@ If `caseId` is empty the reply says an active case is already open. Close it fir
 
 ```bash
 sleep 2; curl -s -H "$H" $BASE/api/ai/cases/$CASE
-# → {"id":"...","visitorSummary":null,"riskFlags":[],"clipDescription":null,"clipTags":null,"greeterState":"greeting","label":"AI description, may be wrong"}
+# → {"id":"...","visitorSummary":null,"riskFlags":[],"interrogationState":"asking","label":"AI description, may be wrong"}
 ```
 
-If `greeterState` is `null`: AI is off for the household (section 3), `GEMINI_API_KEY` is missing, or `AI_DISABLED=1`. The hook exits silently in all three cases.
+If `interrogationState` is `null`: AI is off for the household (section 3), `GEMINI_API_KEY` is missing, or `AI_DISABLED=1`. The hook exits silently in all three cases.
 
 ### B3. The fixed script
 
 ```bash
-curl -s -H "$G" $BASE/api/ai/greeter/script | jq
+curl -s -H "$G" "$BASE/api/ai/interrogator/script?caseId=$CASE" | jq
 # lines.greet = "Hello, this is <First>'s doorbell. Who are you, and what is this about?"
 # lines.reprompt = "Sorry, could you say that again?"   lines.close = "Thank you. Please wait a moment."
 # audio.* = null unless REDIS_URL + AI_TTS=1; then the browser speaks the lines itself
@@ -212,7 +211,7 @@ espeak-ng -w visitor.wav -s 150 "Hello, I am from the council. It is urgent, I n
 # macOS: say -o visitor.wav --data-format=LEI16@16000 "…same text…"
 base64 < visitor.wav | tr -d '\n' > visitor.b64          # base64 -w0 does not exist on macOS
 jq -n --arg caseId "$CASE" --rawfile audio visitor.b64 '{caseId:$caseId,audio:$audio,mimeType:"audio/wav"}' > body.json
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/greeter/audio -d @body.json
+curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/interrogator/audio -d @body.json
 # → {"final":true,"reprompt":null,"close":"Thank you. Please wait a moment."}
 curl -s -H "$H" $BASE/api/ai/cases/$CASE | jq
 ```
@@ -223,7 +222,7 @@ Pass if:
 - The upload reply has no `transcript` or `summary`. The visitor side never learns what was understood.
 - `visitorSummary` is one neutral line, for example "Says she is from the council and needs to check the meter inside."
 - `riskFlags` contains all four of `Claims urgency`, `Claims to be officials`, `Wants to enter or check inside`, `Asks who is home`. (These come from regex rules, not the model. I checked them against this exact sentence.)
-- `greeterState` is `done`.
+- `interrogationState` is `done`.
 
 More speech to try (flags are from the rules in `lib/ai/agents/risk.ts`):
 
@@ -256,33 +255,18 @@ curl -s -H "$G" -H "$J" -X POST $BASE/api/dev/simulate -d '{"action":"state"}' |
 
 Pass if `status` is still `waiting`, `answer` is null, and the deadline and helper index did not change from before the upload. The escalation timer must be untouched by every AI call.
 
-### B7. Describer (agent 2)
-
-Use any JPEG of a person at a door (a phone photo works), under 3.7 MB:
+### B7. Kill switches
 
 ```bash
-base64 < door.jpg | tr -d '\n' > door.b64
-jq -n --arg c "$CASE" --rawfile image door.b64 '{caseId:$c,image:$image,mimeType:"image/jpeg"}' > img.json
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/describe -d @img.json | jq
-# → {"result":{"description":"Person in hi-vis vest holding a parcel, van behind","tags":{"uniform":true,"parcel":true,"vehicle":true}},"label":"AI description, may be wrong"}
-```
-
-Pass if the description is 15 words or fewer, names no person, and guesses no age, gender or intent. A blank or black image should give `"Image unclear"` with all tags `false`.
-
-Cross-check between agents: describe a photo of someone without a uniform, then upload the "I'm from the council" speech. `riskFlags` should now also include `Official claim, no uniform seen`.
-
-### B8. Kill switches
-
-```bash
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiGreeter":false}'
-curl -s -w ' %{http_code}\n' -H "$G" -H "$J" -X POST $BASE/api/ai/greeter/audio -d @body.json   # {"error":"AI greeter is off"} 409
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":false}'                      # also forces aiGreeter=false
+curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiInterrogator":false}'
+curl -s -w ' %{http_code}\n' -H "$G" -H "$J" -X POST $BASE/api/ai/interrogator/audio -d @body.json   # {"error":"AI interrogator is off"} 409
+curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":false}'                      # also forces aiInterrogator=false
 curl -s -w ' %{http_code}\n' -H "$G" -H "$J" -X POST $BASE/api/ai/notes -d '{"note":"test note"}' # {"error":"AI is off"} 409
 curl -s -w ' %{http_code}\n' -H "$G" $BASE/api/ai/cases/not-a-real-id                           # 404
-curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":true,"aiGreeter":true}'      # turn back on
+curl -s -H "$G" -H "$J" -X POST $BASE/api/ai/kill -d '{"aiEnabled":true,"aiInterrogator":true}'      # turn back on
 ```
 
-## C. Visit intake (agent 4): follow-up questions, checked against known visits and calendar
+## C. Visit intake (agent 3): follow-up questions, checked against known visits and calendar
 
 The verdict is computed by code. The model only extracts what the visitor claims and words the next question.
 
@@ -356,7 +340,7 @@ SELECT status, verdict, claims, mismatches, turns FROM "VisitIntake" ORDER BY "c
 curl -s -H "$R" $BASE/api/visit-requests | jq '.requests[].riskNote'   # all null
 ```
 
-## D. Weekly digest (agent 5)
+## D. Weekly digest (agent 4)
 
 The counts are computed by code. The model only writes about 80 words from them. The window is the 7 UTC days ending at today 00:00 UTC, so today's cases are not included. To test, backdate the cases you just made.
 
@@ -430,7 +414,7 @@ The same rows are in the database:
 
 ```sql
 SELECT "createdAt", agent, model, status, "tokensIn", "tokensOut", "latencyMs" FROM "AiRun" ORDER BY "createdAt" DESC LIMIT 20;
-SELECT id, "greeterState", "visitorSummary", "riskFlags", "clipDescription", "clipTags", status, "helperIndex" FROM "Case" ORDER BY "createdAt" DESC LIMIT 5;
+SELECT id, "interrogationState", "visitorSummary", "riskFlags", status, "helperIndex" FROM "Case" ORDER BY "createdAt" DESC LIMIT 5;
 SELECT id, status, "draftText", icon FROM "ResidentNote" ORDER BY "createdAt" DESC LIMIT 5;
 SELECT "weekStart", facts, text FROM "WeeklyDigest" ORDER BY "createdAt" DESC LIMIT 3;
 ```
@@ -441,7 +425,7 @@ Run a ring in each of these states and confirm helpers are alerted normally ever
 
 | Break it by | Expect |
 |-------------|--------|
-| `GEMINI_API_KEY=bad` (restart) | notes → `fallback:true` draft; greeter reply → `final:false` reprompt then `failed`; usage shows `error` rows |
+| `GEMINI_API_KEY=bad` (restart) | notes → `fallback:true` draft; interrogator reply → `final:false` reprompt then `failed`; usage shows `error` rows |
 | `AI_DISABLED=1` | notes fall back; no `ok` rows; `/api/dev/simulate` ring still opens a case and escalates |
 | `GEMINI_LIMIT_WORKHORSE_RPD=1` (restart), call notes twice | 1st from model, 2nd `fallback:true`; usage shows a `budget` row |
 | `POST /api/ai/kill {"aiEnabled":false}` | AI routes return 409; rings unaffected |

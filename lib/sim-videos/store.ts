@@ -68,17 +68,3 @@ export async function listVideos(householdId: string): Promise<Array<{ device: s
   }))
 }
 
-/**
- * Save extracted frames for a device.
- */
-export async function saveFrames(householdId: string, device: string, frames: string[]): Promise<void> {
-  await storage.saveFrames(householdId, device, frames)
-}
-
-/**
- * Read extracted frames for a device.
- */
-export async function readFrames(householdId: string, device: string): Promise<string[] | null> {
-  return storage.readFrames(householdId, device)
-}
-

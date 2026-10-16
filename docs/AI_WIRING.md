@@ -37,7 +37,7 @@ Copy from
 To
 `agents/lib/ai/**` (agents, prompts, talkback, budget, client, guard, hooks, models, runs, schemas, tts, workers, caseAi)
 `lib/ai/`
-`agents/app/api/ai/**` (cases/[id], describe, digests, digests/run, greeter/audio, greeter/script, kill, notes, notes/[id]/decision, notes/current, usage)
+`agents/app/api/ai/**` (cases/[id], describe, digests, digests/run, interrogator/audio, interrogator/script, kill, notes, notes/[id]/decision, notes/current, usage)
 `app/api/ai/`
 `agents/app/api/visit-requests/public/[token]/intake/**`
 `app/api/visit-requests/public/[token]/intake/`
@@ -115,8 +115,7 @@ Step 1 matters most: without it, the visitor request form (`/visit/[token]`) ret
 4. Exact code changes to existing files
 4.1 `lib/queue/jobs.ts`
 Add to `JOB_NAMES`:
-  AI_DESCRIBE: 'ai-describe',
-  AI_GREETER_START: 'ai-greeter-start',
+  AI_INTERROGATOR_START: 'ai-interrogator-start',
   AI_INTAKE_EVAL: 'ai-intake-eval',
   AI_DIGEST_WEEKLY: 'ai-digest-weekly',
 Add at the end of the file:
@@ -283,12 +282,12 @@ export default function NoteComposer() {
 5.4 Guardian switch and digests (no UI yet)
 The household flags default to off. Until you build a Setup toggle, turn them on while signed in as a guardian, from the browser console:
 await fetch('/api/ai/kill', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ aiEnabled: true, aiGreeter: true }) }).then(r => r.json())
+  body: JSON.stringify({ aiEnabled: true, aiInterrogator: true }) }).then(r => r.json())
 Useful reads and actions:
 - `GET /api/ai/digests` lists past digests.
 - `POST /api/ai/digests/run` with `{ "force": false }` makes one now.
 - `GET /api/ai/usage` shows the last 24 hours of AI calls.
-There is no endpoint that reads the current flags, so a proper toggle also needs a small `GET /api/ai/kill` (return `{ aiEnabled, aiGreeter }` from `Household`).
+There is no endpoint that reads the current flags, so a proper toggle also needs a small `GET /api/ai/kill` (return `{ aiEnabled, aiInterrogator }` from `Household`).
 6. Environment variables
 Add to `.env.example` and `.env.prod.example`. `lib/env-validate.ts` already knows the Gemini ones.
 # ───── AI agents (all optional; AI is OFF per household until a guardian switches it on) ─────
@@ -303,7 +302,7 @@ GEMINI_MODEL_TTS=gemini-3.1-flash-tts
 # GEMINI_LIMIT_QUALITY_RPM=5     GEMINI_LIMIT_QUALITY_RPD=20
 AI_DISABLED=0                  # 1 = hard off for the whole server
 AI_TIMEOUT_MS=
-AI_TTS=                        # speaker audio for fixed greeter lines (optional)
+AI_TTS=                        # speaker audio for fixed interrogator lines (optional)
 AI_EMBED_RISK=                 # 1 = also use embeddings to flag scam wording
 AI_EMBED_RISK_THRESHOLD=
 RING_TALKBACK_ENABLED=0        # leave 0 until Ring confirms a talk-back endpoint
@@ -314,7 +313,7 @@ Merge the code (sections 3 to 5).
 `npm i && npx prisma generate`
 `npx prisma migrate deploy`. The migration is additive only, so it is safe to run before the code goes live.
 Set the env vars (section 6).
-Start the web app and `npm run worker`. The worker runs the Describer and Greeter jobs and the weekly digest cron. Without a worker, the hook runs them inline in the web process. On Vercel serverless, run the worker on a separate host (for example your Docker setup), or digests will not run on schedule.
+Start the web app and `npm run worker`. The worker runs the Interrogator job and the weekly digest cron. Without a worker, the hook runs them inline in the web process. On Vercel serverless, run the worker on a separate host (for example your Docker setup), or digests will not run on schedule.
 Sign in as a guardian and switch AI on (section 5.4).
 Vercel's `buildCommand` already runs `prisma generate`.
 8. Verify
@@ -323,13 +322,12 @@ npm test              # includes tests/ai-core.test.ts
 Manual checks:
 Visitor form still works. Open `/visit/<link-token>` and submit. If it 404s, the restored `public/[token]/route.ts` is missing.
 AI off = old behaviour. With the household flags off, ring from `/sim`. Helper push and escalation work as before and no AI card appears.
-Describer. Switch AI on, press the bell in `/sim`, upload a fake snapshot in the AI tools box. The helper card shows a one-line description labelled "may be wrong".
-Greeter. Switch the greeter on, ring, run the greeter in `/sim` and speak "I'm from the gas company, I need to check the meter urgently." The helper card shows a summary plus scam-wording flags. The resident screen must show none of it.
+Interrogator. Switch the interrogator on, ring, run the interrogator in `/sim` and speak "I'm from the gas company, I need to check the meter urgently." The helper card shows a summary plus scam-wording flags. The resident screen must show none of it.
 Resident message. Create a note, approve it, and confirm the resident screen shows the sentence and icon. A draft must not show before approval.
 Intake. Submit a visit request claiming a 3pm checkup that is not in the calendar. The visitor sees a short question, and the helper later sees a note on the request.
 Quota fallback. Set `GEMINI_LIMIT_WORKHORSE_RPD=1`, ring twice. The second ring must still alert helpers normally with no AI card.
 9. Known limits
-- Ring talk-back is a stub (`lib/ai/talkback/ring.ts`). On a real Ring doorbell the greeter reports `unsupported` and the helper sees a normal ring. The greeter works only in `/sim` until Ring confirms a speaker or two-way audio endpoint.
+- Ring talk-back is a stub (`lib/ai/talkback/ring.ts`). On a real Ring doorbell the interrogator reports `unsupported` and the helper sees a normal ring. The interrogator works only in `/sim` until Ring confirms a speaker or two-way audio endpoint.
 - Snapshots rely on `fetchRingSnapshot`, which `face/camera.ts` already marks as unverified.
 - Privacy. Visitor audio and door snapshots go to Google Gemini. Use a paid API key (or data setting) that excludes training use before real use, and get guardian consent first.
 - Model IDs and quotas come from your dashboard table. Re-check them against the live API.

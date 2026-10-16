@@ -52,7 +52,12 @@ export async function generateJson<S extends ZodTypeAny>(a: GenArgs<S>): Promise
           generationConfig: { temperature: 0.2, maxOutputTokens: a.maxOutputTokens ?? 400, responseMimeType: 'application/json' },
         }, ctl.signal)
         if (res.status === 429 || res.status >= 500) { if (attempt === 0) { await new Promise(r => setTimeout(r, 600)); continue } }
-        if (!res.ok) { await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started }); break }
+        if (!res.ok) {
+          const body = (await res.text().catch(() => '')).slice(0, 300)
+          console.warn(`[AI] Gemini HTTP ${res.status} model=${model}: ${body}`)
+          await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started })
+          break
+        }
         const j: any = await res.json()
         const text = (j?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p?.text ?? '').join('')
         const usage = j?.usageMetadata ?? {}

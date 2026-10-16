@@ -38,7 +38,7 @@ interface HouseholdData {
   requireResidentOk?: boolean
   visitLink?: { active: boolean; createdAt: number | null }
   aiEnabled?: boolean
-  aiGreeter?: boolean
+  aiInterrogator?: boolean
   googleCalendarConnected?: boolean
 }
 
@@ -77,7 +77,7 @@ function SetupPage() {
   const [plannedMode,        setPlannedModeLocal]   = useState<'helper' | 'resident' | 'all-helper'>('helper')
   const [requireResidentOk,  setRequireResidentOk]  = useState(false)
   const [aiEnabled,         setAiEnabled]           = useState(false)
-  const [aiGreeter,         setAiGreeter]           = useState(false)
+  const [aiInterrogator,    setAiInterrogator]      = useState(false)
   const [aiConsent,          setAiConsent]            = useState(false)
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
   const [digests,           setDigests]             = useState<any[]>([])
@@ -131,7 +131,7 @@ function SetupPage() {
     setPlannedModeLocal(d.plannedMode ?? 'helper')
     setRequireResidentOk(d.requireResidentOk ?? false)
     setAiEnabled(d.aiEnabled ?? false)
-    setAiGreeter(d.aiGreeter ?? false)
+    setAiInterrogator(d.aiInterrogator ?? false)
     setVisitLinkActive(d.visitLink?.active ?? false)
     setVisitLinkCreatedAt(d.visitLink?.createdAt ?? null)
 
@@ -562,7 +562,7 @@ function SetupPage() {
         {aiEnabled && (
           <>
             <p className="text-xs text-slate-400">
-              ⚠️ Audio and camera pictures are sent to Google Gemini for processing. Enable only if you consent to this.
+              ⚠️ Audio and camera pictures are sent to Google Gemini for processing. Visitor answers are transcribed and stored. Enable only if you consent to this.
             </p>
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -572,15 +572,15 @@ function SetupPage() {
                   onChange={e => setAiConsent(e.target.checked)}
                   disabled={loading}
                 />
-                <span className="text-sm">I consent to sending audio and camera data to Google Gemini</span>
+                <span className="text-sm">I consent to sending audio/camera data and storing transcripts</span>
               </label>
             </div>
             {aiConsent && (
               <>
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={aiGreeter} onChange={e => setAiGreeter(e.target.checked)} disabled={loading} />
-                    <span className="text-sm">Enable AI greeter (asks visitors who they are)</span>
+                    <input type="checkbox" checked={aiInterrogator} onChange={e => setAiInterrogator(e.target.checked)} disabled={loading} />
+                    <span className="text-sm">Enable AI interrogator (unplanned visits only)</span>
                   </label>
                 </div>
                 {!googleCalendarConnected && (
@@ -593,7 +593,7 @@ function SetupPage() {
           </>
         )}
         <button
-          onClick={() => act('/api/household', { action: 'aiSettings', aiEnabled: aiEnabled && aiConsent, aiGreeter: aiEnabled && aiConsent && aiGreeter })}
+          onClick={() => act('/api/household', { action: 'aiSettings', aiEnabled: aiEnabled && aiConsent, aiInterrogator: aiEnabled && aiConsent && aiInterrogator })}
           disabled={loading || (aiEnabled && !aiConsent)}
           className={btn}
         >

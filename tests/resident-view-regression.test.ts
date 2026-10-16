@@ -24,7 +24,7 @@ describe('ResidentView - Regression Tests', () => {
     requireResidentOk: false,
     preset: 'standard',
     aiEnabled: false,
-    aiGreeter: false,
+    aiInterrogator: false,
   }
 
   // Helper to create state with a single case

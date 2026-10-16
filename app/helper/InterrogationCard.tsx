@@ -1,0 +1,167 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+
+type InterrogationTurn = { question: string; transcript: string; timestamp: number }
+type Claims = { name: string | null; organisation: string | null; reason: string | null; forWhom: string | null; time: string | null }
+
+type Ai = {
+  visitorSummary: string | null
+  riskFlags: string[] | unknown
+  interrogationState: string | null
+  interrogationTurns: InterrogationTurn[] | unknown
+  interrogationVerdict: string | null
+  interrogationClaims: Claims | unknown
+  aiStatus?: 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  disabled: '⚠️ AI is off on this server (AI_DISABLED=1 or GEMINI_API_KEY missing).',
+  not_enabled: '⚠️ AI is not enabled for this household. Turn it on in Setup → AI Helpers.',
+  failed: '⚠️ AI analysis failed. Check server logs and /api/ai/usage.',
+  not_applicable: '', // Planned visits don't show the card
+}
+
+const VERDICT_BADGE: Record<string, string> = {
+  consistent: 'bg-emerald-700',
+  inconsistent: 'bg-amber-700',
+  evasive: 'bg-red-700',
+  unclear: 'bg-slate-700',
+}
+
+/** Advisory AI info for an open case. Renders nothing for planned visits. */
+export default function InterrogationCard({ caseId }: { caseId: string }) {
+  const [ai, setAi] = useState<Ai | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let stop = false
+    const startedAt = Date.now()
+    const MAX_POLL_MS = 120_000   // Multi-turn interrogation can take longer
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/ai/cases/${encodeURIComponent(caseId)}`, { cache: 'no-store' })
+        if (stop) return
+        if (!r.ok) {
+          setError(r.status === 401 || r.status === 403 ? 'Not authorised to load AI info.'
+            : r.status === 404 ? 'Case not found.' : `Unable to load AI info (${r.status}).`)
+          setAnalyzing(false); return
+        }
+        setError(null)
+        const data = await r.json()
+        setAi(data)
+        // Terminal states: stop polling
+        if (data.aiStatus && !['processing', 'succeeded'].includes(data.aiStatus)) { setAnalyzing(false); return }
+
+        const interrogatorActive = data.interrogationState === 'asking' || data.interrogationState === 'listening'
+        const finished = data.interrogationState === 'done' || data.interrogationState === 'failed' || data.interrogationState === 'unsupported'
+        const timedOut = Date.now() - startedAt > MAX_POLL_MS
+        if (finished) { setAnalyzing(false); return }
+        if (timedOut) { setAnalyzing(false); setError('AI interrogation is taking too long. It may have failed.'); return }
+
+        setAnalyzing(true)
+        setTimeout(load, 3000)
+      } catch { setError('Unable to load AI info (network error).'); setAnalyzing(false) }
+    }
+    void load()
+    return () => { stop = true }
+  }, [caseId])
+
+  if (error) {
+    return <p className="mb-3 rounded-xl bg-amber-900/60 p-3 text-sm text-amber-100">⚠️ {error}</p>
+  }
+  if (!ai && !analyzing) return null
+  if (ai?.aiStatus === 'not_applicable') return null
+  if (ai?.aiStatus && STATUS_TEXT[ai.aiStatus]) {
+    return <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">{STATUS_TEXT[ai.aiStatus]}</p>
+  }
+
+  const flags = Array.isArray(ai?.riskFlags) ? (ai.riskFlags as string[]) : []
+  const turns = Array.isArray(ai?.interrogationTurns) ? (ai.interrogationTurns as InterrogationTurn[]) : []
+  const claims = ai?.interrogationClaims as Claims | null
+  const verdict = ai?.interrogationVerdict || 'unclear'
+
+  // Show unsupported message
+  if (ai?.interrogationState === 'unsupported') {
+    return (
+      <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
+        🎙️ Interrogator unavailable on this doorbell (simulator only)
+      </p>
+    )
+  }
+
+  // Show analyzing state
+  if (analyzing && !ai?.visitorSummary && flags.length === 0) {
+    const stateText = ai?.interrogationState === 'asking' ? '🎙️ Doorbell is asking a question…'
+                    : ai?.interrogationState === 'listening' ? '🎙️ Doorbell is listening…'
+                    : '🔍 AI is analysing…'
+    return (
+      <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
+        {stateText}
+      </p>
+    )
+  }
+
+  // Show active interrogator state without results yet
+  if (!ai?.visitorSummary && flags.length === 0) {
+    return ai?.interrogationState === 'listening' || ai?.interrogationState === 'asking'
+      ? <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">🎙️ Doorbell is asking the visitor questions…</p>
+      : null
+  }
+
+  return (
+    <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm space-y-3">
+      {/* Real reason summary and verdict */}
+      {ai?.visitorSummary && (
+        <div>
+          <p className="font-semibold">🎙️ Visitor's reason:</p>
+          <p className="mt-1">{ai.visitorSummary}</p>
+          <div className="mt-2 inline-flex items-center gap-2">
+            <span className={`rounded-full px-2 py-1 text-xs font-medium ${VERDICT_BADGE[verdict]}`}>
+              Verdict: {verdict}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Q&A history */}
+      {turns.length > 0 && (
+        <div className="border-t border-slate-700 pt-3">
+          <p className="font-semibold mb-2">Questions and answers:</p>
+          <div className="space-y-2">
+            {turns.map((t, i) => (
+              <div key={i} className="rounded-lg bg-slate-900 p-2">
+                <p className="text-slate-400 text-xs">Q: {t.question}</p>
+                <p className="mt-1">A: {t.transcript || '(not understood)'}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Claims */}
+      {claims && (claims.name || claims.organisation || claims.reason || claims.forWhom || claims.time) && (
+        <div className="border-t border-slate-700 pt-3">
+          <p className="font-semibold mb-2">What the visitor claimed:</p>
+          <ul className="space-y-1 text-slate-300">
+            {claims.name && <li>• Name: {claims.name}</li>}
+            {claims.organisation && <li>• Organisation: {claims.organisation}</li>}
+            {claims.reason && <li>• Reason: {claims.reason}</li>}
+            {claims.forWhom && <li>• For whom: {claims.forWhom}</li>}
+            {claims.time && <li>• Time: {claims.time}</li>}
+          </ul>
+        </div>
+      )}
+
+      {/* Risk flags */}
+      {flags.length > 0 && (
+        <ul className="rounded-lg bg-amber-900/60 p-2 text-amber-100">
+          {flags.map((f) => <li key={f}>⚠️ {f}</li>)}
+        </ul>
+      )}
+
+      <p className="text-xs text-slate-400">AI summary, may be wrong. Check the person yourself.</p>
+    </div>
+  )
+}

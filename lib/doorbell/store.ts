@@ -731,7 +731,7 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
   void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
   // AI is advisory: fire-and-forget, never awaited, never on the alert path.
-  void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
+  void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null, kind: c.kind || '', lane: c.lane || null, expectedId: c.expectedId || null, recurringId: c.recurringId || null })).catch(() => {})
   return c
 }
 
@@ -870,6 +870,8 @@ export async function selfVerify(
       pushToMembership(first.id, { title: '🚪 Someone is at the door', body: `The expected visitor did not pass the check. Open the app. You have ${state.timeoutSec}s.`, tag: c.id, url: '/helper' })
       if (first.user.phone) sendSms(first.user.phone, `Someone is at ${household.residentName}'s door and did not pass the check. Open the helper app now. You have ${state.timeoutSec}s.`, { urgent: true })
     }
+    // After demotion to normal lane, this becomes an unplanned visit - trigger AI interrogator
+    void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: null, kind: c.kind || '', lane: c.lane || null, expectedId: c.expectedId || null, recurringId: c.recurringId || null })).catch(() => {})
   }
 
   await updateCase(c.id, c)

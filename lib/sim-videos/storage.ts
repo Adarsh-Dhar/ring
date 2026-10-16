@@ -12,8 +12,6 @@ export interface VideoStorage {
   streamVideo(householdId: string, device: string, start: number, end: number): Promise<ReadableStream<Uint8Array> | null>
   deleteVideo(householdId: string, device: string): Promise<void>
   listVideos(householdId: string): Promise<Array<{ device: string; metadata: VideoMetadata }>>
-  saveFrames(householdId: string, device: string, frames: string[]): Promise<void>
-  readFrames(householdId: string, device: string): Promise<string[] | null>
 }
 
 export interface VideoMetadata {

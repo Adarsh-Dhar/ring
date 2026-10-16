@@ -1,5 +1,5 @@
 /**
- * Pre-render the three fixed greeter lines ONCE per household and cache them (Gemini TTS is ~10 requests/day).
+ * Pre-render the three fixed interrogator lines ONCE per household and cache them (Gemini TTS is ~10 requests/day).
  * Falls back to null → the client uses browser speechSynthesis.
  */
 import { createHash } from 'crypto'

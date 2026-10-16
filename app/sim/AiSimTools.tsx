@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { extractFrames, validateFramesSize } from './extractFrames'
+import InterrogationCard from '../helper/InterrogationCard'
 
 const b64 = (blob: Blob) => new Promise<string>((res, rej) => {
   const r = new FileReader()
@@ -17,12 +17,16 @@ const speak = (text: string) => new Promise<void>((res) => {
   window.speechSynthesis.speak(u)
 })
 
-/** Simulates the doorbell speaker + mic in the browser (SimTalkback) and lets you try the Describer with an image. */
-export default function AiSimTools({ caseId }: { caseId: string }) {
+interface Props {
+  caseId: string
+  lane?: 'normal' | 'expected' | null
+}
+
+/** Simulates the doorbell speaker + mic in the browser (SimTalkback). */
+export default function AiSimTools({ caseId, lane }: Props) {
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const rec = useRef<MediaRecorder | null>(null)
-  const [videoFile, setVideoFile] = useState<File | null>(null)
 
   async function recordOnce(seconds: number): Promise<{ data: string; mimeType: string } | null> {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
@@ -38,110 +42,58 @@ export default function AiSimTools({ caseId }: { caseId: string }) {
     return { data: await b64(new Blob(chunks, { type: mimeType })), mimeType }
   }
 
-  async function runGreeter() {
+  async function runInterrogator() {
     if (!caseId) return setStatus('Ring the doorbell first.')
     setBusy(true)
     try {
-      const s = await (await fetch('/api/ai/greeter/script', { cache: 'no-store' })).json()
-      if (!s.enabled) { setStatus('AI greeter is off for this household.'); return }
+      const s = await (await fetch(`/api/ai/interrogator/script?caseId=${encodeURIComponent(caseId)}`, { cache: 'no-store' })).json()
+      if (!s.enabled) { setStatus('AI interrogator is off for this household.'); return }
       await speak(s.lines.greet)
-      for (let attempt = 0; attempt < 2; attempt++) {
-        setStatus('🎙️ Listening… speak now (10s)')
+
+      // Multi-turn loop: up to 4 turns
+      for (let turn = 0; turn < 4; turn++) {
+        setStatus(`🎙️ Listening… speak now (10s) - Turn ${turn + 1}/4`)
         const clip = await recordOnce(s.listenSeconds || 10)
         if (!clip) { setStatus('Nothing recorded.'); return }
-        const r = await fetch('/api/ai/greeter/audio', {
+
+        const r = await fetch('/api/ai/interrogator/audio', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ caseId, audio: clip.data, mimeType: clip.mimeType.split(';')[0], lastTry: attempt === 1 }),
+          body: JSON.stringify({ caseId, audio: clip.data, mimeType: clip.mimeType.split(';')[0] }),
         })
         const j = await r.json()
         if (!r.ok) { setStatus(j.error || 'Upload failed'); return }
-        if (j.reprompt) { await speak(j.reprompt); continue }
-        if (j.close) await speak(j.close)
-        setStatus('Done. The summary appears on the helper card.'); return
+
+        if (j.final) {
+          if (j.close) await speak(j.close)
+          setStatus('Done. The summary appears on the helper card.')
+          return
+        }
+
+        if (j.question) {
+          await speak(j.question)
+        } else {
+          setStatus('Done. No more questions.')
+          return
+        }
       }
     } catch (e: any) { setStatus(e?.message || 'Failed') } finally { setBusy(false) }
   }
 
-  async function describe(file: File) {
-    setBusy(true); setStatus('Describing…')
-    try {
-      const r = await fetch('/api/ai/describe', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId: caseId || undefined, image: await b64(file), mimeType: file.type || 'image/jpeg' }),
-      })
-      const j = await r.json()
-      setStatus(r.ok ? (j.result ? `📷 ${j.result.description}` : 'No AI result (off, over budget, or failed).') : j.error)
-    } finally { setBusy(false) }
-  }
-
-  async function describeVideo(file: File) {
-    if (!caseId) {
-      setStatus('Ring the doorbell first to create an active case')
-      return
-    }
-
-    setBusy(true); setStatus('Extracting frames…')
-    try {
-      const frames = await extractFrames(file)
-      if (!validateFramesSize(frames)) {
-        setStatus('Frames too large. Max 1.5 MB total.')
-        return
-      }
-      setStatus('Describing video…')
-      const r = await fetch('/api/ai/describe-video', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, frames }),
-      })
-      const j = await r.json()
-      if (r.ok) {
-        setStatus(`🎞 ${j.summary}`)
-        if (j.actions && j.actions.length > 0) {
-          setStatus(s => `${s}\nActions: ${j.actions.join(', ')}`)
-        }
-      } else {
-        setStatus(j.error || 'Video description failed')
-      }
-    } catch (e: any) {
-      setStatus(e?.message || 'Failed to extract frames')
-    } finally { setBusy(false) }
-  }
-
-  /** Analyse the frames saved when the clip was uploaded for this case's simulator device (no re-select needed). */
-  async function describeStored() {
-    if (!caseId) { setStatus('Ring the doorbell first to create an active case'); return }
-    setBusy(true); setStatus('Describing the uploaded clip…')
-    try {
-      const r = await fetch('/api/ai/describe-video', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ caseId, useStored: true }),
-      })
-      const j = await r.json().catch(() => ({}))
-      if (r.ok) {
-        setStatus(`🎞 ${j.summary}${j.actions?.length ? `\nActions: ${j.actions.join(', ')}` : ''}`)
-      } else {
-        setStatus(j.error || 'Video description failed')
-      }
-    } catch (e: any) {
-      setStatus(e?.message || 'Video description failed')
-    } finally { setBusy(false) }
-  }
+  const isPlanned = lane === 'expected'
 
   return (
     <section className="mt-4 rounded-xl border border-slate-700 p-3 text-sm text-slate-200">
       <h2 className="mb-2 font-semibold">🤖 AI tools (sim)</h2>
+      {caseId && <InterrogationCard key={caseId} caseId={caseId} />}
       <div className="flex flex-wrap gap-2 items-center">
-        <button disabled={busy || !caseId} onClick={runGreeter} className="rounded-lg bg-slate-700 px-3 py-2 disabled:opacity-50">🎙️ Run door greeter</button>
-        <label className="rounded-lg bg-slate-700 px-3 py-2 cursor-pointer">
-          📷 Describe image
-          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void describe(f); e.currentTarget.value = '' }} />
-        </label>
-        <button disabled={busy || !caseId} onClick={describeStored} className="rounded-lg bg-slate-700 px-3 py-2 disabled:opacity-50">🎞 Describe stored clip</button>
-        <label className="rounded-lg bg-slate-700 px-3 py-2 cursor-pointer">
-          🎞 Describe video
-          <input type="file" accept="video/mp4,video/webm" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) void describeVideo(f); e.currentTarget.value = '' }} />
-        </label>
+        <button
+          disabled={busy || !caseId || isPlanned}
+          onClick={runInterrogator}
+          className="rounded-lg bg-slate-700 px-3 py-2 disabled:opacity-50"
+        >
+          🎙️ Run interrogator
+        </button>
+        {isPlanned && <span className="text-xs text-slate-400">Planned visit: interrogator off</span>}
       </div>
       {status && <p className="mt-2 text-slate-300 whitespace-pre-line" role="status">{status}</p>}
     </section>

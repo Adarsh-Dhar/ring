@@ -1,6 +1,6 @@
 import { getDb } from '@/lib/db/client'
 
-export type RunStatus = 'ok' | 'invalid' | 'error' | 'budget' | 'disabled'
+export type RunStatus = 'ok' | 'invalid' | 'error' | 'budget' | 'disabled' | 'skipped' | 'skipped_planned'
 
 export async function logRun(r: {
   householdId: string; agent: string; model: string; status: RunStatus

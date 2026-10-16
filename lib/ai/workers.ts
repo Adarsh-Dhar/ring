@@ -11,11 +11,8 @@ export async function registerAiWorkers(boss: PgBoss) {
       for (const j of jobs) { try { await fn(j.data) } catch (e) { console.error(`[WORKER] ${name} failed`, e) } }   // AI jobs never retry-storm
     })
 
-  await each(JOB_NAMES.AI_DESCRIBE, async (d: AiCaseJob) => {
-    const { describeForCase } = await import('./agents/describer'); await describeForCase(d.householdId, d.caseId, d.deviceId)
-  })
-  await each(JOB_NAMES.AI_GREETER_START, async (d: AiCaseJob) => {
-    const { startGreeter } = await import('./agents/greeter'); await startGreeter(d.householdId, d.caseId, d.deviceId)
+  await each(JOB_NAMES.AI_INTERROGATOR_START, async (d: AiCaseJob) => {
+    const { startInterrogator } = await import('./agents/interrogator'); await startInterrogator(d.householdId, d.caseId, d.deviceId)
   })
   await each(JOB_NAMES.AI_INTAKE_EVAL, async (d: AiIntakeJob) => {
     const { startIntake } = await import('./agents/intake'); await startIntake(d.householdId, d.requestId)

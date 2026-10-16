@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authorize, fail } from '@/lib/guard'
+import { authorize, fail, HOUSEHOLD_COOKIE } from '@/lib/guard'
 import { statVideo, streamVideo, sanitiseDevice } from '@/lib/sim-videos/store'
 import { parseRange } from '@/lib/sim-videos/range'
 
@@ -17,8 +17,17 @@ const BASE_HEADERS = {
 async function resolve(req: NextRequest, ctx: Ctx) {
   const a = await authorize(req, 'any')
   if (a.ok === false) return { res: a.res } as const
-  const householdId = a.session!.householdId
+
+  // Resolve householdId from session or cookie
+  let householdId = a.session!.householdId
+  if (!householdId) {
+    const householdCookie = req.cookies.get(HOUSEHOLD_COOKIE)?.value
+    if (householdCookie) {
+      householdId = householdCookie
+    }
+  }
   if (!householdId) return { res: fail('No household selected', 400) } as const
+
   const { device } = await ctx.params
   if (!sanitiseDevice(device)) return { res: fail('Invalid device name', 400) } as const
   const stats = await statVideo(householdId, device)

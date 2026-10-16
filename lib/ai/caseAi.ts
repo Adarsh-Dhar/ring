@@ -5,15 +5,14 @@ import { pushToMembership } from '@/lib/doorbell/notify'
 
 /** AI fields live on Case but are written ONLY here, never through the escalation store. */
 export async function setCaseAi(caseId: string, data: {
-  visitorSummary?: string | null; riskFlags?: string[]; clipDescription?: string | null
-  clipTags?: unknown; greeterState?: string | null
-  clipActions?: string[]; clipPeopleCount?: number; clipApproachedDoor?: boolean
+  visitorSummary?: string | null; riskFlags?: string[]; interrogationState?: string | null;
+  interrogationTurns?: any; interrogationVerdict?: string | null; interrogationClaims?: any
 }) {
   try {
     // Read existing case before updating to detect first result
     const existing = await getDb().case.findUnique({
       where: { id: caseId },
-      select: { id: true, householdId: true, visitorSummary: true, clipDescription: true, riskFlags: true },
+      select: { id: true, householdId: true, visitorSummary: true, riskFlags: true, interrogationState: true },
     })
 
     if (!existing) {
@@ -21,28 +20,35 @@ export async function setCaseAi(caseId: string, data: {
       return
     }
 
-    const isFirstResult = !existing.visitorSummary && !existing.clipDescription && 
+    const isFirstResult = !existing.visitorSummary &&
                            (!existing.riskFlags || (Array.isArray(existing.riskFlags) && existing.riskFlags.length === 0))
 
     const d: any = {}
     if ('visitorSummary' in data) d.visitorSummary = data.visitorSummary
     if ('riskFlags' in data) d.riskFlags = data.riskFlags
-    if ('clipDescription' in data) d.clipDescription = data.clipDescription
-    if ('clipTags' in data) d.clipTags = data.clipTags
-    if ('greeterState' in data) d.greeterState = data.greeterState
-    if ('clipActions' in data) d.clipActions = data.clipActions
-    if ('clipPeopleCount' in data) d.clipPeopleCount = data.clipPeopleCount
-    if ('clipApproachedDoor' in data) d.clipApproachedDoor = data.clipApproachedDoor
+    if ('interrogationState' in data) d.interrogationState = data.interrogationState
+    if ('interrogationTurns' in data) d.interrogationTurns = data.interrogationTurns
+    if ('interrogationVerdict' in data) d.interrogationVerdict = data.interrogationVerdict
+    if ('interrogationClaims' in data) d.interrogationClaims = data.interrogationClaims
     await getDb().case.update({ where: { id: caseId }, data: d })
 
-    // Push notification to helpers when AI results arrive for the first time
-    if (isFirstResult && (data.visitorSummary || data.clipDescription) && existing.householdId) {
+    // Push notification to helpers when interrogation completes (state === 'done')
+    if (isFirstResult && data.interrogationState === 'done' && data.visitorSummary && existing.householdId) {
       const memberships = await getApprovedMemberships(existing.householdId)
       const helperMemberships = memberships.filter(m => m.role === 'helper')
+      const verdict = data.interrogationVerdict || 'unclear'
+      const body = `Visitor claims: ${data.visitorSummary.slice(0, 80)}${data.visitorSummary.length > 80 ? '...' : ''}. Verdict: ${verdict}.`
       for (const m of helperMemberships) {
-        const body = data.visitorSummary
-          ? `Visitor said: ${data.visitorSummary.slice(0, 100)}${data.visitorSummary.length > 100 ? '...' : ''}`
-          : 'AI description available'
+        // In-app notification (separate from web push; failure must not block the push or the save)
+        await getDb().notification.create({
+          data: {
+            type: 'alert',
+            title: '🎙️ Doorbell AI update',
+            message: body,
+            toUserId: m.userId,
+            metadata: { householdId: existing.householdId, caseId, url: '/helper', source: 'ai' },
+          },
+        }).catch(e => console.error('[AI] in-app notification failed', e))
         await pushToMembership(m.id, {
           title: '🎙️ Doorbell AI update',
           body,
@@ -54,25 +60,47 @@ export async function setCaseAi(caseId: string, data: {
   } catch (e) { console.error('[AI] setCaseAi failed', e) }
 }
 
+export async function aiFlags(householdId: string) {
+  const h = await getDb().household.findUnique({ where: { id: householdId }, select: { aiEnabled: true, aiInterrogator: true, residentName: true } })
+  return { aiEnabled: !!h?.aiEnabled, aiInterrogator: !!h?.aiInterrogator, residentName: h?.residentName ?? null }
+}
+
 export async function getCaseAi(householdId: string, caseId: string) {
   const c = await getDb().case.findFirst({
     where: { id: caseId, householdId },
     select: {
       id: true,
+      kind: true,
+      lane: true,
+      expectedId: true,
+      recurringId: true,
       visitorSummary: true,
       riskFlags: true,
-      clipDescription: true,
-      clipTags: true,
-      greeterState: true,
-      clipActions: true,
-      clipPeopleCount: true,
-      clipApproachedDoor: true,
+      interrogationState: true,
+      interrogationTurns: true,
+      interrogationVerdict: true,
+      interrogationClaims: true,
     } as Prisma.CaseSelect,
   })
-  return c
+  if (!c) return null
+  return { ...c, aiStatus: await getAiStatus(householdId, caseId, c) }
 }
 
-export async function aiFlags(householdId: string) {
-  const h = await getDb().household.findUnique({ where: { id: householdId }, select: { aiEnabled: true, aiGreeter: true, residentName: true } })
-  return { aiEnabled: !!h?.aiEnabled, aiGreeter: !!h?.aiGreeter, residentName: h?.residentName ?? null }
+export type AiStatus = 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
+
+/** Derives a status from household flags + the latest AiRun rows for this case. No schema change needed. */
+async function getAiStatus(householdId: string, caseId: string, c: {
+  visitorSummary: string | null; kind: string; lane?: string | null; expectedId?: string | null; recurringId?: string | null
+}): Promise<AiStatus> {
+  // Planned visits are not applicable to interrogation
+  if (c.kind === 'visitor' && c.lane === 'expected') return 'not_applicable'
+  if (c.expectedId || c.recurringId) return 'not_applicable'
+
+  if (c.visitorSummary) return 'succeeded'
+  if (process.env.AI_DISABLED === '1' || !process.env.GEMINI_API_KEY) return 'disabled'
+  const f = await aiFlags(householdId)
+  if (!f.aiEnabled) return 'not_enabled'
+  const runs = await getDb().aiRun.findMany({ where: { caseId }, orderBy: { createdAt: 'desc' }, take: 5, select: { status: true } })
+  if (runs.some(r => ['error', 'invalid', 'budget', 'disabled', 'skipped'].includes(r.status))) return 'failed'
+  return 'processing'
 }

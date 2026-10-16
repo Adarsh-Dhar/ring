@@ -51,12 +51,6 @@ function getVideoPath(householdId: string, device: string): string {
   return path.join(SIM_VIDEO_DIR, householdId, `${sanitised}.mp4`)
 }
 
-function getFramesPath(householdId: string, device: string): string {
-  const sanitised = sanitiseDevice(device)
-  if (!sanitised) throw new Error('Invalid device name')
-  return path.join(SIM_VIDEO_DIR, householdId, `${sanitised}.frames.json`)
-}
-
 async function ensureHouseholdDir(householdId: string): Promise<void> {
   const dir = path.join(SIM_VIDEO_DIR, householdId)
   try {
@@ -134,13 +128,6 @@ export class LocalVideoStorage implements VideoStorage {
     } catch (e) {
       if ((e as any).code !== 'ENOENT') throw e
     }
-
-    const framesPath = getFramesPath(householdId, sanitised)
-    try {
-      await fs.unlink(framesPath)
-    } catch (e) {
-      if ((e as any).code !== 'ENOENT') throw e
-    }
   }
 
   async listVideos(householdId: string): Promise<Array<{ device: string; metadata: VideoMetadata }>> {
@@ -162,29 +149,6 @@ export class LocalVideoStorage implements VideoStorage {
       return videos
     } catch (e) {
       if ((e as any).code === 'ENOENT') return []
-      throw e
-    }
-  }
-
-  async saveFrames(householdId: string, device: string, frames: string[]): Promise<void> {
-    const sanitised = sanitiseDevice(device)
-    if (!sanitised) throw new Error('Invalid device name')
-
-    await ensureHouseholdDir(householdId)
-    const framesPath = getFramesPath(householdId, sanitised)
-    await fs.writeFile(framesPath, JSON.stringify(frames))
-  }
-
-  async readFrames(householdId: string, device: string): Promise<string[] | null> {
-    const sanitised = sanitiseDevice(device)
-    if (!sanitised) return null
-
-    const framesPath = getFramesPath(householdId, sanitised)
-    try {
-      const data = await fs.readFile(framesPath, 'utf-8')
-      return JSON.parse(data)
-    } catch (e) {
-      if ((e as any).code === 'ENOENT') return null
       throw e
     }
   }

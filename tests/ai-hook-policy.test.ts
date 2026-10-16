@@ -39,14 +39,10 @@ describe('AI hook execution policy', () => {
   describe('onDoorEvent behavior', () => {
     it('runs inline by default (no queue initialization)', async () => {
       // Mock the inline functions
-      const describeForCase = vi.fn().mockResolvedValue(null)
-      const startGreeter = vi.fn().mockResolvedValue(null)
+      const startInterrogator = vi.fn().mockResolvedValue(null)
 
-      vi.doMock('@/lib/ai/agents/describer', () => ({
-        describeForCase,
-      }))
-      vi.doMock('@/lib/ai/agents/greeter', () => ({
-        startGreeter,
+      vi.doMock('@/lib/ai/agents/interrogator', () => ({
+        startInterrogator,
       }))
 
       // This test would need to properly mock the imports
@@ -91,12 +87,8 @@ describe('AI hook execution policy', () => {
       // but do not propagate to the caller
     })
 
-    it('logs describe failures', async () => {
-      // When inline describer fails, it should log a warning
-    })
-
-    it('logs greeter failures', async () => {
-      // When inline greeter fails, it should log a warning
+    it('logs interrogator failures', async () => {
+      // When inline interrogator fails, it should log a warning
     })
 
     it('logs queue enqueue failures', async () => {
