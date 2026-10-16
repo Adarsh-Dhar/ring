@@ -152,8 +152,9 @@ async function loadStateFromDB(householdId: string): Promise<void> {
     const household = await getHousehold(householdId)
     if (!household) {
       console.error(`[STORE] Household not found: ${householdId}`)
-      // TEST MODE: Create a minimal test household for AI testing
-      if (process.env.TEST_AUTH_BYPASS === '1' && householdId === 'test-household') {
+      // TEST MODE: Create a minimal test household for AI testing (development only)
+      const IS_PROD = process.env.NODE_ENV === 'production'
+      if (process.env.TEST_AUTH_BYPASS === '1' && !IS_PROD && householdId === 'test-household') {
         console.log(`[STORE] TEST MODE: Creating minimal test household state`)
         householdStates.set(householdId, {
           householdId,

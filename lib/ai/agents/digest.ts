@@ -69,7 +69,7 @@ export async function runDigest(householdId: string, now = new Date(), force = f
   let text = templateText(facts)
   if (facts.totalRings > 0) {
     const out = await generateJson({
-      agent: 'digest', householdId, role: 'quality', schema: DigestOut, maxOutputTokens: 250, system: DIGEST_SYSTEM,
+      agent: 'digest', householdId, role: 'workhorse', schema: DigestOut, maxOutputTokens: 250, system: DIGEST_SYSTEM,
       parts: [{ text: `FACTS (JSON):\n${JSON.stringify(facts)}` }],
     })
     if (out) { const t = clampWords(out.text, 100); if (!hasBannedPhrase(t)) text = t }

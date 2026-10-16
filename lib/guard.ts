@@ -5,8 +5,8 @@ import { getMembershipEpoch } from './db/memberships'
 import type { z } from 'zod'
 import { getDb } from './db/client'
 
-// TEST MODE: Skip authentication for AI agent testing
-const TEST_MODE = process.env.TEST_AUTH_BYPASS === '1'
+// TEST MODE: Skip authentication for AI agent testing (development only)
+const TEST_MODE = process.env.TEST_AUTH_BYPASS === '1' && !IS_PROD
 
 export const COOKIE = 'db_session'
 export const DEVICE_COOKIE = 'db_device'

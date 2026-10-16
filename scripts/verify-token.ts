@@ -1,0 +1,6 @@
+import { verifyToken } from '../lib/auth'
+
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJraW5kIjoidXNlciIsInN1YiI6ImNtdjhyb2o5ZDAwMDBheTVhd2tlYmh4eXgiLCJob3VzZWhvbGRJZCI6ImNtdjhzcGxybTAwMDA5OHpkOGY0dDVqdGIiLCJtZW1iZXJzaGlwSWQiOiJjbXY4c3BsczUwMDAyOTh6ZGM5MXlzdjZiIiwidXNlcklkIjoiY212OHJvajlkMDAwMGF5NWF3a2ViaHh5eCIsInNlc3Npb25WZXJzaW9uIjoxLCJleHAiOjE3OTQ3MTkwMDJ9.iyWTiFo7l60gqcUnONsodJqDng7Qz-fUjfxAsPGf6qU"
+
+const result = verifyToken(token)
+console.log('Token verification result:', result)
