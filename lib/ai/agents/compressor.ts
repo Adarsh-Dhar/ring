@@ -1,7 +1,7 @@
-import { generateJson } from '../client'
-import { CompressorOut } from '../schemas'
-import { COMPRESSOR_SYSTEM } from '../prompts/compressor'
-import { clampWords, countWords, hasBannedPhrase, sanitize, wrapUntrusted } from '../guard'
+import { generateJson } from '@/lib/ai/client'
+import { CompressorOut } from '@/lib/ai/schemas'
+import { COMPRESSOR_SYSTEM } from '@/lib/ai/prompts/compressor'
+import { clampWords, countWords, hasBannedPhrase, sanitize, wrapUntrusted } from '@/lib/ai/guard'
 import { PURPOSES, type Purpose } from '@/lib/doorbell/purposes'
 import { getDb } from '@/lib/db/client'
 

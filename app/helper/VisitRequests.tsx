@@ -8,6 +8,7 @@ interface VisitReq {
   name:        string
   purpose:     string
   note:        string | null
+  riskNote:    string | null
   contactKind: string
   startsAt:    number
   endsAt:      number
@@ -87,6 +88,7 @@ export default function VisitRequests({ requireResidentOk }: { requireResidentOk
                 via {r.contactKind === 'sms' ? 'SMS' : 'email'}
               </p>
               {r.note && <p className="text-sm text-slate-300 mt-2 italic">"{r.note}"</p>}
+              {r.riskNote && <p className="mt-2 rounded-lg bg-slate-900 px-2 py-1 text-xs text-amber-200">{r.riskNote} <span className="text-slate-400">(AI, may be wrong)</span></p>}
               <div className="mt-3">
                 {waitingResident ? (
                   <p className="text-sm text-amber-400">Approved by you — waiting for resident.</p>

@@ -671,6 +671,8 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
   void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
+  // AI is advisory: fire-and-forget, never awaited, never on the alert path.
+  void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
   return c
 }
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import AiSimTools from './AiSimTools'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -568,6 +569,7 @@ export default function SimPage() {
           </section>
         </div>
       </div>
+      <AiSimTools caseId={caseId} />
     </main>
   )
 }

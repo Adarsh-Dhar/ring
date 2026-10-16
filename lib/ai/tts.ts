@@ -13,7 +13,10 @@ export function wrapPcmAsWav(pcmB64: string, sampleRate = 24_000): Buffer {
   h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22)
   h.writeUInt32LE(sampleRate, 24); h.writeUInt32LE(sampleRate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
   h.write('data', 36); h.writeUInt32LE(pcm.length, 40)
-  return Buffer.concat([h, pcm])
+  const result = Buffer.alloc(44 + pcm.length)
+  h.copy(result as any, 0)
+  pcm.copy(result as any, 44)
+  return result
 }
 
 const key = (householdId: string, text: string) =>

@@ -23,6 +23,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -58,6 +60,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -101,6 +105,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -144,6 +150,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -187,6 +195,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -232,6 +242,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -266,6 +278,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -311,6 +325,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {
@@ -354,6 +370,8 @@ describe('ResidentView - Fail-Closed Properties', () => {
       plannedMode: 'helper',
       requireResidentOk: false,
       preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
     }
 
     const state = {

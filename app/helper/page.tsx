@@ -9,6 +9,8 @@ import ExpectedForm from './ExpectedForm'
 import LiveView from './LiveView'
 import VisitRequests from './VisitRequests'
 import RegularVisitors from './RegularVisitors'
+import AiCaseCard from './AiCaseCard'
+import NoteComposer from './NoteComposer'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -154,6 +156,8 @@ export default function HelperPage() {
             </p>
           )}
 
+          {c.kind === 'visitor' && <AiCaseCard caseId={c.id} />}
+
           {(snap.expectedNow.length > 0 || snap.recurringNow.length > 0) && (
             <p className="mb-2 text-sm text-amber-300">Expected now: {[...snap.expectedNow, ...snap.recurringNow].map((e) => `${e.icon} ${e.label}`).join(', ')}</p>
           )}
@@ -175,6 +179,7 @@ export default function HelperPage() {
       )}
 
       <VisitRequests requireResidentOk={!!(snap as any).requireResidentOk} />
+      <NoteComposer />
       <RegularVisitors />
       <ExpectedForm items={snap.expected} onChange={refresh} />
 

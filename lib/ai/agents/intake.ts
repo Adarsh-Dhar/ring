@@ -5,11 +5,11 @@
  * is computed deterministically. The visitor is never told what is or isn't expected.
  */
 import { getDb } from '@/lib/db/client'
-import { generateJson } from '../client'
-import { IntakeTurnOut, type IntakeTurn } from '../schemas'
-import { INTAKE_SYSTEM } from '../prompts/intake'
-import { sanitize, validQuestion, wrapUntrusted } from '../guard'
-import { aiFlags } from '../caseAi'
+import { generateJson } from '@/lib/ai/client'
+import { IntakeTurnOut, type IntakeTurn } from '@/lib/ai/schemas'
+import { INTAKE_SYSTEM } from '@/lib/ai/prompts/intake'
+import { sanitize, validQuestion, wrapUntrusted } from '@/lib/ai/guard'
+import { aiFlags } from '@/lib/ai/caseAi'
 
 export const MAX_TURNS = 3
 export const FIRST_QUESTION = 'Which organisation are you visiting from, and what time is your visit?'

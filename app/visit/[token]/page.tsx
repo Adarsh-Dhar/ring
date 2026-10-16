@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PURPOSES, PURPOSE_KEYS, type Purpose } from '@/lib/doorbell/purposes'
+import IntakeStep from './IntakeStep'
 
-type PageState = 'loading' | 'ready' | 'gone' | 'submitting' | 'done' | 'error'
+type PageState = 'loading' | 'ready' | 'gone' | 'submitting' | 'done' | 'error' | 'intake'
 
 export default function VisitRequestPage({ params }: { params: Promise<{ token: string }> }) {
   const router = useRouter()
@@ -19,6 +20,7 @@ export default function VisitRequestPage({ params }: { params: Promise<{ token: 
   const [toTime, setToTime] = useState('')
   const [note, setNote] = useState('')
   const [errMsg, setErrMsg] = useState('')
+  const [statusToken, setStatusToken] = useState('')
 
   useEffect(() => {
     params.then(p => {
@@ -54,11 +56,15 @@ export default function VisitRequestPage({ params }: { params: Promise<{ token: 
       setPageState('ready')
       return
     }
-    router.push(`/visit/s/${j.statusToken}`)
+    setStatusToken(j.statusToken)
+    setPageState('intake')
   }
 
   if (pageState === 'loading') {
     return <main className="min-h-screen bg-slate-900 text-white flex items-center justify-center"><p>Loading…</p></main>
+  }
+  if (pageState === 'intake') {
+    return <IntakeStep token={token} statusToken={statusToken} onDone={() => router.push(`/visit/s/${statusToken}`)} />
   }
   if (pageState === 'gone') {
     return (

@@ -1,9 +1,12 @@
 /** Agent 5: facts are computed in code/SQL; the model only writes ~80 words of prose from them. */
 import { getDb } from '@/lib/db/client'
-import { generateJson } from '../client'
-import { DigestOut } from '../schemas'
-import { DIGEST_SYSTEM } from '../prompts/digest'
-import { clampWords, hasBannedPhrase } from '../guard'
+import { generateJson } from '@/lib/ai/client'
+import { DigestOut } from '@/lib/ai/schemas'
+import { DIGEST_SYSTEM } from '@/lib/ai/prompts/digest'
+import { clampWords, hasBannedPhrase } from '@/lib/ai/guard'
+import type { Prisma } from '@prisma/client'
+
+type CaseWithRiskFlags = Prisma.CaseGetPayload<{ select: { visitor: true; status: true; riskFlags: true; regularId: true } }>
 
 export interface DigestFacts {
   from: string; to: string
@@ -25,13 +28,13 @@ export async function computeFacts(householdId: string, weekStart: Date): Promis
   const to = new Date(weekStart.getTime() + 7 * 86_400_000)
   const cases = await getDb().case.findMany({
     where: { householdId, kind: 'visitor', createdAt: { gte: weekStart, lt: to } },
-    select: { visitor: true, status: true, riskFlags: true, regularId: true },
+    select: { visitor: true, status: true, riskFlags: true, regularId: true } as Prisma.CaseSelect,
   })
   const byVisitor: Record<string, number> = {}
   const flagCount = new Map<string, number>()
   const regulars = new Map<string, number>()
   let noResponse = 0, flagged = 0
-  for (const c of cases) {
+  for (const c of cases as any) {
     byVisitor[c.visitor ?? 'unknown'] = (byVisitor[c.visitor ?? 'unknown'] ?? 0) + 1
     if (c.status === 'no_response') noResponse++
     const flags = Array.isArray(c.riskFlags) ? (c.riskFlags as string[]) : []

@@ -16,7 +16,7 @@ const cronOk = (req: NextRequest) => {
   const secret = process.env.CRON_SECRET
   const got = req.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
   if (!secret || secret.length < 16 || got.length !== secret.length) return false
-  return timingSafeEqual(Buffer.from(got), Buffer.from(secret))
+  return timingSafeEqual(new Uint8Array(Buffer.from(got)), new Uint8Array(Buffer.from(secret)))
 }
 
 export async function POST(req: NextRequest) {

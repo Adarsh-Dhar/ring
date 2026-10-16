@@ -1,8 +1,8 @@
-import { generateJson } from '../client'
-import { DescriberOut, type DescriberResult } from '../schemas'
-import { DESCRIBER_SYSTEM } from '../prompts/describer'
-import { setCaseAi } from '../caseAi'
-import { clampWords, hasBannedPhrase } from '../guard'
+import { generateJson } from '@/lib/ai/client'
+import { DescriberOut, type DescriberResult } from '@/lib/ai/schemas'
+import { DESCRIBER_SYSTEM } from '@/lib/ai/prompts/describer'
+import { setCaseAi } from '@/lib/ai/caseAi'
+import { clampWords, hasBannedPhrase } from '@/lib/ai/guard'
 
 /** Agent 2. Vision only; describes clothing and objects. Evidence for the helper, never a decision. */
 export async function describeSnapshot(

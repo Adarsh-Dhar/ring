@@ -1,5 +1,5 @@
 /** Deterministic risk flagger. Output is for the helper only. */
-import { embed } from '../client'
+import { embed } from '@/lib/ai/client'
 
 const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Claims urgency',            re: /\b(urgent(ly)?|immediately|right now|emergency|last chance|final notice)\b/i },

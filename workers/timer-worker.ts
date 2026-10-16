@@ -89,6 +89,9 @@ async function main() {
     console.error('[WORKER] Failed to register device online job:', error)
   }
 
+  // AI agents (advisory only; a failure here must not stop the worker)
+  try { const { registerAiWorkers } = await import('@/lib/ai/workers'); await registerAiWorkers(boss) } catch (e) { console.error('[WORKER] AI workers failed to register', e) }
+
   console.log('[WORKER] Worker ready, waiting for jobs...')
 
   // Escalation backstop. Looks at the DATABASE every few seconds and escalates any waiting case

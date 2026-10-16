@@ -5,6 +5,7 @@ import { useDoorbell } from '../hooks/useDoorbell'
 import { useRealtime } from '../hooks/useRealtime'
 import LiveView from '../helper/LiveView'
 import RegularApprovals from './RegularApprovals'
+import ApprovedNote from './ApprovedNote'
 
 // calm = no vibration and no beep. Used while a helper is checking, so a visitor never startles the resident.
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
@@ -226,6 +227,7 @@ export default function ResidentPage() {
         <div className="text-[9rem] leading-none">{screen.icon}</div>
         <h1 className="text-4xl font-bold">{screen.title}</h1>
         {screen.sub && <p className="text-2xl max-w-sm">{screen.sub}</p>}
+        {!c && <ApprovedNote />}
         {/* Live rotating code shown to resident for code-mode check */}
         {showCheck && c?.checkMode === 'code' && (c as any).checkCode && (
           <div

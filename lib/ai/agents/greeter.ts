@@ -1,11 +1,12 @@
-import { generateJson } from '../client'
-import { GreeterOut, type GreeterResult } from '../schemas'
-import { GREETER_SYSTEM } from '../prompts/greeter'
+import { generateJson } from '@/lib/ai/client'
+import { GreeterOut, type GreeterResult } from '@/lib/ai/schemas'
+import { GREETER_SYSTEM } from '@/lib/ai/prompts/greeter'
 import { riskFlagsFor, semanticFlag } from './risk'
-import { setCaseAi, aiFlags, getCaseAi } from '../caseAi'
-import { pickTalkback, greeterLines, LISTEN_SECONDS } from '../talkback'
-import { clampWords, hasBannedPhrase, wrapUntrusted } from '../guard'
-import { wrapPcmAsWav, cachedLineAudio } from '../tts'
+import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
+import { pickTalkback, greeterLines, LISTEN_SECONDS } from '@/lib/ai/talkback'
+import { clampWords, hasBannedPhrase, wrapUntrusted } from '@/lib/ai/guard'
+import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
+import type { Prisma } from '@prisma/client'
 
 export type GreeterState = 'idle' | 'greeting' | 'listening' | 'done' | 'failed' | 'unsupported'
 
@@ -43,8 +44,8 @@ export async function startGreeter(householdId: string, caseId: string, deviceId
 export async function processReply(
   householdId: string, caseId: string, audio: Buffer, mimeType: string, lastTry: boolean
 ): Promise<{ final: boolean; reprompt: boolean; result: GreeterResult | null }> {
-  const existing = await getCaseAi(householdId, caseId)
-  const tags: any = existing?.clipTags
+  const existing = await getCaseAi(householdId, caseId) as any
+  const tags = existing?.clipTags as { uniform?: boolean; parcel?: boolean; vehicle?: boolean } | null
   const hint = tags && typeof tags === 'object'
     ? `uniform=${!!tags.uniform}, parcel=${!!tags.parcel}, vehicle=${!!tags.vehicle}` : 'unknown'
 
