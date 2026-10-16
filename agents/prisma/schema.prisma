@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String         @id @default(cuid())
+  email           String         @unique
+  name            String?
+  phone           String?        @unique
+  createdAt       DateTime       @default(now())
+  acceptedInvites Invite[]       @relation("AcceptedInvites")
+  createdInvites  Invite[]       @relation("CreatedInvites")
+  memberships     Membership[]
+  receivedNotifications Notification[] @relation("ReceivedNotifications")
+  sentNotifications Notification[] @relation("SentNotifications")
+  googleAccessToken   String? // Encrypted
+  googleRefreshToken String? // Encrypted
+  googleTokenExpiry   DateTime?
+  googleSub          String?
+  sessionVersion     Int            @default(1)
+  @@unique([googleSub])
+}
+
+model Household {
+  id                String             @id @default(cuid())
+  residentName      String
+  timezone          String             @default("Asia/Kolkata")
+  timeoutSec        Int                @default(30)
+  quietStartHour    Int                @default(22)
+  quietEndHour      Int                @default(6)
+  quietEnabled      Boolean            @default(false)
+  emergencyNumber   String             @default("112")
+  residentEpoch     Int                @default(1)
+  createdAt         DateTime           @default(now())
+  plannedMode       String             @default("helper")
+  requireResidentOk Boolean            @default(false)
+  preset            String             @default("standard") // v2: standard | strict | custom
+  aiEnabled         Boolean            @default(false)
+  aiGreeter         Boolean            @default(false)
+  residentNotes     ResidentNote[]
+  weeklyDigests     WeeklyDigest[]
+  aiRuns            AiRun[]
+  cases             Case[]
+  devices           Device[]
+  expectedVisits    ExpectedVisit[]
+  guestFaces        GuestFace[]
+  faceSightings     FaceSighting[]
+  invites           Invite[]
+  memberships       Membership[]
+  recurringVisits   RecurringVisit[]
+  regularVisitors   RegularVisitor[]
+  residentDevices   ResidentDevice[]
+  ringConnections   RingConnection[]
+  visitRequests     VisitRequest[]
+  visitRequestLinks VisitRequestLink[]
+  webhookEvents     WebhookEvent[]
+  v2Devices         V2Device[]         // v2: new device model
+  passes            Pass[]             // v2: visitor passes
+}
+
+model Membership {
+  id                String             @id @default(cuid())
+  userId            String
+  householdId       String
+  role              String
+  consent           String             @default("pending")
+  consentAt         DateTime?
+  position          Int
+  tokenEpoch        Int                @default(1)
+  emoji             String             @default("🙂")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pushSubscriptions PushSubscription[]
+  v2Devices         V2Device[]         // v2: devices belonging to this member
+
+  @@unique([userId, householdId])
+  @@index([householdId])
+}
+
+model Notification {
+  id           String   @id @default(cuid())
+  type         String   // helper_invite | visitor_request | alert
+  title        String
+  message      String
+  status       String   @default("pending") // pending | accepted | rejected | read
+  metadata     Json?    // Additional data like householdId, membershipId, etc.
+  read         Boolean  @default(false)
+  readAt       DateTime?
+  toUserId     String
+  fromUserId   String?
+  createdAt    DateTime @default(now())
+  respondedAt  DateTime?
+  toUser       User     @relation("ReceivedNotifications", fields: [toUserId], references: [id], onDelete: Cascade)
+  fromUser     User?    @relation("SentNotifications", fields: [fromUserId], references: [id], onDelete: SetNull)
+
+  @@index([toUserId, status])
+  @@index([toUserId, read])
+}
+
+model ResidentDevice {
+  id               String    @id @default(cuid())
+  householdId      String
+  pairingCodeHash  String?   @unique
+  deviceTokenEpoch Int       @default(1)
+  lastSeenAt       DateTime?
+  createdAt        DateTime  @default(now())
+  household        Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model RingConnection {
+  id                    String     @id @default(cuid())
+  householdId           String?
+  ringAccountId         String     @unique
+  encryptedAccessToken  String
+  encryptedRefreshToken String
+  expiresAt             DateTime?
+  status                String     @default("unclaimed")
+  linkedByUserId        String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  household             Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([ringAccountId])
+}
+
+model Device {
+  id           String    @id @default(cuid())
+  householdId  String
+  ringDeviceId String
+  online       Boolean   @default(false)
+  since        DateTime
+  alertedAt    DateTime?
+  household    Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, ringDeviceId])
+  @@index([householdId])
+}
+
+model Case {
+  id             String    @id @default(cuid())
+  householdId    String
+  kind           String
+  eventType      String
+  createdAt      DateTime  @default(now())
+  helperIndex    Int       @default(0)
+  deadlineAt     DateTime
+  status         String    @default("waiting")
+  answer         String?
+  answeredBy     String?
+  resolvedAt     DateTime?
+  log            Json      @default("[]")
+  visitor        String?
+  confirmedAt    DateTime?
+  declinedAt     DateTime?
+  chain          Json      @default("[]")
+  deviceId       String?
+  ackedBy        String?
+  ackedAt        DateTime?
+  lane           String?
+  recurringId    String?
+  visitIcon      String?
+  visitLabel     String?
+  checkWho       String?
+  checkWord      String?
+  selfVerifiedAt DateTime?
+  checkAttempts  Int       @default(0)
+  checkMode      String?
+  expectedId     String?
+  regularId      String?
+  // AI (advisory only; never read by the escalation path)
+  visitorSummary  String?
+  riskFlags       Json      @default("[]")
+  clipDescription String?
+  clipTags        Json?
+  greeterState    String?   // idle | greeting | listening | done | failed | unsupported
+  household      Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([createdAt])
+}
+
+model ExpectedVisit {
+  id          String    @id @default(cuid())
+  householdId String
+  icon        String
+  label       String
+  startsAt    DateTime
+  endsAt      DateTime
+  passphrase  String?
+  who         String?
+  codeSecret  String?
+  requestId   String?
+  singleUse   Boolean   @default(false)
+  usedAt      DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model RecurringVisit {
+  id              String    @id @default(cuid())
+  householdId     String
+  icon            String
+  label           String
+  days            Json      @default("[]")
+  everyNWeeks     Int       @default(1)
+  anchorWeek      Int
+  startMin        Int
+  endMin          Int
+  alertIfMissed   Boolean   @default(false)
+  paused          Boolean   @default(false)
+  lastArrived     String?
+  lastMissedAlert String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  passphrase      String?
+  who             String?
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model PushSubscription {
+  id           String     @id @default(cuid())
+  membershipId String
+  endpoint     String
+  keys         Json
+  createdAt    DateTime   @default(now())
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, endpoint])
+  @@index([membershipId])
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  requestId   String    @unique
+  householdId String
+  receivedAt  DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([requestId])
+}
+
+model RingNonce {
+  nonce  String   @id
+  usedAt DateTime @default(now())
+}
+
+model Invite {
+  id               String    @id @default(cuid())
+  code             String    @unique
+  householdId      String
+  role             String    @default("helper")
+  status           String    @default("pending")
+  expiresAt        DateTime?
+  createdByUserId  String
+  acceptedByUserId String?
+  createdAt        DateTime  @default(now())
+  acceptedBy       User?     @relation("AcceptedInvites", fields: [acceptedByUserId], references: [id])
+  createdBy        User      @relation("CreatedInvites", fields: [createdByUserId], references: [id])
+  household        Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([code])
+  @@index([status])
+}
+
+model VisitRequestLink {
+  id              String         @id @default(cuid())
+  householdId     String
+  tokenHash       String         @unique
+  createdByUserId String
+  createdAt       DateTime       @default(now())
+  revokedAt       DateTime?
+  requests        VisitRequest[]
+  regularVisitors RegularVisitor[]
+  household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+}
+
+model VisitRequest {
+  id              String           @id @default(cuid())
+  householdId     String
+  linkId          String
+  name            String
+  purpose         String
+  note            String?
+  contact         String
+  contactKind     String
+  startsAt        DateTime
+  endsAt          DateTime
+  status          String           @default("pending")
+  helperOkBy      String?
+  helperOkAt      DateTime?
+  residentOkAt    DateTime?
+  decidedAt       DateTime?
+  expectedVisitId String?
+  statusToken     String           @unique
+  deviceHash      String?
+  resendCount     Int              @default(0)
+  ip              String?
+  createdAt       DateTime         @default(now())
+  expiresAt       DateTime
+  intakeId        String?
+  riskNote        String?
+  intake          VisitIntake?
+  household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  link            VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+  @@index([ip, createdAt])
+  @@index([linkId, createdAt])
+  @@index([householdId, contact, createdAt])
+}
+
+model GuestFace {
+  id          String    @id @default(cuid())
+  householdId String
+  name        String
+  ref         String?
+  embedding   String
+  consentAt   DateTime
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
+  @@index([householdId, ref])
+}
+
+model FaceSighting {
+  id          String    @id @default(cuid())
+  householdId String
+  caseId      String?
+  deviceId    String?
+  source      String
+  capturedAt  DateTime  @default(now())
+  faceCount   Int
+  faces       Json      @default("[]")
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, capturedAt])
+  @@index([caseId])
+}
+
+/// A person who registered their face through the public link to become a "regular visitor".
+/// pending -> approved (a helper OR the resident said yes) | declined | cancelled | expired | removed.
+/// While pending we keep an encrypted thumbnail so the approver can SEE who it is; it is erased on any decision.
+/// On approval the descriptor is copied into GuestFace (ref = "reg:<id>"), which the camera matcher already reads.
+model RegularVisitor {
+  id          String           @id @default(cuid())
+  householdId String
+  linkId      String
+  name        String
+  purpose     String
+  note        String?
+  contact     String
+  contactKind String
+  status      String           @default("pending")
+  embedding   String?
+  photoEnc    String?
+  consentAt   DateTime
+  decidedBy   String?
+  decidedAt   DateTime?
+  faceId      String?
+  statusToken String           @unique
+  ip          String?
+  createdAt   DateTime         @default(now())
+  expiresAt   DateTime
+  household   Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  link        VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+  @@index([ip, createdAt])
+  @@index([linkId, createdAt])
+  @@index([householdId, contact, createdAt])
+}
+
+// v2: Device model replacing cookies, pairing codes, and visitor tokens
+model V2Device {
+  id          String       @id @default(cuid())
+  householdId String
+  memberId    String?      // Null for resident devices
+  kind        String       // resident | helper | guardian | visitor
+  publicKey   String       // Device public key for authentication
+  lastSeenAt  DateTime     @default(now())
+  revokedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  household   Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  membership  Membership?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  passes      Pass[]
+
+  @@index([householdId])
+  @@index([memberId])
+}
+
+// v2: Visitor passes replacing pass-words and rotating codes
+model Pass {
+  id          String      @id @default(cuid())
+  householdId String
+  visitorName String
+  windowStart DateTime
+  windowEnd   DateTime
+  recurrence Json?       // Optional recurrence rules
+  deviceId    String?     // Legacy FK to V2Device; no longer written by the visitor flow
+  secretHash      String?   @unique // sha256 of the one-time link secret; the secret itself is never stored
+  boundDeviceHash String?           // sha256 of the visitor's device secret, set on first use
+  boundAt         DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime    @default(now())
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  device      V2Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  events      PassEvent[]
+
+  @@index([householdId])
+  @@index([windowStart, windowEnd])
+}
+
+// v2: Pass audit log
+model PassEvent {
+  id        String   @id @default(cuid())
+  passId    String
+  type      String   // created | bound | used | rejected | revoked
+  deviceId  String?
+  at        DateTime @default(now())
+  pass      Pass     @relation(fields: [passId], references: [id], onDelete: Cascade)
+
+  @@index([passId])
+  @@index([at])
+}
+
+// ───────── AI agents (advisory only) ─────────
+
+model ResidentNote {
+  id          String    @id @default(cuid())
+  householdId String
+  rawNote     String
+  draftText   String
+  icon        String
+  status      String    @default("draft") // draft | approved | rejected
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+  decidedAt   DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+}
+
+model VisitIntake {
+  id         String       @id @default(cuid())
+  requestId  String       @unique
+  turns      Json         @default("[]")
+  claims     Json         @default("{}")
+  verdict    String?      // match | no_match | unclear
+  mismatches Json         @default("[]")
+  status     String       @default("open") // open | done | failed
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  request    VisitRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model WeeklyDigest {
+  id          String    @id @default(cuid())
+  householdId String
+  weekStart   DateTime
+  facts       Json
+  text        String
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, weekStart])
+}
+
+model AiRun {
+  id          String    @id @default(cuid())
+  householdId String
+  agent       String
+  model       String
+  tokensIn    Int       @default(0)
+  tokensOut   Int       @default(0)
+  latencyMs   Int       @default(0)
+  status      String    // ok | invalid | error | budget | disabled
+  caseId      String?
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, createdAt])
+  @@index([agent, createdAt])
+}

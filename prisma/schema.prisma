@@ -40,6 +40,11 @@ model Household {
   plannedMode       String             @default("helper")
   requireResidentOk Boolean            @default(false)
   preset            String             @default("standard") // v2: standard | strict | custom
+  aiEnabled         Boolean            @default(false)
+  aiGreeter         Boolean            @default(false)
+  residentNotes     ResidentNote[]
+  weeklyDigests     WeeklyDigest[]
+  aiRuns            AiRun[]
   cases             Case[]
   devices           Device[]
   expectedVisits    ExpectedVisit[]
@@ -172,6 +177,12 @@ model Case {
   checkMode      String?
   expectedId     String?
   regularId      String?
+  // AI (advisory only; never read by the escalation path)
+  visitorSummary  String?
+  riskFlags       Json      @default("[]")
+  clipDescription String?
+  clipTags        Json?
+  greeterState    String?   // idle | greeting | listening | done | failed | unsupported
   household      Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
@@ -303,6 +314,9 @@ model VisitRequest {
   ip              String?
   createdAt       DateTime         @default(now())
   expiresAt       DateTime
+  intakeId        String?
+  riskNote        String?
+  intake          VisitIntake?
   household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
   link            VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
@@ -426,4 +440,63 @@ model PassEvent {
 
   @@index([passId])
   @@index([at])
+}
+
+// ───────── AI agents (advisory only) ─────────
+
+model ResidentNote {
+  id          String    @id @default(cuid())
+  householdId String
+  rawNote     String
+  draftText   String
+  icon        String
+  status      String    @default("draft") // draft | approved | rejected
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+  decidedAt   DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+}
+
+model VisitIntake {
+  id         String       @id @default(cuid())
+  requestId  String       @unique
+  turns      Json         @default("[]")
+  claims     Json         @default("{}")
+  verdict    String?      // match | no_match | unclear
+  mismatches Json         @default("[]")
+  status     String       @default("open") // open | done | failed
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  request    VisitRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model WeeklyDigest {
+  id          String    @id @default(cuid())
+  householdId String
+  weekStart   DateTime
+  facts       Json
+  text        String
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, weekStart])
+}
+
+model AiRun {
+  id          String    @id @default(cuid())
+  householdId String
+  agent       String
+  model       String
+  tokensIn    Int       @default(0)
+  tokensOut   Int       @default(0)
+  latencyMs   Int       @default(0)
+  status      String    // ok | invalid | error | budget | disabled
+  caseId      String?
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, createdAt])
+  @@index([agent, createdAt])
 }
