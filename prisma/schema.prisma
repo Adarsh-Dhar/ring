@@ -45,6 +45,7 @@ model Household {
   minNoticeHours       Int?
   shortNoticePolicy    String             @default("helper_approval")
   unknownVisitorPolicy String             @default("ai_first_contact")
+  preferences          Json?              @db.Json
   AiRun             AiRun[]
   cases             Case[]
   devices           Device[]
@@ -197,6 +198,7 @@ model Case {
   noticeStatus         String?
   riskScore            Int?
   riskLedger           Json?     @db.Json
+  controlMode          String?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])

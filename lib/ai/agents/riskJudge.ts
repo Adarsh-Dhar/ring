@@ -1,13 +1,15 @@
 /**
  * Risk judge: a dedicated Gemini call that reads the whole interrogation and decides how worrying it is.
- * It is advisory and helper-only. The decision is combined with the regex rules in code (lib/ai/risk/combine.ts),
- * so a model failure still gives the old rule-based result and a model hallucination cannot lower or invent a verdict.
+ * It is advisory and helper-only. The model only EXTRACTS evidence (a category plus a verbatim quote). Code turns that
+ * evidence and the keyword matches into a score (lib/doorstep/riskRules.ts), so a model failure still gives a rule-based
+ * result and a model hallucination cannot invent a score.
  */
 import { generateJson } from '@/lib/ai/client'
+import { riskMatchesFor } from './risk'
 import { RiskJudgeOut } from '@/lib/ai/schemas'
 import { RISK_SYSTEM } from '@/lib/ai/prompts/risk'
 import { sanitize, wrapUntrusted } from '@/lib/ai/guard'
-import { buildAssessment, type Assessment, type JudgeResult, type RiskLevel } from '@/lib/ai/risk/combine'
+import { buildAssessment, type Assessment, type JudgeResult } from '@/lib/ai/risk/combine'
 
 export interface RiskInput {
   householdId: string
@@ -17,7 +19,6 @@ export interface RiskInput {
   ruleFlags: string[]
   inconsistencies: string[]
   evasive: boolean
-  liveHint: RiskLevel
   /** Interview checklist computed by code (trusted text) and the facts derived from it. */
   coverageLines?: string[]
   coverage?: { purposeVague: boolean; unverifiable: boolean }
@@ -53,7 +54,7 @@ export async function assessRisk(i: RiskInput): Promise<Assessment> {
   }
 
   return buildAssessment({
-    transcript, ruleFlags: i.ruleFlags, judge, liveHint: i.liveHint,
+    transcript, ruleFlags: i.ruleFlags, ruleMatches: riskMatchesFor(transcript), judge,
     inconsistent: i.inconsistencies.length > 0, evasive: i.evasive, coverage: i.coverage,
   })
 }

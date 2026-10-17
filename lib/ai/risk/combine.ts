@@ -1,13 +1,19 @@
 /**
- * Risk assessment: how the AI judge, the regex rules and the live hint are combined.
- * Pure functions, no imports, so they can be unit-tested without a model or a database.
+ * Risk assessment: how the AI judge and the regex rules become a score.
+ * Pure functions. The only import is the pure rules engine, so this can be unit-tested without a model or a database.
  *
  * Principles (all enforced here, in code, not in the prompt):
- *  - The model may RAISE the level. It can never lower it below what the rules found.
+ *  - The model EXTRACTS observations (a category plus a quote). It never supplies a level or a score.
+ *    Code (lib/doorstep/riskRules.ts) decides what each observation is worth.
  *  - A model claim only counts if it quotes the visitor. Quotes are checked against the real transcript.
- *  - If the model is unavailable, the rules still produce a level (the old behaviour).
+ *  - If the model is unavailable, the keyword rules still produce a score from their own matched words.
+ *  - Vague, evasive and unverifiable answers are shown to helpers as notes. They never add points.
  *  - The level and labels are advisory and helper-only. Nothing here touches the alert path.
  */
+import {
+  legacyLevel, observationsFromEvidence, scoreObservations, NOTE_ONLY_CATEGORIES,
+  type Behaviour, type ControlMode, type LedgerEntry, type Observation,
+} from '@/lib/doorstep/riskRules'
 
 export const LEVELS = ['none', 'low', 'medium', 'high'] as const
 export type RiskLevel = (typeof LEVELS)[number]
@@ -56,7 +62,8 @@ export const ACTION_TEXT: Record<RiskLevel, string | null> = {
 }
 
 export interface Evidence { category: RiskCategory; quote: string }
-export interface JudgeResult { level: RiskLevel; evidence: Evidence[]; rationale: string }
+/** `level` is accepted for old model output but IGNORED. Only the evidence counts. */
+export interface JudgeResult { level?: RiskLevel; evidence: Evidence[]; rationale: string }
 
 export interface Assessment {
   level: RiskLevel
@@ -68,6 +75,14 @@ export interface Assessment {
   /** 'ai+rules' = judge answered; 'rules' = judge unavailable or ungrounded; 'live' = in-progress, not final */
   source: 'ai+rules' | 'rules' | 'live'
   assessedAt: string
+  /** Deterministic score 0 to 100 from lib/doorstep/riskRules.ts. */
+  score: number
+  /** One entry per observation: what it was, whether it counted, and the points it added. */
+  ledger: LedgerEntry[]
+  /** Minimum control mode set by serious events. The score alone can never lower it. */
+  minMode: ControlMode
+  /** Categories shown to the helper as information only. They add no points. */
+  notes: string[]
 }
 
 export const rank = (l: RiskLevel) => LEVELS.indexOf(l)
@@ -78,23 +93,6 @@ export const categoriesFromRuleFlags = (flags: string[]): RiskCategory[] => {
   const out = new Set<RiskCategory>()
   for (const f of flags) { const c = RULE_FLAG_CATEGORY[f]; if (c) out.add(c) }
   return [...out]
-}
-
-/**
- * Minimum level implied by the categories alone (deterministic floor).
- *  - classic distraction pattern: wants to come in AND at least two other signals  -> high
- *  - official + payment                                                           -> high
- *  - two or more distinct signals, or any attempt to steer the assistant         -> medium
- *  - one signal                                                                   -> low
- */
-export function floorFor(cats: RiskCategory[]): RiskLevel {
-  const s = new Set(cats.filter(c => c !== 'other'))
-  const n = s.size
-  if (n === 0) return 'none'
-  if (s.has('entry_request') && n >= 3) return 'high'
-  if (s.has('official_impersonation') && s.has('payment_request')) return 'high'
-  if (s.has('manipulation_attempt') || n >= 2) return 'medium'   // trying to steer the assistant is a strong signal on its own
-  return 'low'
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9£$€%\s]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -118,36 +116,70 @@ export function groundEvidence(evidence: Evidence[], transcript: string): Eviden
 
 const clampWordsLocal = (s: string, max: number) => { const w = s.trim().split(/\s+/); return w.length <= max ? s.trim() : w.slice(0, max).join(' ') + '…' }
 
+/** A keyword the regex rules matched, with the exact words that matched (so the score can be grounded in the transcript). */
+export interface RuleMatch { flag: string; quote: string }
+
+/** Keyword flags that become scored behaviours. Money, selling and scam-wording flags are hints only and never score by themselves. */
+const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
+  'Claims urgency':                 'pressure',
+  'Claims to be officials':         'impersonation_claim',
+  'Wants to enter or check inside': 'entry_request',
+  'Asks who is home':               'home_probing',
+}
+
+export function observationsFromRuleMatches(matches: RuleMatch[]): Observation[] {
+  const out: Observation[] = []
+  for (const m of matches) {
+    const b = RULE_FLAG_BEHAVIOUR[m.flag]
+    if (b) out.push({ behaviour: b, source: 'transcript', quote: m.quote })
+  }
+  return out
+}
+
+function assemble(a: {
+  transcript: string; cats: Set<RiskCategory>; evidence: Evidence[]; rationale: string
+  source: Assessment['source']; ruleMatches: RuleMatch[]
+}): Assessment {
+  const fromJudge = observationsFromEvidence(a.evidence)
+  const judged = new Set(fromJudge.observations.map(o => o.behaviour))
+  // A keyword hit and a judge hit on the same behaviour are one observation, not two.
+  const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.behaviour))
+  const risk = scoreObservations([...fromRules, ...fromJudge.observations], { transcript: a.transcript })
+  const level = legacyLevel(risk.score, risk.minMode)
+  const all = [...a.cats]
+  return {
+    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), evidence: a.evidence, rationale: a.rationale,
+    action: ACTION_TEXT[level], source: a.source, assessedAt: new Date().toISOString(),
+    score: risk.score, ledger: risk.ledger, minMode: risk.minMode,
+    notes: all.filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)),
+  }
+}
+
 /**
- * Level shown while the conversation is still going. The live AI hint is ungrounded, so it can reach 'medium' at most.
- * Code-observed facts (vague reason, no checkable proof, changed story) count the same as in the final assessment,
- * so a vague door-to-door seller is already 'medium' on the first answer.
+ * Score shown while the conversation is still going. Built only from the keyword matches, so it can never be
+ * inflated by an ungrounded model hint. Coverage facts are shown as notes and add no points.
  */
 export function liveAssessment(
-  ruleFlags: string[], hint: RiskLevel,
+  transcript: string, ruleMatches: RuleMatch[],
   extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean },
 ): Assessment {
-  const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleFlags))
+  const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleMatches.map(m => m.flag)))
   if (extra?.inconsistent) cats.add('story_mismatch')
   if (extra?.evasive) cats.add('evasive_answers')
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
-  const all = [...cats]
-  const level = maxLevel(floorFor(all), capLevel(hint, 'medium'))
-  return {
-    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), evidence: [], rationale: '',
-    action: ACTION_TEXT[level], source: 'live', assessedAt: new Date().toISOString(),
-  }
+  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches })
 }
 
 export function buildAssessment(a: {
   transcript: string
   ruleFlags: string[]
+  /** The words each keyword rule matched. Without these the keyword rules add no points. */
+  ruleMatches?: RuleMatch[]
   judge: JudgeResult | null
-  liveHint?: RiskLevel
   inconsistent?: boolean
   evasive?: boolean
-  /** Computed by the interview plan from what the visitor did or did not give. Needs no quote: it is code-observed. */
+  /** Computed by the interview plan from what the visitor did or did not give. Shown as notes only. */
   coverage?: { purposeVague: boolean; unverifiable: boolean }
 }): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(a.ruleFlags))
@@ -157,33 +189,18 @@ export function buildAssessment(a: {
   if (a.coverage?.unverifiable) cats.add('unverifiable_claims')
 
   let evidence: Evidence[] = []
-  let judgeLevel: RiskLevel = 'none'
   let rationale = ''
   let usedJudge = false
 
   if (a.judge) {
     evidence = groundEvidence(a.judge.evidence, a.transcript)
     for (const e of evidence) cats.add(e.category)
-    judgeLevel = a.judge.level
-    // A medium/high verdict with no verifiable quote is not trusted beyond 'low'.
-    if (rank(judgeLevel) >= rank('medium') && evidence.length === 0) judgeLevel = 'low'
     rationale = clampWordsLocal(a.judge.rationale || '', 40)
     usedJudge = true
-  } else {
-    // No judge: the live hint (ungrounded) can still lift a clean transcript to 'medium', never higher.
-    judgeLevel = capLevel(a.liveHint ?? 'none', 'medium')
   }
 
-  const all = [...cats]
-  const level = maxLevel(judgeLevel, floorFor(all))
-  return {
-    level,
-    categories: all,
-    labels: all.map(c => CATEGORY_LABEL[c]),
-    evidence,
-    rationale,
-    action: ACTION_TEXT[level],
-    source: usedJudge ? 'ai+rules' : 'rules',
-    assessedAt: new Date().toISOString(),
-  }
+  return assemble({
+    transcript: a.transcript, cats, evidence, rationale,
+    source: usedJudge ? 'ai+rules' : 'rules', ruleMatches: a.ruleMatches ?? [],
+  })
 }

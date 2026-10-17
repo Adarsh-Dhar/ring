@@ -1,7 +1,9 @@
 import { generateJson } from '@/lib/ai/client'
 import { InterrogatorTurnOut, type InterrogatorTurnResult } from '@/lib/ai/schemas'
 import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
-import { riskFlagsFor, semanticFlag } from './risk'
+import { riskFlagsFor, riskMatchesFor, semanticFlag } from './risk'
+import { computeControl } from '@/lib/doorstep/collaborationController'
+import { getPreferences } from '@/lib/db/preferences'
 import { assessRisk } from './riskJudge'
 import { liveAssessment } from '@/lib/ai/risk/combine'
 import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
@@ -52,6 +54,10 @@ const trailing = (turns: InterrogationTurn[], pred: (t: InterrogationTurn) => bo
 }
 
 /** Entry point from the job. Checks the gate, then starts the interrogation. Never throws. */
+/** Who leads for this score and these events, given the resident's preferences. Persisted and shown; it never unlocks anything. */
+async function controlFor(householdId: string, a: { score: number; minMode: any }) {
+  return computeControl({ score: a.score, minMode: a.minMode, prefs: await getPreferences(householdId) })
+}
 export async function startInterrogator(householdId: string, caseId: string, deviceId: string | null) {
   try {
     const f = await aiFlags(householdId)
@@ -162,12 +168,14 @@ export async function processAnswer(
         await finishInterrogation(householdId, caseId, updated, 'model_failed')
         return { question: null, final: true, close: interrogatorLines(null).close }
       }
-      const live = liveAssessment(riskFlagsFor(transcripts), 'none', {
+      const live = liveAssessment(transcripts, riskMatchesFor(transcripts), {
         coverage: { purposeVague: true, unverifiable: true },
       })
+      const control = await controlFor(householdId, live)
       await setCaseAi(caseId, {
         interrogationTurns: updated as any, interrogationState: 'asking',
-        riskLevel: live.level, riskFlags: live.labels, riskAssessment: live as any,
+        riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
+        riskScore: live.score, riskLedger: live.ledger as any, controlMode: control.mode,
       })
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
@@ -218,13 +226,16 @@ export async function processAnswer(
     }
 
     // Risk is updated live after EVERY answer, so helpers see it while the visitor is still at the door.
-    const live = liveAssessment(riskFlagsFor(updatedTurns.map(t => t.transcript).join(' ')), out.riskHint, {
+    const liveText = updatedTurns.map(t => t.transcript).join(' ')
+    const live = liveAssessment(liveText, riskMatchesFor(liveText), {
       coverage: coverageFacts(after, answeredCount), inconsistent: out.inconsistencies.length > 0, evasive: out.evasive,
     })
+    const control = await controlFor(householdId, live)
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
       visitorSummary: out.realReasonSummary ?? undefined,
-      riskLevel: live.level, riskFlags: live.labels, riskAssessment: live as any,
+      riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
+      riskScore: live.score, riskLedger: live.ledger as any, controlMode: control.mode,
     })
     return { question: nextQuestion, final: false, close: null }
   } catch (e) {
@@ -256,7 +267,7 @@ async function finishInterrogation(
   const state = foldPlan(planTurns)
   const coverage = coverageSummary(state, turns.length)
   const baseFacts = coverageFacts(state, turns.length)
-  // Anything other than a satisfied interview means the visitor was never verified: that is itself a risk signal.
+  // An interview that did not finish satisfied is shown to the helper as a note ("could not be verified"). It adds no risk points.
   const facts = { ...baseFacts, unverifiable: baseFacts.unverifiable || reason !== 'done' }
   const checklistLines = coverageLines(coverage)
 
@@ -271,11 +282,11 @@ async function finishInterrogation(
     ruleFlags,
     inconsistencies: modelResult?.inconsistencies ?? [],
     evasive: !!modelResult?.evasive || reason === 'evasive',
-    liveHint: modelResult?.riskHint ?? 'none',
     coverageLines: checklistLines,
     coverage: facts,
   })
   const flags = risk.labels
+  const control = await controlFor(householdId, risk)
 
   const summary = modelResult?.realReasonSummary || clampWords(finalTurn.transcript || 'Visitor spoke but the reason is unclear.', 30)
   const verdict = modelResult?.verdict || 'unclear'
@@ -285,7 +296,10 @@ async function finishInterrogation(
     visitorSummary: summary,
     riskFlags: flags,
     riskLevel: risk.level,
-    riskAssessment: risk as any,
+    riskAssessment: { ...risk, control } as any,
+    riskScore: risk.score,
+    riskLedger: risk.ledger as any,
+    controlMode: control.mode,
     interrogationTurns: turns as any,
     interrogationVerdict: verdict,
     interrogationClaims: { ...claims, checklist: coverage } as any,

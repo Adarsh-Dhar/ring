@@ -1,5 +1,6 @@
 /** Deterministic risk flagger. Output is for the helper only. */
 import { embed } from '@/lib/ai/client'
+import type { RuleMatch } from '@/lib/ai/risk/combine'
 
 const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Claims urgency',            re: /\b(urgent(ly)?|immediately|right now|emergency|last chance|final notice)\b/i },
@@ -14,6 +15,13 @@ export function riskFlagsFor(transcript: string): string[] {
   const flags = new Set<string>()
   for (const r of RULES) if (r.re.test(transcript)) flags.add(r.flag)
   return [...flags]
+}
+
+/** Same rules, but keeps the exact words that matched so the score can be checked against the transcript. */
+export function riskMatchesFor(transcript: string): RuleMatch[] {
+  const out: RuleMatch[] = []
+  for (const r of RULES) { const m = transcript.match(r.re); if (m) out.push({ flag: r.flag, quote: m[0] }) }
+  return out
 }
 
 const SCAM_REFERENCE = [
