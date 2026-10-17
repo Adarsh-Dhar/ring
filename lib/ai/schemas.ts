@@ -50,9 +50,10 @@ export type IntakeTurn = z.infer<typeof IntakeTurnOut>
 
 export const DigestOut = z.object({ text: z.string().max(700) })
 
-/** Final risk judgement. Every non-trivial claim must carry a verbatim quote; code verifies the quotes. */
+/** Final risk evidence. Every claim must carry a verbatim quote; code verifies the quotes and decides the score. */
 export const RiskJudgeOut = z.object({
-  level:     z.enum(LEVELS),
+  /** Old output field. Accepted and ignored: the model never sets the level. */
+  level:     z.enum(LEVELS).default('none'),
   evidence:  z.array(z.object({ category: z.enum(RISK_CATEGORIES), quote: z.string().max(200) })).max(6).default([]),
   rationale: z.string().max(400).default(''),
 })
