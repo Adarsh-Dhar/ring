@@ -26,6 +26,8 @@ interface DashboardData {
     kind: string
     deadlineAt: string
     helperIndex: number
+    riskLevel?: string | null
+    interrogationState?: string | null
   }>
   scheduledVisits: number
   activePasses: number
@@ -558,6 +560,17 @@ export default function WorkspacePage() {
                           <p className="font-medium text-gray-900">
                             {pendingCase.kind === 'visitor' ? 'Someone at the door' : 'Alert'}
                           </p>
+                          {pendingCase.kind === 'visitor' && (
+                            <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+                              pendingCase.riskLevel === 'high' ? 'bg-red-600 text-white'
+                              : pendingCase.riskLevel === 'medium' ? 'bg-amber-500 text-black'
+                              : pendingCase.riskLevel === 'low' ? 'bg-slate-500 text-white'
+                              : pendingCase.riskLevel === 'none' ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-300 text-slate-800'}`}>
+                              {pendingCase.riskLevel ? `Risk: ${pendingCase.riskLevel.toUpperCase()}` : 'Risk: checking…'}
+                              {pendingCase.interrogationState === 'asking' || pendingCase.interrogationState === 'listening' ? ' (live)' : ''}
+                            </span>
+                          )}
                           <p className="text-sm text-gray-600">
                             {new Date(pendingCase.createdAt).toLocaleString()}
                           </p>

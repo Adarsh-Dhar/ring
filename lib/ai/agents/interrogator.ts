@@ -16,7 +16,8 @@ import {
   cleanObs,
   foldPlan,
   nextFocus,
-  bankQuestion,
+  isSatisfied,
+  isSlot,
   isEchoOfName,
   coverageSummary,
   coverageFacts,
@@ -37,6 +38,17 @@ interface InterrogationTurn {
   personalTie?: boolean
   echoTarget?: boolean
   riskHint?: 'none' | 'low' | 'medium' | 'high'
+  modelFailed?: boolean // the model could not grade this answer (no coverage recorded)
+}
+
+/** Consecutive silent turns (nothing intelligible) before we assume the visitor left. */
+const SILENT_LIMIT = 3
+/** Consecutive ungraded turns (model down) before we stop and hand over to the carers with a floor risk. */
+const MODEL_FAIL_LIMIT = 3
+const trailing = (turns: InterrogationTurn[], pred: (t: InterrogationTurn) => boolean) => {
+  let n = 0
+  for (let i = turns.length - 1; i >= 0 && pred(turns[i]); i--) n++
+  return n
 }
 
 /** Entry point from the job. Checks the gate, then starts the interrogation. Never throws. */
@@ -81,12 +93,14 @@ export async function startInterrogator(householdId: string, caseId: string, dev
  * Process a visitor's answer and return the next question or close.
  * `answer` is the recorded audio (Buffer + mimeType) or, for the workspace simulator only, the typed text.
  * Typed text is wrapped as untrusted data exactly like everything else a visitor says.
+ *
+ * The interview has NO turn limit. It ends only when (a) the code and the model both say the story is specific,
+ * checkable and consistent, (b) the visitor goes silent, (c) the model stays down, or (d) an operator ceiling is set.
  */
 export async function processAnswer(
   householdId: string, caseId: string, answer: Buffer | string, mimeType?: string
 ): Promise<{ question: string | null; final: boolean; close: string | null }> {
   try {
-    // Server-side gate: re-check the case
     const c = await getDb().case.findUnique({
       where: { id: caseId },
       select: { id: true, kind: true, lane: true, expectedId: true, recurringId: true, householdId: true },
@@ -95,35 +109,31 @@ export async function processAnswer(
       return { question: null, final: true, close: null }
     }
 
-    // Load existing turns and resident name
     const existing = await getCaseAi(householdId, caseId)
     const turns: InterrogationTurn[] = Array.isArray(existing?.interrogationTurns) ? existing.interrogationTurns : []
     const householdData = await aiFlags(householdId)
     const residentName = householdData.residentName ?? null
+    const typed = typeof answer === 'string' ? answer : null
+    const greet = interrogatorLines(null).greet
+    const asked = turns.length > 0 ? (turns[turns.length - 1].next ?? greet) : greet
 
-    // Stop conditions from DB state
+    // Optional operator ceiling (AI_INTERROGATOR_MAX_TURNS). Unlimited by default.
     if (turns.length >= MAX_TURNS) {
       await finishInterrogation(householdId, caseId, turns, 'max_turns')
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    const consecutiveNotUnderstood = turns.slice(-2).filter(t => !t.transcript).length >= 2
-    if (consecutiveNotUnderstood) {
+    // The visitor walked away or never speaks: stop, and say so in the risk.
+    if (turns.length >= SILENT_LIMIT && trailing(turns, t => !t.transcript && !t.modelFailed) >= SILENT_LIMIT) {
       await finishInterrogation(householdId, caseId, turns, 'evasive')
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    // Build conversation history for the model
     const history = turns.map(t => `Q: ${t.question}\nA: ${t.transcript}`).join('\n\n')
 
-    // Fold the current plan state to tell the model what we know so far
     const planTurns: PlanTurn[] = turns.map(t => ({
-      obs: cleanObs(t.obs),
-      focus: t.focus,
-      claimsOrg: t.claimsOrg,
-      personalTie: t.personalTie,
-      echoTarget: t.echoTarget,
-      riskHint: t.riskHint,
+      obs: cleanObs(t.obs), focus: t.focus, claimsOrg: t.claimsOrg, personalTie: t.personalTie,
+      echoTarget: t.echoTarget, riskHint: t.riskHint,
     }))
     const state = foldPlan(planTurns)
     const slotsInfo = Object.entries(state.status)
@@ -131,90 +141,89 @@ export async function processAnswer(
       .join(', ')
 
     const out = await generateJson({
-      agent: 'interrogator', householdId, caseId, role: 'workhorse', schema: InterrogatorTurnOut, maxOutputTokens: 500,
+      agent: 'interrogator', householdId, caseId, role: 'workhorse', schema: InterrogatorTurnOut, maxOutputTokens: 600,
       system: INTERROGATOR_SYSTEM,
       parts: [
-        typeof answer === 'string'
-          ? { text: `The visitor typed this reply (no audio):\n${wrapUntrusted('visitor_answer', answer, 500)}` }
-          : { inlineData: { mimeType: mimeType ?? 'audio/webm', data: answer.toString('base64') } },
-        { text: `Previous Q&A:\n${history}\n\nCurrent interview state (what we know so far):\n${slotsInfo}\n\nCurrent answer: Transcribe and decide the next step.` },
+        typed !== null
+          ? { text: `The visitor typed this reply (no audio):\n${wrapUntrusted('visitor_answer', typed, 500)}` }
+          : { inlineData: { mimeType: mimeType ?? 'audio/webm', data: (answer as Buffer).toString('base64') } },
+        { text: `Question this answers: ${asked}\n\nPrevious Q&A:\n${history || '(none yet)'}\n\nCurrent interview state (what we know so far):\n${slotsInfo}\n\nCurrent answer: Transcribe, grade, and decide the next step.` },
       ],
     })
 
+    // ── Model could not grade this answer: ask to try again ────────────────────────────────────────────────
     if (!out) {
-      // Model call failed: use the plan to decide what to do
-      const next = nextFocus(state, turns.length)
-      if (next) {
-        const q = bankQuestion(next, state.asks[next])
-        const newTurn: InterrogationTurn = {
-          question: turns.length > 0 ? (turns[turns.length - 1].next ?? interrogatorLines(null).greet) : interrogatorLines(null).greet,
-          transcript: '',
-          timestamp: Date.now(),
-          next: q,
-          obs: {},
-          focus: next,
-        }
-        const updatedTurns = [...turns, newTurn]
-        await setCaseAi(caseId, {
-          interrogationTurns: updatedTurns as any, interrogationState: 'asking',
-        })
-        return { question: q, final: false, close: null }
+      const failures = trailing(turns, t => !!t.modelFailed) + 1
+      const transcripts = [...turns.map(t => t.transcript), typed ?? ''].join(' ')
+      const updated = [...turns, {
+        question: asked, transcript: typed ?? '', timestamp: Date.now(), next: null, obs: {}, focus: null, modelFailed: true,
+      }]
+      if (failures >= MODEL_FAIL_LIMIT) {
+        await finishInterrogation(householdId, caseId, updated, 'model_failed')
+        return { question: null, final: true, close: interrogatorLines(null).close }
       }
-      await finishInterrogation(householdId, caseId, turns, 'model_failed')
-      return { question: null, final: true, close: interrogatorLines(null).close }
+      const live = liveAssessment(riskFlagsFor(transcripts), 'none', {
+        coverage: { purposeVague: true, unverifiable: true },
+      })
+      await setCaseAi(caseId, {
+        interrogationTurns: updated as any, interrogationState: 'asking',
+        riskLevel: live.level, riskFlags: live.labels, riskAssessment: live as any,
+      })
+      return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
 
-    // Validate the question if the model generated one. If invalid, fall back to the plan.
-    let nextQuestion = out.nextQuestion
-    let nextFocusSlot: Slot | null = out.nextFocus ? (out.nextFocus as Slot) : null
-    if (nextQuestion && !validQuestion(nextQuestion)) {
-      console.warn('[AI interrogator] Model generated invalid question, using scripted fallback:', nextQuestion)
-      nextQuestion = null
-    }
-    if (nextQuestion && hasBannedPhrase(nextQuestion)) {
-      console.warn('[AI interrogator] Question contains banned words, using scripted fallback:', nextQuestion)
-      nextQuestion = null
-    }
-
-    // If the model's question is invalid or missing, use the plan to decide
-    if (!nextQuestion) {
-      const next = nextFocus(state, turns.length)
-      if (next) {
-        nextQuestion = bankQuestion(next, state.asks[next])
-        nextFocusSlot = next
-      }
-    }
-
-    // Clean the model's coverage output
+    // ── Normal path: fold THIS answer in first, then decide ─────────────────────────────────────────────────
     const obs = cleanObs(out.coverage)
+    if (out.inconsistencies.length) obs.recheck = 'vague'          // a changed story reopens the consistency check
     const echoTarget = isEchoOfName(out.claims?.forWhom, residentName)
+    const thisTurn: PlanTurn = {
+      obs, claimsOrg: out.claimsOrganisation, personalTie: out.claimsPersonalTie, echoTarget, riskHint: out.riskHint,
+    }
+    const answeredCount = turns.length + 1
+    const after = foldPlan([...planTurns, thisTurn])
 
-    // Save the turn. The question it answers is the follow-up we asked last time (or the greeting on turn 1).
-    const asked = turns.length > 0 ? (turns[turns.length - 1].next ?? interrogatorLines(null).greet) : interrogatorLines(null).greet
+    const modelQ = (() => {
+      const q = out.nextQuestion
+      if (!q) return null
+      if (!validQuestion(q, residentName ?? undefined) || hasBannedPhrase(q)) {
+        console.warn('[AI interrogator] Model question rejected:', q)
+        return null
+      }
+      if (q.trim().toLowerCase() === asked.trim().toLowerCase()) return null   // never repeat word for word
+      return q
+    })()
+
+    const satisfied = isSatisfied(after, answeredCount) && out.satisfied && !out.evasive && out.inconsistencies.length === 0
+    const modelFocus: Slot | null = isSlot(out.nextFocus) ? out.nextFocus : null
+
+    let nextQuestion: string | null = null
+    let focus: Slot | null = null
+    if (!satisfied && answeredCount < MAX_TURNS) {
+      // Only use AI-generated questions, no scripted fallbacks
+      if (modelQ) {
+        nextQuestion = modelQ
+        focus = modelFocus
+      }
+    }
+
     const newTurn: InterrogationTurn = {
-      question: asked,
-      transcript: out.transcript,
-      timestamp: Date.now(),
-      next: nextQuestion,
-      obs,
-      focus: nextFocusSlot,
-      claimsOrg: out.claimsOrganisation,
-      personalTie: out.claimsPersonalTie,
-      echoTarget,
-      riskHint: out.riskHint,
+      question: asked, transcript: out.transcript, timestamp: Date.now(), next: nextQuestion,
+      obs, focus, claimsOrg: out.claimsOrganisation, personalTie: out.claimsPersonalTie, echoTarget, riskHint: out.riskHint,
     }
     const updatedTurns = [...turns, newTurn]
 
-    // No next question from plan or model: we're done
     if (!nextQuestion) {
-      await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
+      await finishInterrogation(householdId, caseId, updatedTurns, satisfied ? 'done' : 'max_turns', out)
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    // Save the turn and continue. Risk is updated live so helpers see it while the visitor is still at the door.
-    const live = liveAssessment(riskFlagsFor(updatedTurns.map(t => t.transcript).join(' ')), out.riskHint)
+    // Risk is updated live after EVERY answer, so helpers see it while the visitor is still at the door.
+    const live = liveAssessment(riskFlagsFor(updatedTurns.map(t => t.transcript).join(' ')), out.riskHint, {
+      coverage: coverageFacts(after, answeredCount), inconsistent: out.inconsistencies.length > 0, evasive: out.evasive,
+    })
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
+      visitorSummary: out.realReasonSummary ?? undefined,
       riskLevel: live.level, riskFlags: live.labels, riskAssessment: live as any,
     })
     return { question: nextQuestion, final: false, close: null }
@@ -246,7 +255,9 @@ async function finishInterrogation(
   }))
   const state = foldPlan(planTurns)
   const coverage = coverageSummary(state, turns.length)
-  const facts = coverageFacts(state, turns.length)
+  const baseFacts = coverageFacts(state, turns.length)
+  // Anything other than a satisfied interview means the visitor was never verified: that is itself a risk signal.
+  const facts = { ...baseFacts, unverifiable: baseFacts.unverifiable || reason !== 'done' }
   const checklistLines = coverageLines(coverage)
 
   // Layer 1: deterministic keyword rules (+ optional embedding match). Always runs, never fails.
@@ -287,6 +298,6 @@ export async function interrogatorScript(householdId: string, residentName: stri
   const lines = interrogatorLines(residentName)
   const audio: Record<string, string | null> = {}
   for (const id of Object.keys(lines) as (keyof typeof lines)[]) audio[id] = await cachedLineAudio(householdId, id, lines[id])
-  return { lines, audio, listenSeconds: LISTEN_SECONDS, maxTurns: MAX_TURNS }
+  return { lines, audio, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
 }
 export { wrapPcmAsWav }

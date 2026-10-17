@@ -50,10 +50,11 @@ export default function AiSimTools({ caseId, lane }: Props) {
       if (!s.enabled) { setStatus('AI interrogator is off for this household.'); return }
       await speak(s.lines.greet)
 
-      // Multi-turn loop: the server decides when to stop; maxTurns is only a safety bound
-      const maxTurns = typeof s.maxTurns === 'number' ? s.maxTurns : 6
+      // Multi-turn loop: the server decides when to stop. There is no client-side turn limit
+      // (an operator ceiling, if set, comes back as s.maxTurns).
+      const maxTurns = typeof s.maxTurns === 'number' ? s.maxTurns : Infinity
       for (let turn = 0; turn < maxTurns; turn++) {
-        setStatus(`🎙️ Listening… speak now (10s) - Turn ${turn + 1}/${maxTurns}`)
+        setStatus(`🎙️ Listening… speak now (10s) - answer ${turn + 1}${Number.isFinite(maxTurns) ? `/${maxTurns}` : ''}`)
         const clip = await recordOnce(s.listenSeconds || 10)
         if (!clip) { setStatus('Nothing recorded.'); return }
 

@@ -26,7 +26,7 @@ export const CATEGORY_LABEL: Record<RiskCategory, string> = {
   official_impersonation: 'Claims to be an official',
   entry_request:          'Wants to come inside',
   home_probing:           'Asked who else is at home',
-  unsolicited_work:       'Unrequested work offer',
+  unsolicited_work:       'Selling or offering work nobody asked for',
   story_mismatch:         'Answers do not add up',
   evasive_answers:        'Avoided answering',
   manipulation_attempt:   'Tried to steer the assistant',
@@ -118,12 +118,24 @@ export function groundEvidence(evidence: Evidence[], transcript: string): Eviden
 
 const clampWordsLocal = (s: string, max: number) => { const w = s.trim().split(/\s+/); return w.length <= max ? s.trim() : w.slice(0, max).join(' ') + '…' }
 
-/** Level shown while the conversation is still going. The live AI hint is ungrounded, so it can reach 'medium' at most. */
-export function liveAssessment(ruleFlags: string[], hint: RiskLevel): Assessment {
-  const cats = categoriesFromRuleFlags(ruleFlags)
-  const level = maxLevel(floorFor(cats), capLevel(hint, 'medium'))
+/**
+ * Level shown while the conversation is still going. The live AI hint is ungrounded, so it can reach 'medium' at most.
+ * Code-observed facts (vague reason, no checkable proof, changed story) count the same as in the final assessment,
+ * so a vague door-to-door seller is already 'medium' on the first answer.
+ */
+export function liveAssessment(
+  ruleFlags: string[], hint: RiskLevel,
+  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean },
+): Assessment {
+  const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleFlags))
+  if (extra?.inconsistent) cats.add('story_mismatch')
+  if (extra?.evasive) cats.add('evasive_answers')
+  if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
+  if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
+  const all = [...cats]
+  const level = maxLevel(floorFor(all), capLevel(hint, 'medium'))
   return {
-    level, categories: cats, labels: cats.map(c => CATEGORY_LABEL[c]), evidence: [], rationale: '',
+    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), evidence: [], rationale: '',
     action: ACTION_TEXT[level], source: 'live', assessedAt: new Date().toISOString(),
   }
 }

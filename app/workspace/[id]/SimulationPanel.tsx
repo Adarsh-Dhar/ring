@@ -119,7 +119,7 @@ function DoorbellSim() {
   const [text, setText] = useState('')
   const [notice, setNotice] = useState('')
   const [turn, setTurn] = useState(0)
-  const [maxTurns, setMaxTurns] = useState(6)
+  const [maxTurns, setMaxTurns] = useState<number | null>(null)   // null = no limit
   const [speakAloud, setSpeakAloud] = useState(true)
   const [recording, setRecording] = useState(false)
   const [showUpload, setShowUpload] = useState(false)
@@ -156,7 +156,7 @@ function DoorbellSim() {
       setPhase('done')
       return setNotice('The AI interrogator is off for this household (or this is a planned visit). Turn on AI + "AI interrogator" in Setup → AI Helpers, then ring again.')
     }
-    if (typeof s.maxTurns === 'number') setMaxTurns(s.maxTurns)
+    setMaxTurns(typeof s.maxTurns === 'number' ? s.maxTurns : null)
     setPhase('thinking')
     await say(s.lines.greet)
     setPhase('waiting')
@@ -303,7 +303,7 @@ function DoorbellSim() {
 
           <div className="flex gap-2 mt-3">
             <input className={INPUT} value={text} disabled={phase !== 'waiting'} maxLength={500}
-              placeholder={phase === 'waiting' ? `Answer as the visitor (turn ${turn + 1}/${maxTurns})…` : 'Waiting for the doorbell…'}
+              placeholder={phase === 'waiting' ? `Answer as the visitor (answer ${turn + 1}${maxTurns ? `/${maxTurns}` : ''})…` : 'Waiting for the doorbell…'}
               onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendText()} />
             <button className={BTN} disabled={phase !== 'waiting' || !text.trim()} onClick={sendText}>Send</button>
             {recording

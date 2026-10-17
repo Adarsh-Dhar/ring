@@ -27,6 +27,8 @@ export const InterrogatorTurnOut = z.object({
   claimsPersonalTie:  z.boolean().default(false),
   /** The slot nextQuestion is about. Code re-derives the focus and ignores the question if it disagrees. */
   nextFocus:          z.string().nullable().default(null),
+  /** The model's own judgement that the visitor's story is now specific, checkable and consistent. Code must agree before the interview ends. */
+  satisfied:          z.boolean().default(false),
 })
 export type InterrogatorTurnResult = z.infer<typeof InterrogatorTurnOut>
 

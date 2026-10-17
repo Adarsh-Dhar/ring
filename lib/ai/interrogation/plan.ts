@@ -17,7 +17,7 @@
  *    for the carers. A vague visitor is "could not be verified", not "a criminal".
  */
 
-export const SLOT_KEYS = ['purpose', 'organisation', 'name', 'relation', 'target', 'proof', 'companions', 'spatial'] as const
+export const SLOT_KEYS = ['purpose', 'organisation', 'detail', 'name', 'relation', 'target', 'proof', 'companions', 'spatial', 'recheck'] as const
 export type Slot = (typeof SLOT_KEYS)[number]
 
 export const STATUSES = ['missing', 'vague', 'specific', 'refused'] as const
@@ -29,11 +29,24 @@ export type Obs = Partial<Record<Slot, Status>>
  * checkable, a practical question they could not rehearse) come before cheap ones (name, who else is with them),
  * because a stubborn visitor can use up every follow-up.
  */
-export const ORDER: readonly Slot[] = ['purpose', 'organisation', 'proof', 'relation', 'spatial', 'name', 'target', 'companions']
+export const ORDER: readonly Slot[] = ['purpose', 'organisation', 'detail', 'proof', 'relation', 'spatial', 'name', 'target', 'recheck', 'companions']
 
-export const MAX_ASKS_PER_SLOT = 2
-export const clampTurns = (n: number) => (Number.isFinite(n) ? Math.min(8, Math.max(3, Math.round(n))) : 6)
-export const MAX_TURNS = clampTurns(Number(process.env.AI_INTERROGATOR_MAX_TURNS || 6))
+/**
+ * Slots that must be pressed until they are specific. While one of these is open and has been asked at least once,
+ * we keep pressing it instead of rotating to easy questions: every other answer is moot until the core story is checkable.
+ */
+export const PRESS_FIRST: readonly Slot[] = ['purpose', 'organisation', 'proof']
+
+/** Never finish before this many answers, even if everything looks specific. One more look is cheap. */
+export const MIN_TURNS = 4
+
+/**
+ * NO per-slot cap and NO default turn cap: the interview runs until the plan AND the model are satisfied.
+ * AI_INTERROGATOR_MAX_TURNS is an optional operator ceiling (a positive number). Unset or 0 = unlimited.
+ * The interview still ends if the visitor goes silent (see processAnswer) or the model is down.
+ */
+export const clampTurns = (n: number) => (Number.isFinite(n) && n > 0 ? Math.max(3, Math.round(n)) : Infinity)
+export const MAX_TURNS = clampTurns(Number(process.env.AI_INTERROGATOR_MAX_TURNS || 0))
 
 /** What we remember about each answered turn (stored inside Case.interrogationTurns, no migration needed). */
 export interface PlanTurn {
@@ -99,57 +112,130 @@ export function isEchoOfName(forWhom: string | null | undefined, residentName: s
 
 /** The slots we still care about, given what the visitor has claimed so far. */
 export function requiredSlots(s: PlanState, answered: number): Slot[] {
-  const need = new Set<Slot>(['purpose', 'name'])
+  // Everyone unplanned must give a reason, a name, something checkable, and concrete detail about the errand.
+  const need = new Set<Slot>(['purpose', 'name', 'detail', 'proof', 'companions', 'spatial'])
   if (!s.echoTarget) need.add('target')            // if they only echoed the cued name, "relation" replaces it
-  if (s.claimsOrg) { need.add('organisation'); need.add('proof') }
+  if (s.claimsOrg) need.add('organisation')
   if (s.personalTie || s.echoTarget) need.add('relation')
-  const heightened = s.claimsOrg || s.riskHint !== 'none' || [...need].some(k => s.status[k] === 'vague' || s.status[k] === 'refused')
-  if (heightened) {
-    need.add('companions')                         // distraction burglars often work in pairs
-    if (answered >= 2) need.add('spatial')         // one question they could not have rehearsed
-  }
+  if (answered >= 3) need.add('recheck')           // re-ask an earlier fact in different words and compare
   return ORDER.filter(k => need.has(k))
 }
 
+/** Every required slot is specific, nothing was refused, and we have asked enough. Code-side half of "satisfied". */
+export function isSatisfied(s: PlanState, answered: number): boolean {
+  if (answered < MIN_TURNS) return false
+  return requiredSlots(s, answered).every(k => s.status[k] === 'specific')
+}
+
 /**
- * What to ask next, or null to finish. Fewest-asks-first so we never hammer one slot while others are untouched.
- * Pure and deterministic: the model cannot end the interview early and cannot loop forever.
+ * What to ask next, or null when nothing is open (or an operator ceiling is hit).
+ * Core slots (reason, organisation, proof) are pressed until specific. Otherwise fewest-asks-first.
+ * Pure and deterministic: the model cannot end the interview early.
  */
 export function nextFocus(s: PlanState, answered: number, max = MAX_TURNS): Slot | null {
   if (answered >= max) return null
-  const open = requiredSlots(s, answered).filter(k => s.status[k] !== 'specific' && s.asks[k] < MAX_ASKS_PER_SLOT)
+  const open = requiredSlots(s, answered).filter(k => s.status[k] !== 'specific')
   if (!open.length) return null
+  const press = PRESS_FIRST.find(k => open.includes(k) && s.asks[k] > 0)
+  if (press) return press
   return open.sort((a, b) => s.asks[a] - s.asks[b] || ORDER.indexOf(a) - ORDER.indexOf(b))[0]
 }
 
 /**
- * Scripted questions, two phrasings per slot (second ask is a rephrase, never a repeat).
- * Every line is <= 20 words, neutral and passes validQuestion(). No accusations, no resident details,
- * never says what is "expected", never asks whether anyone is home.
+ * Scripted questions, five phrasings per slot, getting firmer. Used when the model is unavailable or its question
+ * fails validation. Every line is <= 20 words and passes validQuestion(): no accusations, no resident details,
+ * never says what is "expected", never asks whether anyone is home. Past the last phrasing they cycle.
  */
-export const QUESTION_BANK: Record<Slot, readonly [string, string]> = {
-  purpose:      ['What exactly is the reason for your visit?', 'Sorry, I need a bit more detail. What is it about, specifically?'],
-  organisation: ['Which company or organisation are you from?', 'What is the full name of your company or organisation?'],
-  name:         ['What is your name, please?', 'Could you give me your first and last name?'],
-  relation:     ['How do you know them?', 'How long have you known them, and how did you meet?'],
-  target:       ['Who exactly are you here to see?', 'Could you give me the full name of the person you want?'],
-  proof:        ['Please hold your ID card or work order up to the camera.', 'Do you have a reference number, or the name of whoever sent you?'],
-  companions:   ['Is anyone with you today?', 'Is there anybody else with you, perhaps in a vehicle nearby?'],
-  spatial:      ['Where did you park, or how did you get here today?', 'What time did you set off today, and from where?'],
+export const QUESTION_BANK: Record<Slot, readonly string[]> = {
+  purpose: [
+    'What exactly is the reason for your visit?',
+    'I need specifics. What exactly are you here to do or offer?',
+    'Which product or service, exactly, and what does it cost?',
+    'Who told you to come to this address, and why this one?',
+    'I still have no clear reason. State it in one full sentence.',
+  ],
+  organisation: [
+    'Which company or organisation are you from?',
+    'Give me the full registered name of that company.',
+    'What is the office phone number of your company?',
+    'What is your supervisor\'s full name?',
+    'Which street is your company based on?',
+  ],
+  detail: [
+    'Describe exactly what you want to do or offer, step by step.',
+    'What is the product called, and who makes it?',
+    'How did you choose this address today?',
+    'How many houses have you visited today, and on which streets?',
+    'Walk me through exactly what would happen if I agreed.',
+  ],
+  name: [
+    'What is your name, please?',
+    'Could you give me your first and last name?',
+    'Spell your surname for me, letter by letter.',
+    'Is that the name on your ID? Say it again, slowly.',
+    'I need your full legal name before anything else.',
+  ],
+  relation: [
+    'How do you know them?',
+    'How long have you known them, and how did you meet?',
+    'When did you last see them, and where?',
+    'Who else do you both know?',
+    'What was the last thing you spoke about together?',
+  ],
+  target: [
+    'Who exactly are you here to see?',
+    'Could you give me the full name of the person you want?',
+    'What is their full name, and how do you know it?',
+    'Who gave you that name?',
+    'State the full name of the person, not just a first name.',
+  ],
+  proof: [
+    'Please hold your ID card or work order up to the camera.',
+    'Do you have a reference number, or the name of whoever sent you?',
+    'Read me the number on your card, slowly.',
+    'What phone number can the household use to check you with your office?',
+    'Without checkable ID I will record that you declined. Will you show it?',
+  ],
+  companions: [
+    'Is anyone with you today?',
+    'Is there anybody else with you, perhaps in a vehicle nearby?',
+    'Does anyone work with you, and where are they right now?',
+    'Who dropped you off, or did you come on your own?',
+    'How many colleagues are working this street today?',
+  ],
+  spatial: [
+    'Where did you park, or how did you get here today?',
+    'What time did you set off today, and from where?',
+    'Which street did you walk or drive down just before this door?',
+    'What colour is your vehicle, and where is it now?',
+    'Describe the last house you visited before this one.',
+  ],
+  recheck: [
+    'Remind me: what is your name and reason for coming, in your own words?',
+    'Earlier you gave me details. Repeat them exactly as you said them.',
+    'Let me confirm: say again who sent you, and what for.',
+    'Say your name and company once more, so I record it correctly.',
+    'Please repeat your reason in full, from the beginning.',
+  ],
 }
-export const bankQuestion = (slot: Slot, asked: number): string => QUESTION_BANK[slot][Math.min(Math.max(asked, 0), 1)]
+export const bankQuestion = (slot: Slot, asked: number): string => {
+  const q = QUESTION_BANK[slot]
+  return q[Math.max(asked, 0) % q.length]
+}
 
 // ── helper-facing summary ─────────────────────────────────────────────────────
 
 export const SLOT_LABEL: Record<Slot, string> = {
   purpose: 'Specific reason for the visit',
   organisation: 'Organisation named',
+  detail: 'Gave concrete detail about the errand',
   name: 'Gave a name',
   relation: 'Explained how they know the resident',
   target: 'Named who they want to see',
   proof: 'Showed ID or gave a reference',
   companions: 'Said whether anyone is with them',
   spatial: 'Answered how/when they got here',
+  recheck: 'Repeated their earlier answers consistently',
 }
 
 export interface CoverageItem { slot: Slot; label: string; status: Status; asked: number; note?: string }
@@ -182,7 +268,7 @@ export function coverageFacts(s: PlanState, answered: number): CoverageFacts {
   const bad = (k: Slot) => { const e = effective(s, k); return e === 'vague' || e === 'refused' }
   const purposeMissing = s.status.purpose === 'missing'
   const relationBad = (s.personalTie || s.echoTarget) && bad('relation')
-  const purposeVague = bad('purpose') || purposeMissing || relationBad
+  const purposeVague = bad('purpose') || bad('detail') || purposeMissing || relationBad
   const unverifiable = s.claimsOrg && (bad('proof') || bad('organisation'))
   return { purposeVague, unverifiable }
 }

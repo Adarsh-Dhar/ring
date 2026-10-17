@@ -6,8 +6,9 @@ import { describe, it, expect } from 'vitest'
 import {
   SLOT_KEYS,
   SLOT_LABEL,
-  MAX_ASKS_PER_SLOT,
-  MAX_TURNS,
+  MIN_TURNS,
+  isSatisfied,
+  QUESTION_BANK,
   cleanObs,
   foldPlan,
   isEchoOfName,
@@ -22,6 +23,19 @@ import {
   type Slot,
   type Status,
 } from '@/lib/ai/interrogation/plan'
+
+
+const ALL_SLOTS = ['purpose', 'organisation', 'detail', 'name', 'relation', 'target', 'proof', 'companions', 'spatial', 'recheck'] as const
+const mk = (
+  status: Partial<Record<Slot, Status>> = {},
+  asks: Partial<Record<Slot, number>> = {},
+  flags: Partial<Pick<PlanState, 'claimsOrg' | 'personalTie' | 'echoTarget' | 'riskHint'>> = {},
+): PlanState => ({
+  status: Object.fromEntries(ALL_SLOTS.map(k => [k, status[k] ?? 'missing'])) as Record<Slot, Status>,
+  asks: Object.fromEntries(ALL_SLOTS.map(k => [k, asks[k] ?? 0])) as Record<Slot, number>,
+  claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none', ...flags,
+})
+const allSpecific = () => mk(Object.fromEntries(ALL_SLOTS.map(k => [k, 'specific'])) as Record<Slot, Status>)
 
 describe('cleanObs', () => {
   it('filters unknown slots and statuses', () => {
@@ -109,105 +123,78 @@ describe('isEchoOfName', () => {
 })
 
 describe('requiredSlots', () => {
-  it('always asks purpose and name', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const req = requiredSlots(state, 0)
-    expect(req).toContain('purpose')
-    expect(req).toContain('name')
+  it('always asks purpose, name, detail, proof, companions and spatial', () => {
+    const req = requiredSlots(mk(), 0)
+    for (const k of ['purpose', 'name', 'detail', 'proof', 'companions', 'spatial'] as Slot[]) expect(req).toContain(k)
   })
 
   it('adds target if not an echo', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const req = requiredSlots(state, 0)
-    expect(req).toContain('target')
+    expect(requiredSlots(mk(), 0)).toContain('target')
   })
 
   it('skips target if echo, adds relation instead', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: true, riskHint: 'none',
-    }
-    const req = requiredSlots(state, 0)
+    const req = requiredSlots(mk({}, {}, { echoTarget: true }), 0)
     expect(req).not.toContain('target')
     expect(req).toContain('relation')
   })
 
-  it('adds organisation and proof if claimsOrg', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: true, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const req = requiredSlots(state, 0)
-    expect(req).toContain('organisation')
-    expect(req).toContain('proof')
+  it('adds organisation if claimsOrg', () => {
+    expect(requiredSlots(mk({}, {}, { claimsOrg: true }), 0)).toContain('organisation')
   })
 
-  it('adds companions and spatial when heightened (after 2 answers)', () => {
-    const state: PlanState = {
-      status: { purpose: 'vague', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const req = requiredSlots(state, 2)
-    expect(req).toContain('companions')
-    expect(req).toContain('spatial')
+  it('adds the consistency recheck from the third answer', () => {
+    expect(requiredSlots(mk(), 2)).not.toContain('recheck')
+    expect(requiredSlots(mk(), 3)).toContain('recheck')
   })
 })
 
-describe('nextFocus', () => {
-  it('returns null when max turns reached', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(nextFocus(state, MAX_TURNS)).toBe(null)
+describe('nextFocus: no caps', () => {
+  it('never stops on its own while a required slot is open, however many turns have passed', () => {
+    expect(nextFocus(mk(), 500)).not.toBeNull()
   })
 
-  it('returns null when all required slots are specific', () => {
-    const state: PlanState = {
-      status: { purpose: 'specific', name: 'specific', organisation: 'missing', relation: 'missing', target: 'specific', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 1, organisation: 0, relation: 0, target: 1, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(nextFocus(state, 0)).toBe(null)
+  it('honours an explicit operator ceiling', () => {
+    expect(nextFocus(mk(), 10, 10)).toBeNull()
   })
 
-  it('picks least-asked slot', () => {
-    const state: PlanState = {
-      status: { purpose: 'specific', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(nextFocus(state, 0)).toBe('name')  // name asked 0 times, purpose already asked 1
+  it('returns null only when every required slot is specific', () => {
+    expect(nextFocus(allSpecific(), 6)).toBeNull()
   })
 
-  it('breaks ties by priority order', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(nextFocus(state, 0)).toBe('purpose')  // purpose is first in ORDER
+  it('keeps pressing a vague purpose however often it was asked', () => {
+    const s = mk({ purpose: 'vague' }, { purpose: 9, name: 0 })
+    expect(nextFocus(s, 3)).toBe('purpose')
   })
 
-  it('skips slots asked MAX_ASKS_PER_SLOT times', () => {
-    const state: PlanState = {
-      status: { purpose: 'vague', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 2, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(nextFocus(state, 0)).toBe('name')  // purpose at max, name next
+  it('presses proof when an organisation is claimed and the proof is vague', () => {
+    const s = mk({ purpose: 'specific', organisation: 'specific', proof: 'refused' }, { proof: 4 }, { claimsOrg: true })
+    expect(nextFocus(s, 4)).toBe('proof')
+  })
+
+  it('rotates to the least-asked slot when nothing core is being pressed', () => {
+    const s = mk({ purpose: 'specific', proof: 'specific', detail: 'specific' }, { name: 1, target: 0, spatial: 0, companions: 0 })
+    expect(['target', 'spatial', 'companions']).toContain(nextFocus(s, 3))
+  })
+
+  it('starts with purpose on a blank state', () => {
+    expect(nextFocus(mk(), 0)).toBe('purpose')
+  })
+})
+
+describe('isSatisfied', () => {
+  it('is false before MIN_TURNS even if everything is specific', () => {
+    expect(isSatisfied(allSpecific(), MIN_TURNS - 1)).toBe(false)
+  })
+  it('is true when everything required is specific and enough turns passed', () => {
+    expect(isSatisfied(allSpecific(), MIN_TURNS)).toBe(true)
+  })
+  it('is false when one required slot is vague', () => {
+    const s = allSpecific(); s.status.proof = 'vague'
+    expect(isSatisfied(s, 8)).toBe(false)
+  })
+  it('is false when the story changed (recheck vague)', () => {
+    const s = allSpecific(); s.status.recheck = 'vague'
+    expect(isSatisfied(s, 8)).toBe(false)
   })
 })
 
@@ -215,77 +202,51 @@ describe('bankQuestion', () => {
   it('returns first phrasing on first ask', () => {
     expect(bankQuestion('purpose', 0)).toBe('What exactly is the reason for your visit?')
   })
-
-  it('returns second phrasing on second ask', () => {
-    expect(bankQuestion('purpose', 1)).toBe('Sorry, I need a bit more detail. What is it about, specifically?')
+  it('gets firmer on later asks and never repeats back-to-back', () => {
+    for (let i = 0; i < 12; i++) expect(bankQuestion('purpose', i)).not.toBe(bankQuestion('purpose', i + 1))
   })
-
-  it('clamps to second phrasing for higher asks', () => {
-    expect(bankQuestion('purpose', 5)).toBe('Sorry, I need a bit more detail. What is it about, specifically?')
+  it('cycles instead of running out', () => {
+    expect(bankQuestion('proof', 50)).toBeTruthy()
+  })
+  it('every scripted question is a valid, safe question', async () => {
+    const { validQuestion } = await import('@/lib/ai/guard')
+    for (const [slot, qs] of Object.entries(QUESTION_BANK)) for (const q of qs) expect(validQuestion(q), `${slot}: ${q}`).toBe(true)
   })
 })
 
 describe('coverageSummary', () => {
   it('shows specific slots as given', () => {
-    const state: PlanState = {
-      status: { purpose: 'specific', name: 'specific', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 1, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const items = coverageSummary(state, 2)
-    const purpose = items.find(i => i.slot === 'purpose')
-    expect(purpose?.status).toBe('specific')
+    const items = coverageSummary(mk({ purpose: 'specific', name: 'specific' }, { purpose: 1, name: 1 }), 2)
+    expect(items.find(i => i.slot === 'purpose')?.status).toBe('specific')
   })
 
   it('marks missing as vague after being asked', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    const items = coverageSummary(state, 1)
-    const purpose = items.find(i => i.slot === 'purpose')
-    expect(purpose?.status).toBe('vague')
+    const items = coverageSummary(mk({}, { purpose: 1 }), 1)
+    expect(items.find(i => i.slot === 'purpose')?.status).toBe('vague')
   })
 
   it('adds note for echoTarget', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: true, riskHint: 'none',
-    }
-    const items = coverageSummary(state, 0)
-    const target = items.find(i => i.slot === 'target')
-    expect(target?.note).toBe('Only repeated the name the doorbell said')
+    const items = coverageSummary(mk({}, {}, { echoTarget: true }), 0)
+    expect(items.find(i => i.slot === 'target')?.note).toBe('Only repeated the name the doorbell said')
   })
 })
 
 describe('coverageFacts', () => {
   it('returns false when no answers', () => {
-    const state: PlanState = {
-      status: { purpose: 'missing', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 0, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(coverageFacts(state, 0)).toEqual({ purposeVague: false, unverifiable: false })
+    expect(coverageFacts(mk(), 0)).toEqual({ purposeVague: false, unverifiable: false })
   })
 
   it('flags purposeVague when purpose is vague', () => {
-    const state: PlanState = {
-      status: { purpose: 'vague', name: 'missing', organisation: 'missing', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 0, organisation: 0, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: false, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(coverageFacts(state, 1).purposeVague).toBe(true)
+    expect(coverageFacts(mk({ purpose: 'vague' }, { purpose: 1 }), 1).purposeVague).toBe(true)
+  })
+
+  it('flags purposeVague when the detail of the errand is vague', () => {
+    expect(coverageFacts(mk({ purpose: 'specific', detail: 'vague' }, { detail: 1 }), 2).purposeVague).toBe(true)
   })
 
   it('flags unverifiable when claimsOrg and no proof', () => {
-    const state: PlanState = {
-      status: { purpose: 'specific', name: 'specific', organisation: 'vague', relation: 'missing', target: 'missing', proof: 'missing', companions: 'missing', spatial: 'missing' },
-      asks: { purpose: 1, name: 1, organisation: 1, relation: 0, target: 0, proof: 0, companions: 0, spatial: 0 },
-      claimsOrg: true, personalTie: false, echoTarget: false, riskHint: 'none',
-    }
-    expect(coverageFacts(state, 1).unverifiable).toBe(true)
+    const s = mk({ purpose: 'specific', name: 'specific', organisation: 'vague' }, { organisation: 1 }, { claimsOrg: true })
+    expect(coverageFacts(s, 1).unverifiable).toBe(true)
   })
 })
 
@@ -326,7 +287,24 @@ describe('the exact scenario from the bug report', () => {
 
     // Should NOT be done - should ask another question
     expect(next).not.toBeNull()
-    // Should ask for relation since they claimed to know adarsh
-    expect(next).toBe('relation')
+    // The vague reason is pressed again before anything else (no per-slot cap any more)
+    expect(next).toBe('purpose')
+    // and once the reason is specific, the echoed name leads to a relation question
+    const state2 = foldPlan([turn1, { obs: { purpose: 'specific', detail: 'specific', proof: 'specific' }, focus: 'purpose', echoTarget: true }])
+    expect(nextFocus(state2, 2)).toBe('relation')
+  })
+})
+
+describe('the "Big Smoke, here to sell something" scenario', () => {
+  it('does not finish after two vague answers and a name', () => {
+    const t1: PlanTurn = { obs: { purpose: 'vague' }, claimsOrg: true, riskHint: 'low' }
+    const state1 = foldPlan([t1])
+    const f1 = nextFocus(state1, 1)
+    expect(f1).not.toBeNull()
+    const t2: PlanTurn = { obs: { purpose: 'vague' }, focus: f1, claimsOrg: true, riskHint: 'medium' }
+    const t3: PlanTurn = { obs: { name: 'vague' }, focus: 'purpose', claimsOrg: true, riskHint: 'medium' }
+    const state3 = foldPlan([t1, t2, t3])
+    expect(isSatisfied(state3, 3)).toBe(false)
+    expect(nextFocus(state3, 3)).toBe('purpose')   // still pressing the unanswered core question
   })
 })

@@ -48,7 +48,7 @@ const VERDICT_BADGE: Record<string, string> = {
 const LABEL_BY_CAT: Record<string, string> = {
   urgency_pressure: 'Pressure to act quickly', payment_request: 'Money or card details',
   official_impersonation: 'Claims to be an official', entry_request: 'Wants to come inside',
-  home_probing: 'Asked who else is at home', unsolicited_work: 'Unrequested work offer',
+  home_probing: 'Asked who else is at home', unsolicited_work: 'Selling or offering work nobody asked for',
   story_mismatch: 'Answers do not add up', evasive_answers: 'Avoided answering',
   manipulation_attempt: 'Tried to steer the assistant', known_scam_wording: 'Matches known tricks',
   vague_purpose: 'Reason stayed vague', unverifiable_claims: 'Could not back up claims', other: 'Other',
@@ -66,6 +66,25 @@ const RISK_HEADLINE: Record<RiskLevel, string> = {
   high: '🚨 High risk: classic doorstep-scam signs',
 }
 
+
+const PILL: Record<RiskLevel, string> = {
+  none: 'bg-emerald-600 text-white',
+  low: 'bg-slate-500 text-white',
+  medium: 'bg-amber-500 text-black',
+  high: 'bg-red-600 text-white',
+}
+const PILL_TEXT: Record<RiskLevel, string> = { none: 'RISK: NONE SO FAR', low: 'RISK: LOW', medium: 'RISK: MEDIUM', high: 'RISK: HIGH' }
+
+/** Always visible, from the first answer. Updates live while the interview runs. */
+function RiskBar({ level, live, turns }: { level: RiskLevel; live: boolean; turns: number }) {
+  return (
+    <div className="mb-2 flex items-center justify-between gap-2" role="status" aria-live="polite">
+      <span className={`rounded-full px-3 py-1 text-sm font-bold tracking-wide ${PILL[level]}`}>{PILL_TEXT[level]}</span>
+      <span className="text-xs text-slate-400">{live ? `Interview in progress${turns ? `, ${turns} answer${turns === 1 ? '' : 's'} so far` : ''}` : 'Interview finished'}</span>
+    </div>
+  )
+}
+
 /** Advisory AI info for an open case. Renders nothing for planned visits. */
 export default function InterrogationCard({ caseId }: { caseId: string }) {
   const [ai, setAi] = useState<Ai | null>(null)
@@ -75,7 +94,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   useEffect(() => {
     let stop = false
     const startedAt = Date.now()
-    const MAX_POLL_MS = 300_000   // A 6-turn interview with 10 s of listening per turn can run for minutes
+    const MAX_POLL_MS = 1_800_000   // The interview has no turn limit, so allow a long one (30 min)
     const load = async () => {
       try {
         const r = await fetch(`/api/ai/cases/${encodeURIComponent(caseId)}`, { cache: 'no-store' })
@@ -120,7 +139,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const verdict = ai?.interrogationVerdict || 'unclear'
   const risk = ai?.riskAssessment ?? null
   const riskLevel: RiskLevel = (ai?.riskLevel as RiskLevel) || risk?.level || 'none'
-  const hasRisk = riskLevel === 'medium' || riskLevel === 'high' || riskLevel === 'low'
+  const hasRisk = riskLevel !== 'none'
 
   // Show unsupported message
   if (ai?.interrogationState === 'unsupported') {
@@ -137,21 +156,28 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                     : ai?.interrogationState === 'listening' ? '🎙️ Doorbell is listening…'
                     : '🔍 AI is analysing…'
     return (
-      <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
+      <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
+        <RiskBar level={riskLevel} live turns={turns.length} />
         {stateText}
-      </p>
+      </div>
     )
   }
 
   // Show active interrogator state without results yet
   if (!ai?.visitorSummary && flags.length === 0 && !hasRisk) {
     return ai?.interrogationState === 'listening' || ai?.interrogationState === 'asking'
-      ? <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">🎙️ Doorbell is asking the visitor questions…</p>
+      ? (
+        <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
+          <RiskBar level={riskLevel} live turns={turns.length} />
+          🎙️ Doorbell is asking the visitor questions…
+        </div>
+      )
       : null
   }
 
   return (
     <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm space-y-3">
+      <RiskBar level={riskLevel} live={ai?.interrogationState === 'asking' || ai?.interrogationState === 'listening'} turns={turns.length} />
       {/* Risk assessment: the first thing a helper reads */}
       {(hasRisk || ai?.interrogationState === 'done') && (
         <div className={`rounded-lg p-3 ${RISK_BOX[riskLevel]}`}>

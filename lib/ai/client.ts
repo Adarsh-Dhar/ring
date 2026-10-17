@@ -42,6 +42,7 @@ export async function generateJson<S extends ZodTypeAny>(a: GenArgs<S>): Promise
     const model = await reserve(role)
     if (!model) continue
     const started = Date.now()
+    let modelMissing = false
     for (let attempt = 0; attempt < 2; attempt++) {
       const ctl = new AbortController()
       const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS)
@@ -56,6 +57,7 @@ export async function generateJson<S extends ZodTypeAny>(a: GenArgs<S>): Promise
           const body = (await res.text().catch(() => '')).slice(0, 300)
           console.warn(`[AI] Gemini HTTP ${res.status} model=${model}: ${body}`)
           await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started })
+          if (res.status === 404) modelMissing = true   // retired or misspelt model id: the next tier may still work
           break
         }
         const j: any = await res.json()
@@ -72,6 +74,7 @@ export async function generateJson<S extends ZodTypeAny>(a: GenArgs<S>): Promise
         if (attempt === 1) await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started })
       } finally { clearTimeout(timer) }
     }
+    if (modelMissing) continue   // the model ID does not exist, so the input was never the problem: try the next tier
     return null   // a model was tried and failed: do not burn the next tier on the same bad input
   }
   await logRun({ ...base, model: MODEL_IDS[a.role](), status: 'budget' })

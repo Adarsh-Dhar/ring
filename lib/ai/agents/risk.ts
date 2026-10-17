@@ -7,7 +7,7 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Claims to be officials',    re: /\b(council|police|inspector|inspection|government|tax office|hmrc|irs|social services)\b/i },
   { flag: 'Wants to enter or check inside', re: /\b(check (the )?(meter|boiler|pipes|roof|wiring)|come inside|let me in|look around|survey)\b/i },
   { flag: 'Asks who is home',          re: /\b(anyone (home|in)|who('s| is) (home|in)|alone|are you on your own)\b/i },
-  { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote))\b/i },
+  { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote|sample)|sell(ing|er|s)?|sales ?(man|woman|person|rep|pitch)|salesm[ae]n|door[- ]to[- ]door|discount|brochure|leaflet|subscription)\b/i },
 ]
 
 export function riskFlagsFor(transcript: string): string[] {

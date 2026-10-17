@@ -87,6 +87,8 @@ export async function GET(
         kind: true,
         deadlineAt: true,
         helperIndex: true,
+        riskLevel: true,
+        interrogationState: true,
       },
     })
 
