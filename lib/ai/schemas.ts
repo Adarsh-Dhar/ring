@@ -19,6 +19,14 @@ export const InterrogatorTurnOut = z.object({
   verdict:            z.enum(['consistent', 'inconsistent', 'evasive', 'unclear']).default('unclear'),
   /** Running gut-check shown live to helpers. Ungrounded, so the code caps it at 'medium'. */
   riskHint:           z.enum(LEVELS).default('none'),
+  /** How specific the visitor's answers were, per interview slot. Strings are cleaned by cleanObs() in code. */
+  coverage:           z.record(z.string(), z.string()).default({}),
+  /** True if they say they act for a company, agency, council or authority, or do a delivery or trade job. */
+  claimsOrganisation: z.boolean().default(false),
+  /** True if they say they are a friend, relative or acquaintance of the resident. */
+  claimsPersonalTie:  z.boolean().default(false),
+  /** The slot nextQuestion is about. Code re-derives the focus and ignores the question if it disagrees. */
+  nextFocus:          z.string().nullable().default(null),
 })
 export type InterrogatorTurnResult = z.infer<typeof InterrogatorTurnOut>
 

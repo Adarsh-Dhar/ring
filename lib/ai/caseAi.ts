@@ -17,6 +17,8 @@ export type CaseAiData = {
   interrogationClaims: any
   riskLevel: string | null
   riskAssessment: any
+  maxTurns?: number
+  residentName?: string | null
   aiStatus: AiStatus
 }
 
@@ -24,7 +26,7 @@ export type CaseAiData = {
 export async function setCaseAi(caseId: string, data: {
   visitorSummary?: string | null; riskFlags?: string[]; interrogationState?: string | null;
   interrogationTurns?: any; interrogationVerdict?: string | null; interrogationClaims?: any
-  riskLevel?: string | null; riskAssessment?: any
+  riskLevel?: string | null; riskAssessment?: any; maxTurns?: number; residentName?: string | null
 }) {
   try {
     // Read existing case before updating to detect first result
@@ -50,6 +52,7 @@ export async function setCaseAi(caseId: string, data: {
     if ('interrogationClaims' in data) d.interrogationClaims = data.interrogationClaims
     if ('riskLevel' in data) d.riskLevel = data.riskLevel
     if ('riskAssessment' in data) d.riskAssessment = data.riskAssessment
+    // maxTurns and residentName are runtime-only, not persisted
     await getDb().case.update({ where: { id: caseId }, data: d })
 
     // Push notification to helpers when interrogation completes (state === 'done')
@@ -107,7 +110,8 @@ export async function getCaseAi(householdId: string, caseId: string): Promise<Ca
     } as Prisma.CaseSelect,
   })
   if (!c) return null
-  return { ...c, aiStatus: await getAiStatus(householdId, caseId, c) } as CaseAiData
+  const householdData = await aiFlags(householdId)
+  return { ...c, residentName: householdData.residentName, aiStatus: await getAiStatus(householdId, caseId, c) } as CaseAiData
 }
 
 export type AiStatus = 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'

@@ -15,7 +15,7 @@ export type RiskLevel = (typeof LEVELS)[number]
 export const RISK_CATEGORIES = [
   'urgency_pressure', 'payment_request', 'official_impersonation', 'entry_request',
   'home_probing', 'unsolicited_work', 'story_mismatch', 'evasive_answers',
-  'manipulation_attempt', 'known_scam_wording', 'other',
+  'manipulation_attempt', 'known_scam_wording', 'vague_purpose', 'unverifiable_claims', 'other',
 ] as const
 export type RiskCategory = (typeof RISK_CATEGORIES)[number]
 
@@ -31,6 +31,8 @@ export const CATEGORY_LABEL: Record<RiskCategory, string> = {
   evasive_answers:        'Avoided answering',
   manipulation_attempt:   'Tried to steer the assistant',
   known_scam_wording:     'Wording matches known tricks',
+  vague_purpose:          'Reason stayed vague',
+  unverifiable_claims:    'Could not back up claims',
   other:                  'Other concern',
 }
 
@@ -133,10 +135,14 @@ export function buildAssessment(a: {
   liveHint?: RiskLevel
   inconsistent?: boolean
   evasive?: boolean
+  /** Computed by the interview plan from what the visitor did or did not give. Needs no quote: it is code-observed. */
+  coverage?: { purposeVague: boolean; unverifiable: boolean }
 }): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(a.ruleFlags))
   if (a.inconsistent) cats.add('story_mismatch')
   if (a.evasive) cats.add('evasive_answers')
+  if (a.coverage?.purposeVague) cats.add('vague_purpose')
+  if (a.coverage?.unverifiable) cats.add('unverifiable_claims')
 
   let evidence: Evidence[] = []
   let judgeLevel: RiskLevel = 'none'

@@ -18,6 +18,9 @@ export interface RiskInput {
   inconsistencies: string[]
   evasive: boolean
   liveHint: RiskLevel
+  /** Interview checklist computed by code (trusted text) and the facts derived from it. */
+  coverageLines?: string[]
+  coverage?: { purposeVague: boolean; unverifiable: boolean }
 }
 
 const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T | null> => {
@@ -36,12 +39,13 @@ export async function assessRisk(i: RiskInput): Promise<Assessment> {
       .map(t => `Q: ${sanitize(t.question, 200)}\n${wrapUntrusted('visitor_answer', t.transcript || '(not understood)', 400)}`)
       .join('\n')
     const noted = i.inconsistencies.length ? `\nInconsistencies noted by the interviewer:\n${wrapUntrusted('interviewer_notes', i.inconsistencies.join('; '), 400)}` : ''
+    const checklist = i.coverageLines?.length ? `\nInterview checklist (computed by the system, reliable):\n- ${i.coverageLines.join('\n- ')}` : ''
     const rules = i.ruleFlags.length ? `\nAutomatic keyword checks matched: ${i.ruleFlags.join(', ')} (these can be wrong).` : ''
     const out = await withTimeout(
       generateJson({
         agent: 'risk', householdId: i.householdId, caseId: i.caseId, role: 'workhorse', schema: RiskJudgeOut, maxOutputTokens: 450,
         system: RISK_SYSTEM,
-        parts: [{ text: `Visit context: unplanned. Nobody was expected.${rules}\n\nConversation:\n${convo}${noted}` }],
+        parts: [{ text: `Visit context: unplanned. Nobody was expected.${rules}${checklist}\n\nConversation:\n${convo}${noted}` }],
       }),
       Number(process.env.AI_RISK_TIMEOUT_MS || 6000),
     )
@@ -50,6 +54,6 @@ export async function assessRisk(i: RiskInput): Promise<Assessment> {
 
   return buildAssessment({
     transcript, ruleFlags: i.ruleFlags, judge, liveHint: i.liveHint,
-    inconsistent: i.inconsistencies.length > 0, evasive: i.evasive,
+    inconsistent: i.inconsistencies.length > 0, evasive: i.evasive, coverage: i.coverage,
   })
 }
