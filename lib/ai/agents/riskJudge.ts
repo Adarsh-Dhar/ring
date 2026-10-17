@@ -10,6 +10,7 @@ import { RiskJudgeOut } from '@/lib/ai/schemas'
 import { RISK_SYSTEM } from '@/lib/ai/prompts/risk'
 import { sanitize, wrapUntrusted } from '@/lib/ai/guard'
 import { buildAssessment, type Assessment, type JudgeResult } from '@/lib/ai/risk/combine'
+import { type InterviewState } from '@/lib/doorstep/riskRules'
 
 export interface RiskInput {
   householdId: string
@@ -22,6 +23,8 @@ export interface RiskInput {
   /** Interview checklist computed by code (trusted text) and the facts derived from it. */
   coverageLines?: string[]
   coverage?: { purposeVague: boolean; unverifiable: boolean }
+  /** P7: Interview state stamps for conditional codes. */
+  interviewState?: InterviewState
 }
 
 const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T | null> => {
@@ -55,6 +58,6 @@ export async function assessRisk(i: RiskInput): Promise<Assessment> {
 
   return buildAssessment({
     transcript, ruleFlags: i.ruleFlags, ruleMatches: riskMatchesFor(transcript), judge,
-    inconsistent: i.inconsistencies.length > 0, evasive: i.evasive, coverage: i.coverage,
+    inconsistent: i.inconsistencies.length > 0, evasive: i.evasive, coverage: i.coverage, interviewState: i.interviewState,
   })
 }

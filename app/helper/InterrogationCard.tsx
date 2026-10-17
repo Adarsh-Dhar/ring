@@ -17,6 +17,9 @@ type Risk = {
   rationale?: string
   action?: string | null
   source?: 'ai+rules' | 'rules' | 'live'
+  score?: number
+  ledger?: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>
+  minMode?: string
 }
 
 type Ai = {
@@ -28,6 +31,8 @@ type Ai = {
   interrogationTurns: InterrogationTurn[] | unknown
   interrogationVerdict: string | null
   interrogationClaims: Claims | unknown
+  riskScore?: number | null
+  riskLedger?: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }> | unknown
   aiStatus?: 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
 }
 
@@ -74,6 +79,51 @@ const PILL: Record<RiskLevel, string> = {
   high: 'bg-red-600 text-white',
 }
 const PILL_TEXT: Record<RiskLevel, string> = { none: 'RISK: NONE SO FAR', low: 'RISK: LOW', medium: 'RISK: MEDIUM', high: 'RISK: HIGH' }
+
+/** P12: Categorize evidence into Observed, Inferred, Unknown */
+type EvidenceGroup = 'observed' | 'inferred' | 'unknown'
+
+function categorizeEvidence(ledgerEntry: { source: string; state: string; quote: string }): EvidenceGroup {
+  // Observed: sensors or exact words from transcript (confirmed)
+  if (ledgerEntry.state === 'confirmed' && (ledgerEntry.source === 'sensor' || ledgerEntry.source === 'transcript')) {
+    return 'observed'
+  }
+  // Inferred: system interpretation (helper/resident confirmations, uncertain with points from floor)
+  if (ledgerEntry.source === 'helper' || ledgerEntry.source === 'resident' || ledgerEntry.state === 'uncertain') {
+    return 'inferred'
+  }
+  // Unknown: unavailable or unestablished facts
+  return 'unknown'
+}
+
+function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>) {
+  const groups: Record<EvidenceGroup, Array<typeof ledger[0]>> = {
+    observed: [],
+    inferred: [],
+    unknown: [],
+  }
+  for (const entry of ledger) {
+    const group = categorizeEvidence(entry)
+    groups[group].push(entry)
+  }
+  return groups
+}
+
+/** P12: Handle helper confirm/reject of uncertain evidence */
+async function handleObservationAction(caseId: string, index: number, action: 'confirm' | 'reject') {
+  try {
+    const r = await fetch('/api/doorbell/observation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId, observationIndex: index, action }),
+    })
+    if (!r.ok) {
+      console.error('Failed to update observation:', await r.text())
+    }
+  } catch (e) {
+    console.error('Failed to update observation:', e)
+  }
+}
 
 /** Always visible, from the first answer. Updates live while the interview runs. */
 function RiskBar({ level, live, turns }: { level: RiskLevel; live: boolean; turns: number }) {
@@ -140,6 +190,8 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const risk = ai?.riskAssessment ?? null
   const riskLevel: RiskLevel = (ai?.riskLevel as RiskLevel) || risk?.level || 'none'
   const hasRisk = riskLevel !== 'none'
+  const ledger = Array.isArray(ai?.riskLedger) ? (ai.riskLedger as Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>) : []
+  const evidenceGroups = groupEvidence(ledger)
 
   // Show unsupported message
   if (ai?.interrogationState === 'unsupported') {
@@ -202,6 +254,81 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
           <p className="mt-2 text-xs opacity-70">
             {risk?.source === 'ai+rules' ? 'AI judgement + keyword check' : 'Keyword check only (AI was unavailable)'}. Never open the door because of this alone.
           </p>
+          {/* P12: Evidence grouped by Observed/Inferred/Unknown */}
+          {ledger.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide opacity-80">Evidence</p>
+              {evidenceGroups.observed.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-emerald-300">Observed (sensors or exact words)</p>
+                  <ul className="mt-1 space-y-1">
+                    {evidenceGroups.observed.map((e, i) => (
+                      <li key={i} className="text-xs flex items-start gap-2">
+                        <span className="opacity-60">{new Date(e.at).toLocaleTimeString()}</span>
+                        <span>
+                          <span className="font-medium">{e.code}</span>
+                          <span className="opacity-60"> ({e.source})</span>
+                          {e.points > 0 && <span className="ml-1 text-emerald-400">+{e.points}</span>}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {evidenceGroups.inferred.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-amber-300">Inferred (system interpretation)</p>
+                  <ul className="mt-1 space-y-1">
+                    {evidenceGroups.inferred.map((e, i) => (
+                      <li key={i} className="text-xs flex items-start gap-2">
+                        <span className="opacity-60">{new Date(e.at).toLocaleTimeString()}</span>
+                        <span className="flex-1">
+                          <span className="font-medium">{e.code}</span>
+                          <span className="opacity-60"> ({e.source}, {e.state})</span>
+                          {e.points > 0 && <span className="ml-1 text-amber-400">+{e.points}</span>}
+                        </span>
+                        {/* P12: Confirm/reject controls for uncertain evidence */}
+                        {e.state === 'uncertain' && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleObservationAction(caseId, i, 'confirm')}
+                              className="px-2 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 rounded"
+                              title="Confirm this evidence"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => handleObservationAction(caseId, i, 'reject')}
+                              className="px-2 py-0.5 text-xs bg-red-700 hover:bg-red-600 rounded"
+                              title="Reject this evidence"
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {evidenceGroups.unknown.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-slate-400">Unknown (unavailable or unestablished)</p>
+                  <ul className="mt-1 space-y-1">
+                    {evidenceGroups.unknown.map((e, i) => (
+                      <li key={i} className="text-xs flex items-start gap-2 opacity-60">
+                        <span>{new Date(e.at).toLocaleTimeString()}</span>
+                        <span>
+                          <span>{e.code}</span>
+                          <span> ({e.state})</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
       {/* Real reason summary and verdict */}

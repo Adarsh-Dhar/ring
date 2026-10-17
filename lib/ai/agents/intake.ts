@@ -89,7 +89,7 @@ export async function startIntake(householdId: string, requestId: string) {
   const existing = await load(requestId)
   if (existing) return { question: nextOpenQuestion(existing.turns as Turn[]), status: existing.status }
   const turns: Turn[] = [{ q: FIRST_QUESTION }]
-  const row = await getDb().visitIntake.create({ data: { requestId, turns: turns as any } })
+  const row = await getDb().visitIntake.create({ data: { requestId, turns: turns as any, updatedAt: new Date() } })
   await getDb().visitRequest.update({ where: { id: requestId }, data: { intakeId: row.id } })
   return { question: FIRST_QUESTION, status: 'open' as const }
 }

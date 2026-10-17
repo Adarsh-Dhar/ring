@@ -19,6 +19,7 @@ export type CaseAiData = {
   riskAssessment: any
   riskScore?: number | null
   riskLedger?: any
+  riskObservations?: any // P7: Contains { observations: [], interviewState: {} }
   controlMode?: string | null
   maxTurns?: number
   residentName?: string | null
@@ -29,7 +30,7 @@ export type CaseAiData = {
 export async function setCaseAi(caseId: string, data: {
   visitorSummary?: string | null; riskFlags?: string[]; interrogationState?: string | null;
   interrogationTurns?: any; interrogationVerdict?: string | null; interrogationClaims?: any
-  riskLevel?: string | null; riskAssessment?: any; riskScore?: number | null; riskLedger?: any; controlMode?: string | null; maxTurns?: number; residentName?: string | null
+  riskLevel?: string | null; riskAssessment?: any; riskScore?: number | null; riskLedger?: any; riskObservations?: any; controlMode?: string | null; maxTurns?: number; residentName?: string | null
 }) {
   try {
     // Read existing case before updating to detect first result
@@ -57,6 +58,7 @@ export async function setCaseAi(caseId: string, data: {
     if ('riskAssessment' in data) d.riskAssessment = data.riskAssessment
     if ('riskScore' in data) d.riskScore = data.riskScore
     if ('riskLedger' in data) d.riskLedger = data.riskLedger
+    if ('riskObservations' in data) d.riskObservations = data.riskObservations
     if ('controlMode' in data) d.controlMode = data.controlMode
     // maxTurns and residentName are runtime-only, not persisted
     await getDb().case.update({ where: { id: caseId }, data: d })

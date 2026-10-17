@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest'
 import {
   BEHAVIOURS, RISK_RULES, scoreObservations, legacyLevel, quoteIsGrounded, observationsFromEvidence, modeRank,
-  type Observation,
+  passesTranscriptionQuality, TRANSCRIPT_QUALITY_THRESHOLD, type InterviewState,
+  type Observation, type Source, type EvidenceState,
 } from '@/lib/doorstep/riskRules'
 
-const T = 'I am from the council. It is urgent. Let me in right now and I will hurt you if you do not.'
+const T = 'I am from the council. It is urgent. Let me in right now and I will hurt you if you do not. I am not leaving. I refuse to leave.'
+const now = new Date().toISOString()
+const makeObs = (code: string, source: Source, quote: string, state: EvidenceState = 'confirmed', quality = 1.0): Observation => ({
+  code: code as any,
+  at: now,
+  quotes: [quote],
+  source,
+  state,
+  points: 0,
+  transcriptQuality: source === 'transcript' ? quality : undefined,
+})
 const score = (obs: Observation[], transcript = T) => scoreObservations(obs, { transcript })
+
+// Custom score function that uses a different transcript and interview state if needed
+const scoreWithTranscript = (obs: Observation[], transcript: string, interviewState?: InterviewState) =>
+  scoreObservations(obs, { transcript, interviewState })
 
 describe('risk rules (spec sections 1, 4, 6)', () => {
   it('no observations means score 0 and the AI leads', () => {
@@ -19,81 +34,127 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     }
   })
 
+  it('all 11 spec codes exist with correct point values and caps', () => {
+    expect(BEHAVIOURS).toHaveLength(11)
+    expect(RISK_RULES.extra_knock.points).toBe(1)
+    expect(RISK_RULES.extra_knock.cap).toBe(5)
+    expect(RISK_RULES.pressure_after_rule.points).toBe(5)
+    expect(RISK_RULES.pressure_after_rule.cap).toBe(5)
+    expect(RISK_RULES.pressure_after_boundary.points).toBe(1)
+    expect(RISK_RULES.pressure_after_boundary.cap).toBe(10)
+    expect(RISK_RULES.purpose_contradiction.tiers).toEqual([15, 10])
+    expect(RISK_RULES.purpose_contradiction.cap).toBe(25)
+    expect(RISK_RULES.hide_from_helper.points).toBe(15)
+    expect(RISK_RULES.hide_from_helper.cap).toBe(15)
+    expect(RISK_RULES.credential_request.points).toBe(20)
+    expect(RISK_RULES.credential_request.cap).toBe(20)
+    expect(RISK_RULES.refuse_to_leave.points).toBe(25)
+    expect(RISK_RULES.refuse_to_leave.cap).toBe(25)
+    expect(RISK_RULES.lock_manipulation.points).toBe(30)
+    expect(RISK_RULES.lock_manipulation.cap).toBe(30)
+    expect(RISK_RULES.door_wedge_or_follow_in.points).toBe(40)
+    expect(RISK_RULES.door_wedge_or_follow_in.cap).toBe(40)
+    expect(RISK_RULES.immediate_threat.minScore).toBe(80)
+    expect(RISK_RULES.forced_entry_or_assault.minScore).toBe(100)
+  })
+
   it('a transcript observation counts only if its quote is really in the transcript', () => {
     expect(quoteIsGrounded('it is urgent', T)).toBe(true)
     expect(quoteIsGrounded('give me your pin', T)).toBe(false)
-    const r = score([{ behaviour: 'pressure', source: 'transcript', quote: 'give me your pin' }])
-    expect(r.score).toBe(0); expect(r.ledger[0].state).toBe('unconfirmed')
+    const r = scoreWithTranscript([makeObs('pressure_after_rule', 'transcript', 'give me your pin', 'confirmed', 1.0)], 'no pin here')
+    expect(r.score).toBe(0); expect(r.ledger[0].state).toBe('uncertain')
   })
 
-  it('the model (a transcript source) cannot confirm lock tampering or forced entry', () => {
-    const r = score([
-      { behaviour: 'lock_tampering', source: 'transcript', quote: 'let me in' },
-      { behaviour: 'forced_entry', source: 'transcript', quote: 'let me in' },
-    ])
+  it('the model (a transcript source) cannot confirm lock manipulation or forced entry', () => {
+    const r = scoreWithTranscript([
+      makeObs('lock_manipulation', 'transcript', 'let me in', 'confirmed', 1.0),
+      makeObs('forced_entry_or_assault', 'transcript', 'let me in', 'confirmed', 1.0),
+    ], 'let me in')
     expect(r.score).toBe(0); expect(r.minMode).toBe('ai_leads')
   })
 
-  it('a sensor can confirm forced entry with no quote, and that sets the emergency floor', () => {
-    const r = score([{ behaviour: 'forced_entry', source: 'sensor' }])
-    expect(r.score).toBe(70); expect(r.minMode).toBe('emergency'); expect(legacyLevel(r.score, r.minMode)).toBe('high')
+  it('a sensor can confirm forced entry with no quote, and that sets the emergency floor and score to 100', () => {
+    const r = score([makeObs('forced_entry_or_assault', 'sensor', '')])
+    expect(r.score).toBe(100); expect(r.minMode).toBe('emergency'); expect(legacyLevel(r.score, r.minMode)).toBe('high')
   })
 
-  it('repeating one behaviour cannot exceed its cap (two contradictions never add more than the cap)', () => {
-    const c = (q: string): Observation => ({ behaviour: 'contradiction', source: 'transcript', quote: q })
-    const r = score([c('council'), c('urgent'), c('let me in'), c('right now')])
-    expect(r.score).toBe(RISK_RULES.contradiction.cap)
-    expect(r.ledger.filter(l => l.points > 0)).toHaveLength(2)
+  it('repeating one behaviour cannot exceed its cap (extra_knock capped at 5)', () => {
+    const interviewState: InterviewState = { respondingAt: new Date().toISOString() }
+    const obs = Array(10).fill(null).map(() => makeObs('extra_knock', 'sensor', ''))
+    const r = scoreWithTranscript(obs, '', interviewState)
+    expect(r.score).toBe(5)
+    expect(r.ledger.filter(l => l.points > 0)).toHaveLength(5)
+  })
+
+  it('purpose_contradiction uses tiered scoring (15 then 10)', () => {
+    const r = scoreWithTranscript([
+      makeObs('purpose_contradiction', 'transcript', 'council urgent', 'confirmed', 1.0),
+      makeObs('purpose_contradiction', 'transcript', 'let me in', 'confirmed', 1.0),
+      makeObs('purpose_contradiction', 'transcript', 'refuse to leave', 'confirmed', 1.0),
+    ], 'council urgent let me in refuse to leave')
+    expect(r.score).toBe(25) // 15 + 10, third instance ignored due to cap
+  })
+
+  it('immediate_threat sets minimum score to 80', () => {
+    const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
+    expect(r.score).toBe(80); expect(r.minMode).toBe('emergency')
+  })
+
+  it('forced_entry_or_assault sets score to exactly 100, the only way to reach 100', () => {
+    const r = score([makeObs('forced_entry_or_assault', 'sensor', '')])
+    expect(r.score).toBe(100)
+  })
+
+  it('score is capped at 99 unless forced_entry_or_assault sets it to 100', () => {
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
+    const r = scoreWithTranscript([
+      makeObs('door_wedge_or_follow_in', 'sensor', ''),
+      makeObs('lock_manipulation', 'sensor', ''),
+      makeObs('refuse_to_leave', 'helper', ''),
+    ], '', interviewState)
+    expect(r.score).toBe(95) // 40 + 30 + 25 = 95, capped at 99
   })
 
   it('events outrank the score: a low total can still carry a high floor', () => {
-    const r = score([{ behaviour: 'threat', source: 'transcript', quote: 'I will hurt you' }])
-    expect(r.score).toBe(45)
-    const lock = score([{ behaviour: 'lock_tampering', source: 'sensor' }])
-    expect(lock.score).toBeLessThan(r.score)
-    expect(lock.minMode).toBe('helper_only'); expect(r.minMode).toBe('helper_only')
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('refuse_to_leave', 'transcript', 'refuse to leave', 'confirmed', 1.0)], 'refuse to leave', interviewState)
+    expect(r.score).toBe(25)
+    const lock = score([makeObs('lock_manipulation', 'sensor', '')])
+    expect(lock.score).toBe(30)
+    expect(lock.minMode).toBe('helper_leads'); expect(r.minMode).toBe('helper_leads')
   })
 
-  it('credential_request alone puts the human in the lead', () => {
-    const r = score([{ behaviour: 'credential_request', source: 'transcript', quote: 'urgent' }])
-    expect(modeRank(r.minMode)).toBeGreaterThanOrEqual(modeRank('helper_leads'))
-    expect(legacyLevel(r.score, r.minMode)).toBe('high')
+  it('credential_request alone scores 20 points', () => {
+    const r = scoreWithTranscript([makeObs('credential_request', 'transcript', 'what is your PIN number', 'confirmed', 1.0)], 'what is your PIN number')
+    expect(r.score).toBe(20)
   })
 
-  it('the classic pattern (official + pressure + wants in) reaches helper_leads even though the points are small', () => {
-    const r = score([
-      { behaviour: 'impersonation_claim', source: 'transcript', quote: 'the council' },
-      { behaviour: 'pressure', source: 'transcript', quote: 'urgent' },
-      { behaviour: 'entry_request', source: 'transcript', quote: 'let me in' },
-    ])
-    expect(r.score).toBe(28); expect(r.minMode).toBe('helper_leads'); expect(legacyLevel(r.score, r.minMode)).toBe('high')
+  it('unavailable state scores zero points', () => {
+    const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'unavailable', 1.0)], 'I will hurt you')
+    expect(r.score).toBe(0); expect(r.minMode).toBe('ai_leads'); expect(r.ledger[0].state).toBe('unavailable')
   })
 
-  it('a retracted observation scores nothing and sets no floor', () => {
-    const r = score([{ behaviour: 'threat', source: 'transcript', quote: 'I will hurt you', retracted: true }])
-    expect(r.score).toBe(0); expect(r.minMode).toBe('ai_leads'); expect(r.ledger[0].state).toBe('retracted')
+  it('uncertain state scores zero points but may still set floor for physical/threat events', () => {
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('refuse_to_leave', 'transcript', 'not leaving', 'uncertain', 1.0)], 'not leaving', interviewState)
+    expect(r.score).toBe(0)
+    expect(r.minMode).toBe('helper_leads') // floor still set
   })
 
   it('unknown behaviour names are ignored, never scored', () => {
-    const r = score([{ behaviour: 'looks_suspicious', source: 'helper' }])
-    expect(r.score).toBe(0); expect(r.ledger[0].state).toBe('unconfirmed')
-  })
-
-  it('the total is clamped to 100', () => {
-    const r = score([
-      { behaviour: 'forced_entry', source: 'sensor' }, { behaviour: 'threat', source: 'helper' },
-      { behaviour: 'lock_tampering', source: 'sensor' },
-    ])
-    expect(r.score).toBe(100)
+    const r = score([makeObs('looks_suspicious', 'helper', '')])
+    expect(r.score).toBe(0); expect(r.ledger[0].state).toBe('uncertain')
   })
 
   it('vague, evasive and unverifiable answers are notes, never points', () => {
     const { observations, notes } = observationsFromEvidence([
       { category: 'vague_purpose', quote: 'some business' }, { category: 'evasive_answers', quote: 'not telling' },
-      { category: 'unverifiable_claims', quote: 'sent by head office' }, { category: 'urgency_pressure', quote: 'urgent' },
+      { category: 'unverifiable_claims', quote: 'sent by head office' }, { category: 'pressure_after_rule', quote: 'urgent' },
+      { category: 'official_impersonation', quote: 'council' }, { category: 'entry_request', quote: 'let me in' },
+      { category: 'home_probing', quote: 'who is home' }, { category: 'story_mismatch', quote: 'changed answer' },
     ])
-    expect(observations.map(o => o.behaviour)).toEqual(['pressure'])
-    expect(notes).toEqual(['vague_purpose', 'evasive_answers', 'unverifiable_claims'])
+    expect(observations.map(o => o.code)).toEqual(['pressure_after_rule'])
+    expect(notes).toEqual(['vague_purpose', 'evasive_answers', 'unverifiable_claims', 'official_impersonation', 'entry_request', 'home_probing', 'story_mismatch'])
   })
 
   it('legacy level comes from score and floor only', () => {
@@ -103,5 +164,120 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(legacyLevel(40, 'ai_leads')).toBe('high')
     expect(legacyLevel(10, 'ai_assisted')).toBe('medium')
     expect(legacyLevel(0, 'helper_leads')).toBe('high')
+  })
+
+  it('transcription quality check passes with high engine confidence', () => {
+    expect(passesTranscriptionQuality('Hello there', 0.9)).toBe(true)
+    expect(passesTranscriptionQuality('Hello there', 0.5)).toBe(true)
+    expect(passesTranscriptionQuality('Hello there', 0.4)).toBe(false)
+  })
+
+  it('transcription quality check fails with empty or very short text', () => {
+    expect(passesTranscriptionQuality('', 0.9)).toBe(false)
+    expect(passesTranscriptionQuality('  ', 0.9)).toBe(false)
+    expect(passesTranscriptionQuality('Hi', 0.9)).toBe(false)
+  })
+
+  it('transcription quality check fails with not-understood phrases', () => {
+    expect(passesTranscriptionQuality('not understand anything', 0.9)).toBe(false)
+    expect(passesTranscriptionQuality('please repeat that', 0.9)).toBe(false)
+  })
+
+  it('transcription quality check passes with heuristics when no engine confidence', () => {
+    expect(passesTranscriptionQuality('Hello my name is John')).toBe(true)
+    expect(passesTranscriptionQuality('Here to check the meter')).toBe(true)
+  })
+
+  it('low quality transcript produces uncertain observation and no points', () => {
+    const r = scoreWithTranscript([makeObs('credential_request', 'transcript', 'give me your pin', 'confirmed', 0.3)], 'give me your pin')
+    expect(r.score).toBe(0)
+    expect(r.ledger[0].state).toBe('uncertain')
+  })
+
+  it('P7: pressure_after_rule scores 0 if rules were not explained', () => {
+    const interviewState: InterviewState = {}
+    const r = scoreWithTranscript(
+      [makeObs('pressure_after_rule', 'transcript', 'let me in now', 'confirmed', 1.0)],
+      'let me in now',
+      interviewState
+    )
+    expect(r.score).toBe(0)
+    expect(r.ledger[0].state).toBe('uncertain')
+  })
+
+  it('P7: pressure_after_rule scores 5 if rules were explained', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const r = scoreWithTranscript(
+      [makeObs('pressure_after_rule', 'transcript', 'let me in now', 'confirmed', 1.0)],
+      'let me in now',
+      interviewState
+    )
+    expect(r.score).toBe(5)
+    expect(r.ledger[0].state).toBe('confirmed')
+  })
+
+  it('P7: pressure_after_boundary scores 0 if boundary was not stated', () => {
+    const interviewState: InterviewState = {}
+    const r = scoreWithTranscript(
+      [makeObs('pressure_after_boundary', 'transcript', 'let me in now', 'confirmed', 1.0)],
+      'let me in now',
+      interviewState
+    )
+    expect(r.score).toBe(0)
+    expect(r.ledger[0].state).toBe('uncertain')
+  })
+
+  it('P7: refuse_to_leave scores 0 if visitor was not asked to leave', () => {
+    const interviewState: InterviewState = {}
+    const r = scoreWithTranscript(
+      [makeObs('refuse_to_leave', 'transcript', 'not leaving', 'confirmed', 1.0)],
+      'not leaving',
+      interviewState
+    )
+    expect(r.score).toBe(0)
+    expect(r.ledger[0].state).toBe('uncertain')
+  })
+
+  it('P7: refuse_to_leave scores 25 if visitor was asked to leave', () => {
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
+    const r = scoreWithTranscript(
+      [makeObs('refuse_to_leave', 'transcript', 'not leaving', 'confirmed', 1.0)],
+      'not leaving',
+      interviewState
+    )
+    expect(r.score).toBe(25)
+    expect(r.ledger[0].state).toBe('confirmed')
+  })
+
+  it('P13: debug confidence field is never read by scoring code', () => {
+    // Create observations with debug confidence values
+    const obsWithDebug = makeObs('credential_request', 'transcript', 'what is your PIN number', 'confirmed', 1.0)
+    obsWithDebug.debug = { modelConfidence: 0.99, someOtherDebug: 'value' }
+    
+    const r = scoreWithTranscript([obsWithDebug], 'what is your PIN number')
+    // Scoring should be based on the rule, not the debug confidence
+    expect(r.score).toBe(20)
+  })
+
+  it('P13: debug field can store arbitrary data without affecting score', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const obs = makeObs('pressure_after_rule', 'transcript', 'let me in', 'confirmed', 1.0)
+    obs.debug = { anyField: 'anything', nested: { value: 123 } }
+    
+    const r = scoreWithTranscript([obs], 'let me in', interviewState)
+    // Score should still be 5 based on the rule, regardless of debug content
+    expect(r.score).toBe(5)
+  })
+
+  it('P11: forced_entry_or_assault sets score to 100 exactly', () => {
+    const r = scoreWithTranscript([makeObs('forced_entry_or_assault', 'sensor', '')], '')
+    expect(r.score).toBe(100)
+    expect(r.minMode).toBe('emergency')
+  })
+
+  it('P11: immediate_threat sets minimum score to 80', () => {
+    const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
+    expect(r.score).toBe(80)
+    expect(r.minMode).toBe('emergency')
   })
 })

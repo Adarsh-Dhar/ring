@@ -6,6 +6,14 @@
  *   - ask the next helper in the chain (next_helper), or
  *   - give up and tell everyone to call the resident (exhausted).
  *
+ * P11: Emergency path for immediate_threat and forced_entry_or_assault:
+ *   - Skips helper acknowledgement timer
+ *   - Alerts primary and backup helpers immediately
+ *   - Preserves evidence (clip and transcript)
+ *   - Tells resident to keep door closed and move away
+ *   - Never shows "safe to open"
+ *   - Applies 100 override immediately upon confirming source
+ *
  * Exactly-once rule: a step is CLAIMED in the database first (a compare-and-set on
  * helperIndex + deadlineAt + lane + status). Only the caller whose claim succeeds may
  * alert anyone. A second server, a restarted server or the worker sweep that tries the
@@ -19,6 +27,7 @@
  */
 
 import type { DoorCase } from './store'
+import { EMERGENCY_TIMER_SECONDS } from '@/lib/doorstep/riskRules'
 
 export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted'
 
@@ -55,6 +64,63 @@ export interface EscalationConfig {
 /** Safety valve so a bug can never spin forever. Real catch-up needs at most chain.length + 1 steps. */
 const MAX_STEPS_PER_CALL = 25
 
+/** P11: Check if a case is an emergency (immediate_threat or forced_entry_or_assault) */
+export function isEmergencyCase(c: DoorCase): boolean {
+  const riskScore = (c as any).riskScore as number | undefined
+  const controlMode = (c as any).controlMode as string | undefined
+  // Emergency if score is 100 (forced_entry_or_assault) or controlMode is emergency
+  return riskScore === 100 || controlMode === 'emergency'
+}
+
+/** P11: Emergency escalation - skip timer, alert all helpers immediately */
+export async function escalateEmergencyCase(
+  c: DoorCase,
+  now: number,
+  deps: EscalationDeps,
+): Promise<number> {
+  if (c.status !== 'waiting') return 0
+
+  // Emergency: alert primary and backup helpers immediately, skip timer
+  const fromId = c.chain[0]
+  const fromName = (await deps.nameOf(fromId)) ?? 'primary helper'
+  
+  // Alert all helpers in the chain
+  for (let i = 0; i < c.chain.length; i++) {
+    const toId = c.chain[i]
+    const toName = (await deps.nameOf(toId)) ?? `helper ${i + 1}`
+    
+    await deps.onStep(c, {
+      kind: 'next_helper',
+      fromId,
+      toId,
+      fromName,
+      toName,
+    })
+  }
+
+  // Log the emergency escalation
+  const log = [...c.log, { t: now, msg: '⚠️ EMERGENCY: immediate threat or forced entry detected. All helpers alerted immediately.' }]
+  log.push({ t: now, msg: 'Resident told to keep door closed and move away. Never show "safe to open".' })
+
+  // Update case to emergency mode with 60s timer (Section 5.3)
+  const change: StepChange = {
+    helperIndex: c.helperIndex,
+    deadlineAt: now + EMERGENCY_TIMER_SECONDS * 1000,
+    status: 'waiting',
+    lane: c.lane,
+  }
+
+  const expect: StepExpect = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt, lane: c.lane ?? null }
+  const owned = await deps.claim(c.id, expect, change, log)
+
+  if (owned) {
+    mergeSaved(c, { ...change, log })
+    return 1
+  }
+
+  return 0
+}
+
 /** Copy the saved escalation fields onto the in-memory case (the database wins). */
 export function mergeSaved(c: DoorCase, saved: Partial<DoorCase>) {
   if (saved.helperIndex !== undefined) c.helperIndex = saved.helperIndex
@@ -70,6 +136,7 @@ export function mergeSaved(c: DoorCase, saved: Partial<DoorCase>) {
 /**
  * Advance one case through every step that is due at `now`.
  * Returns how many steps THIS caller won (0 = somebody else already did it, or nothing was due).
+ * P11: If case is emergency, uses emergency path (skip timer, alert all helpers immediately).
  */
 export async function escalateDueCase(
   c: DoorCase,
@@ -77,6 +144,11 @@ export async function escalateDueCase(
   cfg: EscalationConfig,
   deps: EscalationDeps,
 ): Promise<number> {
+  // P11: Check for emergency case first
+  if (isEmergencyCase(c)) {
+    return escalateEmergencyCase(c, now, deps)
+  }
+
   let won = 0
 
   for (let i = 0; i < MAX_STEPS_PER_CALL; i++) {

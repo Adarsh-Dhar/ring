@@ -12,6 +12,7 @@ import { clampWords, hasBannedPhrase, validQuestion, wrapUntrusted } from '@/lib
 import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
 import { getDb } from '@/lib/db/client'
 import { isUnplannedVisit } from '../interrogation/gate'
+import { createInterviewStamp, type InterviewState } from '@/lib/doorstep/riskRules'
 import {
   MAX_TURNS,
   type PlanTurn,
@@ -28,6 +29,22 @@ import {
 } from '@/lib/ai/interrogation/plan'
 
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
+
+/** P7: Stamp interview state when specific lines are spoken. */
+async function stampInterviewState(householdId: string, caseId: string, stampType: keyof InterviewState) {
+  const existing = await getCaseAi(householdId, caseId)
+  const currentObs = existing?.riskObservations as any
+  const interviewState = currentObs?.interviewState ?? {}
+  interviewState[stampType] = new Date().toISOString()
+  const stamp = createInterviewStamp(stampType, interviewState[stampType])
+  const observations = currentObs?.observations ?? []
+  await setCaseAi(caseId, {
+    riskObservations: {
+      observations: [...observations, stamp],
+      interviewState,
+    },
+  })
+}
 
 interface InterrogationTurn {
   question: string      // the question this answer replies to
@@ -87,6 +104,8 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     const householdData = await aiFlags(householdId)
     await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS, residentName: householdData.residentName })
     const opener = interrogatorLines(householdData.residentName).greet
+    // P7: Stamp "respondingAt" when we start speaking
+    await stampInterviewState(householdId, caseId, 'respondingAt')
     if (!(await tb.say(householdId, deviceId!, opener))) { await setCaseAi(caseId, { interrogationState: 'failed' }); return }
     await setCaseAi(caseId, { interrogationState: 'listening' })
   } catch (e) {
@@ -225,10 +244,24 @@ export async function processAnswer(
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
+    // P7: Detect when specific talkback lines are about to be spoken and stamp interview state
+    // This is a simple heuristic - in production, the exact line spoken should be tracked
+    if (modelQ) {
+      const qLower = modelQ.toLowerCase()
+      if (qLower.includes('rule') || qLower.includes('explain')) {
+        await stampInterviewState(householdId, caseId, 'rulesExplainedAt')
+      } else if (qLower.includes('not acceptable') || qLower.includes('boundary')) {
+        await stampInterviewState(householdId, caseId, 'boundaryStatedAt')
+      } else if (qLower.includes('leave') || qLower.includes('cannot continue')) {
+        await stampInterviewState(householdId, caseId, 'askedToLeaveAt')
+      }
+    }
+
     // Risk is updated live after EVERY answer, so helpers see it while the visitor is still at the door.
     const liveText = updatedTurns.map(t => t.transcript).join(' ')
     const live = liveAssessment(liveText, riskMatchesFor(liveText), {
       coverage: coverageFacts(after, answeredCount), inconsistent: out.inconsistencies.length > 0, evasive: out.evasive,
+      interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState,
     })
     const control = await controlFor(householdId, live)
     await setCaseAi(caseId, {
@@ -276,6 +309,9 @@ async function finishInterrogation(
   if (!ruleFlags.length) { const s = await semanticFlag(householdId, allTranscripts); if (s) ruleFlags.push(s) }
 
   // Layer 2: the AI risk judge reads the whole conversation. Layer 3 (in code) combines both and checks the model's quotes.
+  const existing = await getCaseAi(householdId, caseId)
+  const currentObs = existing?.riskObservations as any
+  const interviewState = currentObs?.interviewState ?? {}
   const risk = await assessRisk({
     householdId, caseId,
     turns: turns.map(t => ({ question: t.question, transcript: t.transcript })),
@@ -284,6 +320,7 @@ async function finishInterrogation(
     evasive: !!modelResult?.evasive || reason === 'evasive',
     coverageLines: checklistLines,
     coverage: facts,
+    interviewState, // P7: Pass interview state to risk assessment
   })
   const flags = risk.labels
   const control = await controlFor(householdId, risk)
@@ -299,6 +336,7 @@ async function finishInterrogation(
     riskAssessment: { ...risk, control } as any,
     riskScore: risk.score,
     riskLedger: risk.ledger as any,
+    riskObservations: risk.ledger as any, // Store observations for re-scoring
     controlMode: control.mode,
     interrogationTurns: turns as any,
     interrogationVerdict: verdict,

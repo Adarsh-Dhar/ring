@@ -5,6 +5,8 @@ import { LEVELS, RISK_CATEGORIES } from '@/lib/ai/risk/combine'
 export const InterrogatorTurnOut = z.object({
   transcript:          z.string().max(600),
   understood:          z.boolean().default(true),
+  /** Transcription quality score from 0 to 1, or null if unavailable. Combined with heuristics for final quality check. */
+  transcriptQuality:  z.number().min(0).max(1).nullable().default(null),
   claims: z.object({
     name:         z.string().max(80).nullable().default(null),
     organisation: z.string().max(80).nullable().default(null),

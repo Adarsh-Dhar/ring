@@ -305,18 +305,196 @@ FINAL_TEST_REPORT*.md
 
 ---
 
+## Fix 8 — Doorstep Assistant Section 4: Behaviour Risk Scoring
+
+### Problem
+The risk scoring system in `lib/doorstep/riskRules.ts` contained placeholder values and did not match
+the Section 4 specification. Evidence states, confirmation rules, transcription quality, interview state,
+and helper/resident evidence handling were not implemented.
+
+### What changed
+
+**P0: Build baseline fixes**
+- Fixed 4 Prisma type errors by adding `@default(cuid())` to model IDs in `prisma/schema.prisma`
+- Regenerated Prisma client with `npx prisma generate`
+
+**P1: Risk rules table (Section 4.2)**
+- Replaced old behaviours with 11 spec codes: `extra_knock`, `pressure_after_rule`, `pressure_after_boundary`,
+  `purpose_contradiction`, `hide_from_helper`, `credential_request`, `refuse_to_leave`, `lock_manipulation`,
+  `door_wedge_or_follow_in`, `immediate_threat`, `forced_entry_or_assault`
+- Added correct point values and caps per spec
+- Added tiered scoring for `purpose_contradiction` (15, then 10)
+- Added placeholder control floors (waiting for Section 6.3)
+
+**P2: Evidence states and ledger fields (Section 4.2)**
+- Changed `EvidenceState` to `confirmed | uncertain | unavailable`
+- Made `retracted` a separate flag (for future Section 8)
+- Updated `LedgerEntry` with required fields: `code`, `at`, `quote`, `source`, `state`, `points`, `debug`
+- Updated `Observation` with `at`, `quotes`, `segmentQuality`, `phraseMatched`, `transcriptQuality`, `isStamp`
+
+**P3: Per-event confirmation rules (Section 4.3)**
+- Implemented confirmation logic in `scoreObservations()`
+- Speech events: confirmed only if quote in transcript, quality check passes, and words match category
+- Door events: confirmed by sensor or helper
+- Unavailable state: zero points
+- Uncertain physical/threat events: zero points but may set floor
+
+**P4: Scoring rules (Section 4.4)**
+- Implemented distinct event counting
+- Applied per-code caps
+- Ordinary points capped at 99
+- `immediate_threat` sets score to at least 80
+- `forced_entry_or_assault` sets score to exactly 100
+- Score recomputed only from stored observations (no clock input)
+
+**P5: Transcription-quality signal**
+- Added `transcriptQuality` field to `InterrogatorTurnOut` schema
+- Implemented `passesTranscriptionQuality()` combining engine confidence and heuristics
+- Heuristics: empty/short text, not-understood phrases
+- Quality check integrated into scoring logic
+
+**P6: Judge categories and mapping**
+- Updated judge categories for new codes
+- Renamed `payment_request` to `credential_request` (narrowed to PINs, OTPs, passwords)
+- Moved old categories to note-only: `entry_request`, `home_probing`, `official_impersonation`,
+  `manipulation_attempt`, `urgency_pressure`
+- Updated regex rules and prompts
+
+**P7: Interview state for conditional codes**
+- Added `InterviewState` interface with timestamps for conditional code prerequisites
+- Added `isStamp` flag to `Observation`
+- Created `createInterviewStamp()` helper
+- Implemented `stampInterviewState()` in interrogator
+- Updated scoring to check interview state prerequisites for `pressure_after_rule`, `pressure_after_boundary`,
+  `refuse_to_leave`, `extra_knock`
+- Stored interview state in `Case.riskObservations`
+
+**P8: Store raw observations**
+- Added `Case.riskObservations Json` field to Prisma schema
+- Updated `setCaseAi()` to accept and store risk observations
+- Updated interrogator to persist observations from risk assessment
+- Schema updated, migration pending database access
+
+**P9: Knock counter and door-sensor intake**
+- Implemented `handleExtraKnock()` in `lib/doorbell/store.ts`
+- Counts repeated `button_press` events as `extra_knock` within 30-second window
+- Respects cap of 5 per spec
+- Documented limitation: no hardware door sensor integration yet; helper/resident reports only
+
+**P10: Helper confirm/reject and resident SOS**
+- Created `/app/api/doorbell/observation/route.ts` for helper confirmation/rejection
+- Updated `raiseSos()` to append confirmed `forced_entry_or_assault` with source `resident`
+- SOS sets score to 100 and control mode to emergency
+- Helper confirm changes uncertain to confirmed with source `helper`
+- Helper reject records correction (marks unavailable with debug note)
+- Cross-household requests rejected via household scoping
+
+**P12: Helper screen evidence grouping**
+- Updated `InterrogationCard.tsx` to display evidence grouped as Observed/Inferred/Unknown
+- Observed: sensors or exact words (confirmed)
+- Inferred: system interpretation (helper/resident confirmations, uncertain with floor)
+- Unknown: unavailable or unestablished facts
+- Added confirm/reject controls for uncertain evidence
+- Displays state, source, timestamp, and points
+
+### Files
+- `lib/doorstep/riskRules.ts`
+- `lib/ai/schemas.ts`
+- `lib/ai/agents/interrogator.ts`
+- `lib/ai/agents/riskJudge.ts`
+- `lib/ai/risk/combine.ts`
+- `lib/ai/caseAi.ts`
+- `lib/ai/talkback/lines.ts`
+- `lib/ai/talkback/types.ts`
+- `lib/doorbell/store.ts`
+- `app/api/doorbell/observation/route.ts`
+- `app/helper/InterrogationCard.tsx`
+- `prisma/schema.prisma`
+- `tests/doorstep-risk-rules.test.ts`
+
+### Verify
+```bash
+npm run typecheck  # 0 errors
+npm test          # All tests pass, including new P7 interview state tests
+```
+
+Test the following scenarios:
+- Low-quality transcript produces uncertain state and no points
+- Pressure after rule scores 0 before rules explained, 5 after
+- Repeated button_press within 30s adds extra_knock
+- Helper confirm changes uncertain to confirmed
+- Helper reject marks observation as unavailable
+- Resident SOS sets score to 100 and emergency mode
+
+---
+
+## Fix 9 — Doorstep Assistant Section 5.3 & 6.3: Emergency path (P11)
+
+### Problem
+The emergency path was not implemented. Threats, assault, and forced entry events did not have special handling.
+Helper timer was not skipped for emergencies, and resident messaging did not include emergency instructions.
+
+### What changed
+
+**Emergency timer (Section 5.3)**
+- Added `EMERGENCY_TIMER_SECONDS = 60` constant in `lib/doorstep/riskRules.ts`
+
+**Emergency detection and escalation**
+- Added `isEmergencyCase()` function in `lib/doorbell/escalation.ts` to detect emergencies (score=100 or controlMode=emergency)
+- Added `escalateEmergencyCase()` function to handle emergency path:
+  - Skips helper acknowledgement timer
+  - Alerts primary and backup helpers immediately
+  - Sets 60-second timer
+  - Logs emergency with evidence preservation note
+- Updated `escalateDueCase()` to check for emergency cases first and use emergency path
+
+**Resident view emergency state**
+- Added 'EMERGENCY' state to `ResidentViewState` in `lib/state/resident-view.ts`
+- Added emergency detection in `computeResidentView()`:
+  - Checks `riskScore === 100` or `controlMode === 'emergency'`
+  - Returns emergency state with message: "⚠️ EMERGENCY: Keep door closed and move away. Do not open."
+  - Red background, canOpen: false
+
+**SOS emergency messaging**
+- Updated `alertSos()` in `lib/doorbell/store.ts`:
+  - Changed message to: "Keep door closed and move away. Do not open."
+  - Added evidence preservation note to log
+- Updated `DoorCase` interface to include `riskScore` and `controlMode` fields
+- Updated `refreshCasesFromDB()` to load `riskScore` and `controlMode` from database
+
+**Control mode placeholders (Section 6.3)**
+- Updated risk rules with placeholder floor comments indicating these are placeholders
+- `refuse_to_leave`, `lock_manipulation`, `door_wedge_or_follow_in`: helper_leads
+- `immediate_threat`, `forced_entry_or_assault`: emergency
+
+### Files
+- `lib/doorstep/riskRules.ts`
+- `lib/doorbell/escalation.ts`
+- `lib/state/resident-view.ts`
+- `lib/doorbell/store.ts`
+- `tests/doorstep-risk-rules.test.ts`
+
+### Verify
+```bash
+npm run typecheck  # 0 errors
+npm test          # All tests pass, including new P11 emergency tests
+```
+
+Test emergency scenarios:
+- SOS sets score to 100 and emergency mode
+- immediate_threat sets minimum score to 80 and emergency mode
+- forced_entry_or_assault sets score to 100 and emergency mode
+- Emergency cases skip helper timer and alert all helpers immediately
+- Resident sees emergency message: "Keep door closed and move away. Do not open."
+
+---
+
 ## Verification
 
 ```
 npx tsc --noEmit   # 0 errors
-npm test           # 154/154 tests pass, 15 test files
+npm test           # All tests pass
 ```
-
-The `[ERROR]` line printed during `tests/door-policy.test.ts` is a pre-existing
-gap in that test's mock (it does not stub `visitRequest.findMany`). The error
-was always there; it was previously swallowed by `console.error`. Now
-`reportError` labels it clearly. The test still passes because `sweepRequests`
-failures are non-fatal by design.
 
 ---
 
@@ -325,22 +503,32 @@ failures are non-fatal by design.
 These items were identified during the audit but are out of scope for this
 change set:
 
-1. **Single-process constraint** — the escalation timer still lives in one
+1. **Section 5.3 timer values** - Emergency timer set to 60 seconds (placeholder). Replace with final spec values if different.
+2. **Section 6.3 minimum control modes** - Control mode thresholds use placeholder values (helper_leads for physical codes, emergency for threats). Replace with final spec values.
+3. **Section 8 corrections and case reset** — `Observation.retracted` is defined but correction lifecycle code is not implemented.
+4. **Section 12 calibration test set** — Test data for confidence rule verification is not defined.
+5. **Live escalation timers** — the escalation timer still lives in one
    Node.js process. Do not run more than one replica behind a load balancer.
    If you need horizontal scaling, move the timer to a separate worker process
    or use a distributed queue (e.g., BullMQ with Redis).
 
-2. **SMS reliability** — Twilio trial accounts cannot send to unverified
+6. **SMS reliability** — Twilio trial accounts cannot send to unverified
    numbers. Switch to a full Twilio account or add a fallback SMS provider
    before going live.
 
-3. **CI pipeline** — there is no `.github/workflows/` or equivalent. Add a
+7. **CI pipeline** — there is no `.github/workflows/` or equivalent. Add a
    workflow that runs `tsc --noEmit && npm test` on every PR.
 
-4. **Monitoring** — wire `SENTRY_DSN` and add uptime monitoring (e.g., Better
+8. **Monitoring** — wire `SENTRY_DSN` and add uptime monitoring (e.g., Better
    Uptime pinging `/api/health`).
 
-5. **Face data consent UX** — the API enforces `consent: true` but there is no
+9. **Face data consent UX** — the API enforces `consent: true` but there is no
    UI consent flow for regular-visitor self-registration. Add a checkbox +
    policy link to the public registration page before enabling face recognition
    for external visitors.
+
+10. **Hardware door sensors** — Lock manipulation, door wedge, and door force sensors are not integrated.
+    Only helper/resident reports are implemented.
+
+11. **Prisma migration** — The `riskObservations` schema change has not been migrated to the database.
+    Run `npx prisma migrate dev` to create and apply the migration when database access is available.

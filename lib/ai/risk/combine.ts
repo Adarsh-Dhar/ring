@@ -11,7 +11,7 @@
  *  - The level and labels are advisory and helper-only. Nothing here touches the alert path.
  */
 import {
-  legacyLevel, observationsFromEvidence, scoreObservations, NOTE_ONLY_CATEGORIES,
+  legacyLevel, observationsFromEvidence, scoreObservations, NOTE_ONLY_CATEGORIES, type InterviewState,
   type Behaviour, type ControlMode, type LedgerEntry, type Observation,
 } from '@/lib/doorstep/riskRules'
 
@@ -19,27 +19,49 @@ export const LEVELS = ['none', 'low', 'medium', 'high'] as const
 export type RiskLevel = (typeof LEVELS)[number]
 
 export const RISK_CATEGORIES = [
-  'urgency_pressure', 'payment_request', 'official_impersonation', 'entry_request',
-  'home_probing', 'unsolicited_work', 'story_mismatch', 'evasive_answers',
-  'manipulation_attempt', 'known_scam_wording', 'vague_purpose', 'unverifiable_claims', 'other',
+  'pressure_after_rule',
+  'pressure_after_boundary',
+  'purpose_contradiction',
+  'hide_from_helper',
+  'payment_request',
+  'refuse_to_leave',
+  'spoken_threat',
+  'entry_request',
+  'home_probing',
+  'official_impersonation',
+  'manipulation_attempt',
+  'urgency_pressure',
+  'unsolicited_work',
+  'story_mismatch',
+  'evasive_answers',
+  'known_scam_wording',
+  'vague_purpose',
+  'unverifiable_claims',
+  'other',
 ] as const
 export type RiskCategory = (typeof RISK_CATEGORIES)[number]
 
 /** Helper-facing labels. Deliberately avoid words the shared banned-phrase list blocks (digest reuses these). */
 export const CATEGORY_LABEL: Record<RiskCategory, string> = {
-  urgency_pressure:       'Pressure to act quickly',
-  payment_request:        'Money or card details mentioned',
-  official_impersonation: 'Claims to be an official',
-  entry_request:          'Wants to come inside',
-  home_probing:           'Asked who else is at home',
-  unsolicited_work:       'Selling or offering work nobody asked for',
-  story_mismatch:         'Answers do not add up',
-  evasive_answers:        'Avoided answering',
-  manipulation_attempt:   'Tried to steer the assistant',
-  known_scam_wording:     'Wording matches known tricks',
-  vague_purpose:          'Reason stayed vague',
-  unverifiable_claims:    'Could not back up claims',
-  other:                  'Other concern',
+  pressure_after_rule:     'Pressure after rules were explained',
+  pressure_after_boundary: 'Pressure after a boundary was stated',
+  purpose_contradiction:   'Contradicted their stated purpose',
+  hide_from_helper:        'Tried to hide from the helper',
+  payment_request:         'Asked for PIN, OTP, password or access code',
+  refuse_to_leave:         'Refused to leave when asked',
+  spoken_threat:           'Made a threat',
+  entry_request:           'Wants to come inside',
+  home_probing:            'Asked who else is at home',
+  official_impersonation:  'Claims to be an official',
+  manipulation_attempt:    'Tried to steer the assistant',
+  urgency_pressure:        'Pressure to act quickly',
+  unsolicited_work:        'Selling or offering work nobody asked for',
+  story_mismatch:          'Answers do not add up',
+  evasive_answers:         'Avoided answering',
+  known_scam_wording:      'Wording matches known tricks',
+  vague_purpose:           'Reason stayed vague',
+  unverifiable_claims:     'Could not back up claims',
+  other:                   'Other concern',
 }
 
 /** Maps the flag strings produced by the regex rules in agents/risk.ts to categories. */
@@ -51,6 +73,8 @@ export const RULE_FLAG_CATEGORY: Record<string, RiskCategory> = {
   'Asks who is home':                 'home_probing',
   'Offers work or sells':             'unsolicited_work',
   'Similar to known scam wording':    'known_scam_wording',
+  'Refuses to leave':                 'refuse_to_leave',
+  'Hides from helper':                'hide_from_helper',
 }
 
 /** Fixed helper-facing advice per level. Not model-written. */
@@ -121,30 +145,39 @@ export interface RuleMatch { flag: string; quote: string }
 
 /** Keyword flags that become scored behaviours. Money, selling and scam-wording flags are hints only and never score by themselves. */
 const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
-  'Claims urgency':                 'pressure',
-  'Claims to be officials':         'impersonation_claim',
-  'Wants to enter or check inside': 'entry_request',
-  'Asks who is home':               'home_probing',
+  'Claims urgency':                 'pressure_after_boundary',
+  'Refuses to leave':               'refuse_to_leave',
+  'Hides from helper':              'hide_from_helper',
 }
 
 export function observationsFromRuleMatches(matches: RuleMatch[]): Observation[] {
   const out: Observation[] = []
   for (const m of matches) {
     const b = RULE_FLAG_BEHAVIOUR[m.flag]
-    if (b) out.push({ behaviour: b, source: 'transcript', quote: m.quote })
+    if (b) {
+      out.push({
+        code: b,
+        at: new Date().toISOString(),
+        quotes: [m.quote],
+        source: 'transcript',
+        state: 'uncertain',
+        points: 0,
+        transcriptQuality: undefined, // Would need engine confidence from STT
+      })
+    }
   }
   return out
 }
 
 function assemble(a: {
   transcript: string; cats: Set<RiskCategory>; evidence: Evidence[]; rationale: string
-  source: Assessment['source']; ruleMatches: RuleMatch[]
+  source: Assessment['source']; ruleMatches: RuleMatch[]; interviewState?: InterviewState
 }): Assessment {
   const fromJudge = observationsFromEvidence(a.evidence)
-  const judged = new Set(fromJudge.observations.map(o => o.behaviour))
+  const judged = new Set(fromJudge.observations.map(o => o.code))
   // A keyword hit and a judge hit on the same behaviour are one observation, not two.
-  const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.behaviour))
-  const risk = scoreObservations([...fromRules, ...fromJudge.observations], { transcript: a.transcript })
+  const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
+  const risk = scoreObservations([...fromRules, ...fromJudge.observations], { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
   const all = [...a.cats]
   return {
@@ -161,14 +194,14 @@ function assemble(a: {
  */
 export function liveAssessment(
   transcript: string, ruleMatches: RuleMatch[],
-  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean },
+  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean; interviewState?: InterviewState },
 ): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleMatches.map(m => m.flag)))
   if (extra?.inconsistent) cats.add('story_mismatch')
   if (extra?.evasive) cats.add('evasive_answers')
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
-  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches })
+  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState })
 }
 
 export function buildAssessment(a: {
@@ -181,6 +214,7 @@ export function buildAssessment(a: {
   evasive?: boolean
   /** Computed by the interview plan from what the visitor did or did not give. Shown as notes only. */
   coverage?: { purposeVague: boolean; unverifiable: boolean }
+  interviewState?: InterviewState
 }): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(a.ruleFlags))
   if (a.inconsistent) cats.add('story_mismatch')
@@ -201,6 +235,6 @@ export function buildAssessment(a: {
 
   return assemble({
     transcript: a.transcript, cats, evidence, rationale,
-    source: usedJudge ? 'ai+rules' : 'rules', ruleMatches: a.ruleMatches ?? [],
+    source: usedJudge ? 'ai+rules' : 'rules', ruleMatches: a.ruleMatches ?? [], interviewState: a.interviewState,
   })
 }

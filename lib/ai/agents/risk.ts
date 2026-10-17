@@ -9,6 +9,8 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Wants to enter or check inside', re: /\b(check (the )?(meter|boiler|pipes|roof|wiring)|come inside|let me in|look around|survey)\b/i },
   { flag: 'Asks who is home',          re: /\b(anyone (home|in)|who('s| is) (home|in)|alone|are you on your own)\b/i },
   { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote|sample)|sell(ing|er|s)?|sales ?(man|woman|person|rep|pitch)|salesm[ae]n|door[- ]to[- ]door|discount|brochure|leaflet|subscription)\b/i },
+  { flag: 'Refuses to leave',          re: /\b(not leaving|i('m| am) staying|i won'?t leave|let me talk to them|get (the )?(owner|resident)|i know (them|him|her))\b/i },
+  { flag: 'Hides from helper',         re: /\b(tell (them|him|her) (i am )?(not )?(here|gone|busy|sleeping)|(don'?t|do not) (call|tell|answer)|(just|only) me|(go away|leave) (me|us) alone)\b/i },
 ]
 
 export function riskFlagsFor(transcript: string): string[] {

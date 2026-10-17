@@ -8,6 +8,7 @@ import { Household } from '@prisma/client'
 
 export type ResidentViewState =
   | 'CLOSED_KEEP_SHUT'      // Connection lost, offline, or night lock - keep door closed
+  | 'EMERGENCY'            // P11: Immediate threat or forced entry - keep door closed, move away
   | 'WAITING'              // Ring received, waiting for helper response
   | 'HELPER_CHECKING'      // Helper responded, verifying
   | 'SAFE_CONFIRM'         // Helper confirmed safe
@@ -44,6 +45,8 @@ export interface CaseInfo {
   checkWord?: string
   expectedId?: string
   regularId?: string
+  riskScore?: number // P11: For emergency detection
+  controlMode?: string // P11: For emergency detection
 }
 
 export interface StateInfo {
@@ -115,6 +118,21 @@ export function computeResidentView(state: StateInfo, household: Household): Res
   if (activeCases.length > 0) {
     // Get the most recent active case
     const activeCase = activeCases.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
+
+    // P11: Emergency detection - highest priority for active cases
+    if (activeCase.riskScore === 100 || activeCase.controlMode === 'emergency') {
+      return {
+        state: 'EMERGENCY',
+        message: '⚠️ EMERGENCY: Keep door closed and move away. Do not open.',
+        backgroundColor: '#b71c1c',
+        textColor: '#ffffff',
+        showVideo: true,
+        showFaces: true,
+        canOpen: false,
+        timeSince: formatTimeSince(activeCase.createdAt),
+        caseId: activeCase.id,
+      }
+    }
 
     // Case-specific states - explicit answer wins
     if (activeCase.answer === 'safe') {
@@ -272,6 +290,11 @@ function formatTimeSince(date: Date): string {
 export function validateResidentView(view: ResidentView): boolean {
   if (view.state === 'CLOSED_KEEP_SHUT' && view.canOpen) {
     console.error('FAIL-CLOSED VIOLATION: CLOSED_KEEP_SHUT has canOpen: true')
+    return false
+  }
+
+  if (view.state === 'EMERGENCY' && view.canOpen) {
+    console.error('FAIL-CLOSED VIOLATION: EMERGENCY has canOpen: true')
     return false
   }
 

@@ -198,6 +198,7 @@ model Case {
   noticeStatus         String?
   riskScore            Int?
   riskLedger           Json?     @db.Json
+  riskObservations     Json?     @db.Json
   controlMode          String?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
@@ -457,7 +458,7 @@ model PassEvent {
 }
 
 model AiRun {
-  id          String    @id
+  id          String    @id @default(cuid())
   householdId String
   agent       String
   model       String
@@ -474,7 +475,7 @@ model AiRun {
 }
 
 model ResidentNote {
-  id          String    @id
+  id          String    @id @default(cuid())
   householdId String
   rawNote     String
   draftText   String
@@ -489,7 +490,7 @@ model ResidentNote {
 }
 
 model VisitIntake {
-  id           String       @id
+  id           String       @id @default(cuid())
   requestId    String       @unique
   turns        Json         @default("[]")
   claims       Json         @default("{}")
@@ -497,12 +498,12 @@ model VisitIntake {
   mismatches   Json         @default("[]")
   status       String       @default("open")
   createdAt    DateTime     @default(now())
-  updatedAt    DateTime
+  updatedAt    DateTime     @updatedAt
   VisitRequest VisitRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
 }
 
 model WeeklyDigest {
-  id          String    @id
+  id          String    @id @default(cuid())
   householdId String
   weekStart   DateTime
   facts       Json

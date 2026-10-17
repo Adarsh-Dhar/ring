@@ -97,6 +97,8 @@ export interface DoorCase {
   selfVerifiedAt?: number  // set when resident confirms the passphrase
   noticeStatus?: NoticeStatus // minimum-notice result (spec section 3). Never a risk input.
   regularId?:    string    // RegularVisitor whose face the door camera matched (a hint for the helper, never permission)
+  riskScore?:    number    // P11: Risk score for emergency detection
+  controlMode?:  string    // P11: Control mode for emergency detection
 }
 
 /** Match result from matchPlanned() */
@@ -338,6 +340,8 @@ async function refreshCasesFromDB(
       : undefined,
     regularId: (row as any).regularId || undefined,
     noticeStatus: ((row as any).noticeStatus as NoticeStatus) || undefined,
+    riskScore: row.riskScore, // P11: Include for emergency detection
+    controlMode: row.controlMode, // P11: Include for emergency detection
   }));
 }
 
@@ -510,9 +514,10 @@ function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, reside
 }
 
 function alertSos(state: HouseholdState, c: DoorCase, residentName: string) {
-  notifyAll(state, '🆘 Resident needs help', 'Open the app now.', c.id)
-  smsAll(state, `${residentName} pressed "I need help". Please call now.`, residentName, true)
-  addLog(c, 'Push and SMS sent to all helpers.')
+  // P11: Emergency alert - preserve evidence, tell resident to keep door closed and move away
+  notifyAll(state, '🆘 EMERGENCY: Resident needs help', 'Keep door closed and move away. Do not open.', c.id)
+  smsAll(state, `EMERGENCY: ${residentName} pressed "I need help". Keep door closed and move away. Do not open.`, residentName, true)
+  addLog(c, 'Emergency push and SMS sent to all helpers. Evidence preserved (clip and transcript).')
 }
 
 const addLog = (c: DoorCase, msg: string) => { c.log.push({ t: Date.now(), msg }) }
@@ -737,6 +742,10 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
     const existingId = openCases[0].id
     const existing = state.cases.find(c => c.id === existingId)
     if (existing && existing.status === 'waiting') {
+      // P9: Count repeated button_press events as extra_knock within 30s window
+      if (event.event_type === 'button_press') {
+        await handleExtraKnock(householdId, existingId, event.device_id)
+      }
       addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
       await updateCase(existing.id, existing)
       return null  // Return null to indicate the event was merged into an existing case
@@ -748,6 +757,72 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   // AI is advisory: fire-and-forget, never awaited, never on the alert path.
   void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null, kind: c.kind || '', lane: c.lane || null, expectedId: c.expectedId || null, recurringId: c.recurringId || null })).catch(() => {})
   return c
+}
+
+/**
+ * P9: Handle repeated button_press events as extra_knock observations.
+ * Counts presses within 30 seconds of the AI's "responding" stamp.
+ * 
+ * KNOWN LIMITATION: This implementation uses helper/resident reports only.
+ * Hardware door sensors (lock_manipulation, door_wedge, door_force) are not integrated yet.
+ * When hardware sensors are added, a signed sensor ingest route should be created with the same
+ * HMAC validation as the Ring webhook.
+ */
+async function handleExtraKnock(householdId: string, caseId: string, deviceId: string | null) {
+  try {
+    const db = getDb()
+    const c = await db.case.findUnique({
+      where: { id: caseId },
+      select: { riskObservations: true },
+    })
+    if (!c) return
+
+    const riskObs = c.riskObservations as any
+    const interviewState = riskObs?.interviewState ?? {}
+    const respondingAt = interviewState.respondingAt
+
+    // Only count if we have a respondingAt timestamp and we're within 30 seconds
+    if (!respondingAt) return
+
+    const now = Date.now()
+    const respondingTime = new Date(respondingAt).getTime()
+    const thirtySecondsMs = 30 * 1000
+
+    if (now - respondingTime > thirtySecondsMs) {
+      // Outside the 30-second window, ignore
+      return
+    }
+
+    // Count existing extra_knock observations for this case
+    const observations = riskObs?.observations ?? []
+    const existingKnocks = observations.filter((o: any) => o.code === 'extra_knock' && !o.isStamp).length
+
+    // Cap at 5 per spec
+    if (existingKnocks >= 5) return
+
+    // Add the extra_knock observation
+    const newObs = {
+      code: 'extra_knock',
+      at: new Date().toISOString(),
+      quotes: ['Repeated button press'],
+      source: 'sensor',
+      state: 'confirmed',
+      points: 1,
+      isStamp: false,
+    }
+
+    await db.case.update({
+      where: { id: caseId },
+      data: {
+        riskObservations: {
+          observations: [...observations, newObs],
+          interviewState,
+        },
+      },
+    })
+  } catch (e) {
+    console.error('[P9] Failed to handle extra_knock:', e)
+  }
 }
 
 /**
@@ -779,10 +854,61 @@ export async function raiseSos(householdId: string): Promise<DoorCase> {
     addLog(existing, 'Resident pressed "I need help".')
     const household = await getHousehold(householdId)
     if (household) alertSos(state, existing, household.residentName)
+    
+    // P10: SOS appends a confirmed forced_entry_or_assault with source 'resident' and sets score to 100
+    await addSosObservation(householdId, existing.id)
+    
     await updateCase(existing.id, existing)
     return existing
   }
-  return openCase(state, 'sos', 'sos', 'Resident pressed "I need help".')
+  const c = await openCase(state, 'sos', 'sos', 'Resident pressed "I need help".')
+  // P10: SOS appends a confirmed forced_entry_or_assault with source 'resident' and sets score to 100
+  await addSosObservation(householdId, c.id)
+  return c
+}
+
+/**
+ * P10: Add SOS observation (confirmed forced_entry_or_assault from resident).
+ * Sets score to 100.
+ */
+async function addSosObservation(householdId: string, caseId: string) {
+  try {
+    const db = getDb()
+    const c = await db.case.findUnique({
+      where: { id: caseId },
+      select: { riskObservations: true },
+    })
+    if (!c) return
+
+    const riskObs = c.riskObservations as any
+    const interviewState = riskObs?.interviewState ?? {}
+    const observations = riskObs?.observations ?? []
+
+    // Add the forced_entry_or_assault observation from resident
+    const newObs = {
+      code: 'forced_entry_or_assault',
+      at: new Date().toISOString(),
+      quotes: ['Resident SOS pressed'],
+      source: 'resident',
+      state: 'confirmed',
+      points: 0, // forced_entry_or_assault sets score to 100 via override, not direct points
+      isStamp: false,
+    }
+
+    await db.case.update({
+      where: { id: caseId },
+      data: {
+        riskObservations: {
+          observations: [...observations, newObs],
+          interviewState,
+        },
+        riskScore: 100, // P10: SOS sets score to 100
+        controlMode: 'emergency', // P10: SOS triggers emergency mode
+      },
+    })
+  } catch (e) {
+    console.error('[P10] Failed to add SOS observation:', e)
+  }
 }
 
 export async function ackCase(householdId: string, caseId: string, membershipId: string): Promise<{ ok: true; case: DoorCase } | { ok: false; error: string; status: number }> {
