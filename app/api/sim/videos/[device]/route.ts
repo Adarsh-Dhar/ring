@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorize, fail, HOUSEHOLD_COOKIE } from '@/lib/guard'
-import { statVideo, streamVideo, sanitiseDevice } from '@/lib/sim-videos/store'
+import { statVideo, streamVideo, sanitiseDevice, saveVideo } from '@/lib/sim-videos/store'
 import { parseRange } from '@/lib/sim-videos/range'
 
 export const dynamic = 'force-dynamic'
@@ -83,5 +83,51 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   } catch (e) {
     console.error('[SIM VIDEOS DEVICE GET] Failed to serve video', e)
     return fail('Unable to serve video', 500)
+  }
+}
+
+/**
+ * POST = upload a video for this device
+ */
+export async function POST(req: NextRequest, ctx: Ctx) {
+  try {
+    const a = await authorize(req, 'any')
+    if (a.ok === false) return a.res
+
+    // Resolve householdId from session or cookie
+    let householdId = a.session!.householdId
+    if (!householdId) {
+      const householdCookie = req.cookies.get(HOUSEHOLD_COOKIE)?.value
+      if (householdCookie) {
+        householdId = householdCookie
+      }
+    }
+    if (!householdId) return fail('No household selected', 400)
+
+    const { device } = await ctx.params
+    if (!sanitiseDevice(device)) return fail('Invalid device name', 400)
+
+    const formData = await req.formData()
+    const file = formData.get('video') as File | null
+    if (!file) return fail('No video file provided', 400)
+
+    // Validate file size (max 50 MB)
+    const MAX_SIZE = 50 * 1024 * 1024
+    if (file.size > MAX_SIZE) return fail('Video file too large (max 50 MB)', 400)
+
+    // Validate file type
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/ogg']
+    if (!allowedTypes.includes(file.type)) return fail('Invalid file type (must be MP4, WebM, or OGG)', 400)
+
+    // Convert File to Buffer
+    const buffer = Buffer.from(await file.arrayBuffer())
+
+    // Save the video with the correct content type
+    await saveVideo(householdId, device, buffer, file.type)
+
+    return NextResponse.json({ ok: true, message: 'Video uploaded successfully' })
+  } catch (e) {
+    console.error('[SIM VIDEOS DEVICE POST] Failed to upload video', e)
+    return fail('Unable to upload video', 500)
   }
 }

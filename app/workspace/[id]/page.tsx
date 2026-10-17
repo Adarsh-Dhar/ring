@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { getDaysInMonth, isToday } from '@/lib/calendarDateUtils'
+import SimulationPanel from './SimulationPanel'
 interface WorkspaceData {
   id: string
   residentName: string
@@ -66,7 +67,7 @@ export default function WorkspacePage() {
   const [ringStatus, setRingStatus] = useState<'connected' | 'not_connected' | 'checking'>('checking')
   const [showRingModal, setShowRingModal] = useState(false)
   const [ringInstructions, setRingInstructions] = useState<any>(null)
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'helpers' | 'visitors' | 'calendar'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'helpers' | 'visitors' | 'calendar' | 'simulation'>('dashboard')
   const [showNotifications, setShowNotifications] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -509,6 +510,18 @@ export default function WorkspacePage() {
             >
               Calendar
             </button>
+            {userIsGuardian && (
+              <button
+                onClick={() => setActiveTab('simulation')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'simulation'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Simulation
+              </button>
+            )}
           </nav>
         </div>
       </div>
@@ -868,6 +881,8 @@ export default function WorkspacePage() {
             </div>
           </div>
         )}
+
+        {activeTab === 'simulation' && userIsGuardian && <SimulationPanel />}
 
         {activeTab === 'visitors' && (
           <div>

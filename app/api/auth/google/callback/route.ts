@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   const error = searchParams.get('error')
 
   // If user already has a valid session, redirect to select-role immediately
-  // This prevents duplicate OAuth processing from multiple callback requests
+  // This handles duplicate OAuth callbacks gracefully
   const existingSession = req.cookies.get('db_session')?.value
   if (existingSession && !error) {
     console.log('[GOOGLE CALLBACK] User already has session, redirecting to select-role')
@@ -160,9 +160,9 @@ export async function GET(req: NextRequest) {
         })
       } else {
         // Create new user and store Google tokens for Calendar access
-        const encryptedAccessToken = encrypt(tokens.access_token)
-        const encryptedRefreshToken = encrypt(tokens.refresh_token)
-        
+        const encryptedAccessToken = tokens.access_token ? encrypt(tokens.access_token) : null
+        const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : null
+
         user = await db.user.create({
           data: {
             email: normalizedEmail,
@@ -170,26 +170,28 @@ export async function GET(req: NextRequest) {
             googleSub,
             googleAccessToken: encryptedAccessToken,
             googleRefreshToken: encryptedRefreshToken,
-            googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
+            googleTokenExpiry: tokens.expires_in ? new Date(Date.now() + (tokens.expires_in * 1000)) : null,
             sessionVersion: 1,
           },
         })
       }
     } else {
       // Update existing user with Google tokens if they don't have them
-      if (!user.googleRefreshToken) {
+      if (!user.googleRefreshToken && tokens.access_token && tokens.refresh_token) {
         const encryptedAccessToken = encrypt(tokens.access_token)
         const encryptedRefreshToken = encrypt(tokens.refresh_token)
-        
-        user = await db.user.update({
-          where: { id: user.id },
-          data: {
-            googleAccessToken: encryptedAccessToken,
-            googleRefreshToken: encryptedRefreshToken,
-            googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
-            sessionVersion: { increment: 1 },
-          },
-        })
+
+        if (encryptedAccessToken && encryptedRefreshToken) {
+          user = await db.user.update({
+            where: { id: user.id },
+            data: {
+              googleAccessToken: encryptedAccessToken,
+              googleRefreshToken: encryptedRefreshToken,
+              googleTokenExpiry: new Date(Date.now() + (tokens.expires_in * 1000)),
+              sessionVersion: { increment: 1 },
+            },
+          })
+        }
       }
     }
 

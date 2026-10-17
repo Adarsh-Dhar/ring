@@ -24,6 +24,7 @@ describe('ResidentView - Regression Tests', () => {
     requireResidentOk: false,
     preset: 'standard',
     aiEnabled: false,
+    aiGreeter: false,
     aiInterrogator: false,
   }
 

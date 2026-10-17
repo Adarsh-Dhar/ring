@@ -17,12 +17,13 @@ export { sanitiseDevice }
 export async function saveVideo(
   householdId: string,
   device: string,
-  buffer: Buffer
+  buffer: Buffer,
+  contentType: string = 'video/mp4'
 ): Promise<void> {
   const metadata: VideoMetadata = {
     size: buffer.length,
     mtime: Date.now(),
-    contentType: 'video/mp4',
+    contentType,
   }
   await storage.saveVideo(householdId, device, buffer, metadata)
 }

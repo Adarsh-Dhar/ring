@@ -8,22 +8,21 @@ datasource db {
 }
 
 model User {
-  id              String         @id @default(cuid())
-  email           String         @unique
-  name            String?
-  phone           String?        @unique
-  createdAt       DateTime       @default(now())
-  acceptedInvites Invite[]       @relation("AcceptedInvites")
-  createdInvites  Invite[]       @relation("CreatedInvites")
-  memberships     Membership[]
+  id                    String         @id @default(cuid())
+  email                 String         @unique
+  phone                 String?        @unique
+  name                  String?
+  createdAt             DateTime       @default(now())
+  googleAccessToken     String?
+  googleRefreshToken    String?
+  googleTokenExpiry     DateTime?
+  googleSub             String?        @unique
+  sessionVersion        Int            @default(1)
+  acceptedInvites       Invite[]       @relation("AcceptedInvites")
+  createdInvites        Invite[]       @relation("CreatedInvites")
+  memberships           Membership[]
+  sentNotifications     Notification[] @relation("SentNotifications")
   receivedNotifications Notification[] @relation("ReceivedNotifications")
-  sentNotifications Notification[] @relation("SentNotifications")
-  googleAccessToken   String? // Encrypted
-  googleRefreshToken String? // Encrypted
-  googleTokenExpiry   DateTime?
-  googleSub          String?
-  sessionVersion     Int            @default(1)
-  @@unique([googleSub])
 }
 
 model Household {
@@ -39,28 +38,29 @@ model Household {
   createdAt         DateTime           @default(now())
   plannedMode       String             @default("helper")
   requireResidentOk Boolean            @default(false)
-  preset            String             @default("standard") // v2: standard | strict | custom
+  preset            String             @default("standard")
   aiEnabled         Boolean            @default(false)
-  aiInterrogator    Boolean            @default(false)
-  residentNotes     ResidentNote[]
-  weeklyDigests     WeeklyDigest[]
-  aiRuns            AiRun[]
+  aiGreeter         Boolean            @default(false)
+  aiInterrogator    Boolean?           @default(false)
+  AiRun             AiRun[]
   cases             Case[]
   devices           Device[]
   expectedVisits    ExpectedVisit[]
-  guestFaces        GuestFace[]
   faceSightings     FaceSighting[]
+  guestFaces        GuestFace[]
   invites           Invite[]
   memberships       Membership[]
+  passes            Pass[]
   recurringVisits   RecurringVisit[]
   regularVisitors   RegularVisitor[]
   residentDevices   ResidentDevice[]
+  ResidentNote      ResidentNote[]
   ringConnections   RingConnection[]
+  v2Devices         V2Device[]
   visitRequests     VisitRequest[]
   visitRequestLinks VisitRequestLink[]
   webhookEvents     WebhookEvent[]
-  v2Devices         V2Device[]         // v2: new device model
-  passes            Pass[]             // v2: visitor passes
+  WeeklyDigest      WeeklyDigest[]
 }
 
 model Membership {
@@ -78,27 +78,27 @@ model Membership {
   household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   pushSubscriptions PushSubscription[]
-  v2Devices         V2Device[]         // v2: devices belonging to this member
+  v2Devices         V2Device[]
 
   @@unique([userId, householdId])
   @@index([householdId])
 }
 
 model Notification {
-  id           String   @id @default(cuid())
-  type         String   // helper_invite | visitor_request | alert
-  title        String
-  message      String
-  status       String   @default("pending") // pending | accepted | rejected | read
-  metadata     Json?    // Additional data like householdId, membershipId, etc.
-  read         Boolean  @default(false)
-  readAt       DateTime?
-  toUserId     String
-  fromUserId   String?
-  createdAt    DateTime @default(now())
-  respondedAt  DateTime?
-  toUser       User     @relation("ReceivedNotifications", fields: [toUserId], references: [id], onDelete: Cascade)
-  fromUser     User?    @relation("SentNotifications", fields: [fromUserId], references: [id], onDelete: SetNull)
+  id          String    @id @default(cuid())
+  type        String
+  title       String
+  message     String
+  status      String    @default("pending")
+  metadata    Json?
+  read        Boolean   @default(false)
+  readAt      DateTime?
+  toUserId    String
+  fromUserId  String?
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime?
+  fromUser    User?     @relation("SentNotifications", fields: [fromUserId], references: [id])
+  toUser      User      @relation("ReceivedNotifications", fields: [toUserId], references: [id], onDelete: Cascade)
 
   @@index([toUserId, status])
   @@index([toUserId, read])
@@ -147,46 +147,51 @@ model Device {
 }
 
 model Case {
-  id             String    @id @default(cuid())
-  householdId    String
-  kind           String
-  eventType      String
-  createdAt      DateTime  @default(now())
-  helperIndex    Int       @default(0)
-  deadlineAt     DateTime
-  status         String    @default("waiting")
-  answer         String?
-  answeredBy     String?
-  resolvedAt     DateTime?
-  log            Json      @default("[]")
-  visitor        String?
-  confirmedAt    DateTime?
-  declinedAt     DateTime?
-  chain          Json      @default("[]")
-  deviceId       String?
-  ackedBy        String?
-  ackedAt        DateTime?
-  lane           String?
-  recurringId    String?
-  visitIcon      String?
-  visitLabel     String?
-  checkWho       String?
-  checkWord      String?
-  selfVerifiedAt DateTime?
-  checkAttempts  Int       @default(0)
-  checkMode      String?
-  expectedId     String?
-  regularId      String?
-  // AI (advisory only; never read by the escalation path)
-  visitorSummary        String?
-  riskFlags             Json      @default("[]")
-  interrogationState    String?   // idle | asking | listening | done | failed | unsupported
-  interrogationTurns    Json      @default("[]")
-  interrogationVerdict   String?
-  interrogationClaims   Json?
-  riskLevel             String?   // none | low | medium | high (helper-only, advisory)
-  riskAssessment        Json?     // { level, categories, evidence[{category,quote}], rationale, action, source }
-  household             Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  id                   String    @id @default(cuid())
+  householdId          String
+  kind                 String
+  eventType            String
+  createdAt            DateTime  @default(now())
+  helperIndex          Int       @default(0)
+  deadlineAt           DateTime
+  status               String    @default("waiting")
+  answer               String?
+  answeredBy           String?
+  resolvedAt           DateTime?
+  log                  Json      @default("[]")
+  visitor              String?
+  confirmedAt          DateTime?
+  declinedAt           DateTime?
+  chain                Json      @default("[]")
+  deviceId             String?
+  ackedBy              String?
+  ackedAt              DateTime?
+  lane                 String?
+  recurringId          String?
+  visitIcon            String?
+  visitLabel           String?
+  checkWho             String?
+  checkWord            String?
+  selfVerifiedAt       DateTime?
+  checkAttempts        Int       @default(0)
+  checkMode            String?
+  expectedId           String?
+  regularId            String?
+  visitorSummary       String?
+  riskFlags            Json      @default("[]")
+  clipDescription      String?
+  clipTags             Json?
+  greeterState         String?
+  clipActions          Json?     @default("[]")
+  clipPeopleCount      Int?      @default(0)
+  clipApproachedDoor   Boolean?  @default(false)
+  riskLevel            String?
+  riskAssessment       Json?
+  interrogationState   String?
+  interrogationTurns   Json?     @default("[]") @db.Json
+  interrogationVerdict String?
+  interrogationClaims  Json?     @db.Json
+  household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
   @@index([createdAt])
@@ -281,15 +286,15 @@ model Invite {
 }
 
 model VisitRequestLink {
-  id              String         @id @default(cuid())
+  id              String           @id @default(cuid())
   householdId     String
-  tokenHash       String         @unique
+  tokenHash       String           @unique
   createdByUserId String
-  createdAt       DateTime       @default(now())
+  createdAt       DateTime         @default(now())
   revokedAt       DateTime?
-  requests        VisitRequest[]
   regularVisitors RegularVisitor[]
-  household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  requests        VisitRequest[]
+  household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
 }
@@ -319,7 +324,7 @@ model VisitRequest {
   expiresAt       DateTime
   intakeId        String?
   riskNote        String?
-  intake          VisitIntake?
+  VisitIntake     VisitIntake?
   household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
   link            VisitRequestLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
 
@@ -392,114 +397,109 @@ model RegularVisitor {
   @@index([householdId, contact, createdAt])
 }
 
-// v2: Device model replacing cookies, pairing codes, and visitor tokens
 model V2Device {
-  id          String       @id @default(cuid())
+  id          String      @id @default(cuid())
   householdId String
-  memberId    String?      // Null for resident devices
-  kind        String       // resident | helper | guardian | visitor
-  publicKey   String       // Device public key for authentication
-  lastSeenAt  DateTime     @default(now())
+  memberId    String?
+  kind        String
+  publicKey   String
+  lastSeenAt  DateTime    @default(now())
   revokedAt   DateTime?
-  createdAt   DateTime     @default(now())
-  household   Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  membership  Membership?  @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  createdAt   DateTime    @default(now())
   passes      Pass[]
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  membership  Membership? @relation(fields: [memberId], references: [id])
 
   @@index([householdId])
   @@index([memberId])
 }
 
-// v2: Visitor passes replacing pass-words and rotating codes
 model Pass {
-  id          String      @id @default(cuid())
-  householdId String
-  visitorName String
-  windowStart DateTime
-  windowEnd   DateTime
-  recurrence Json?       // Optional recurrence rules
-  deviceId    String?     // Legacy FK to V2Device; no longer written by the visitor flow
-  secretHash      String?   @unique // sha256 of the one-time link secret; the secret itself is never stored
-  boundDeviceHash String?           // sha256 of the visitor's device secret, set on first use
+  id              String      @id @default(cuid())
+  householdId     String
+  visitorName     String
+  windowStart     DateTime
+  windowEnd       DateTime
+  recurrence      Json?
+  deviceId        String?
+  revokedAt       DateTime?
+  createdAt       DateTime    @default(now())
+  secretHash      String?     @unique
+  boundDeviceHash String?
   boundAt         DateTime?
-  revokedAt   DateTime?
-  createdAt   DateTime    @default(now())
-  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  device      V2Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
-  events      PassEvent[]
+  device          V2Device?   @relation(fields: [deviceId], references: [id])
+  household       Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  events          PassEvent[]
 
   @@index([householdId])
   @@index([windowStart, windowEnd])
 }
 
-// v2: Pass audit log
 model PassEvent {
-  id        String   @id @default(cuid())
-  passId    String
-  type      String   // created | bound | used | rejected | revoked
-  deviceId  String?
-  at        DateTime @default(now())
-  pass      Pass     @relation(fields: [passId], references: [id], onDelete: Cascade)
+  id       String   @id @default(cuid())
+  passId   String
+  type     String
+  deviceId String?
+  at       DateTime @default(now())
+  pass     Pass     @relation(fields: [passId], references: [id], onDelete: Cascade)
 
   @@index([passId])
   @@index([at])
 }
 
-// ───────── AI agents (advisory only) ─────────
-
-model ResidentNote {
-  id          String    @id @default(cuid())
-  householdId String
-  rawNote     String
-  draftText   String
-  icon        String
-  status      String    @default("draft") // draft | approved | rejected
-  approvedBy  String?
-  createdAt   DateTime  @default(now())
-  decidedAt   DateTime?
-  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-
-  @@index([householdId, status])
-}
-
-model VisitIntake {
-  id         String       @id @default(cuid())
-  requestId  String       @unique
-  turns      Json         @default("[]")
-  claims     Json         @default("{}")
-  verdict    String?      // match | no_match | unclear
-  mismatches Json         @default("[]")
-  status     String       @default("open") // open | done | failed
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
-  request    VisitRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-}
-
-model WeeklyDigest {
-  id          String    @id @default(cuid())
-  householdId String
-  weekStart   DateTime
-  facts       Json
-  text        String
-  createdAt   DateTime  @default(now())
-  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-
-  @@unique([householdId, weekStart])
-}
-
 model AiRun {
-  id          String    @id @default(cuid())
+  id          String    @id
   householdId String
   agent       String
   model       String
   tokensIn    Int       @default(0)
   tokensOut   Int       @default(0)
   latencyMs   Int       @default(0)
-  status      String    // ok | invalid | error | budget | disabled
+  status      String
   caseId      String?
   createdAt   DateTime  @default(now())
-  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  Household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
-  @@index([householdId, createdAt])
   @@index([agent, createdAt])
+  @@index([householdId, createdAt])
+}
+
+model ResidentNote {
+  id          String    @id
+  householdId String
+  rawNote     String
+  draftText   String
+  icon        String
+  status      String    @default("draft")
+  approvedBy  String?
+  createdAt   DateTime  @default(now())
+  decidedAt   DateTime?
+  Household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, status])
+}
+
+model VisitIntake {
+  id           String       @id
+  requestId    String       @unique
+  turns        Json         @default("[]")
+  claims       Json         @default("{}")
+  verdict      String?
+  mismatches   Json         @default("[]")
+  status       String       @default("open")
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime
+  VisitRequest VisitRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+model WeeklyDigest {
+  id          String    @id
+  householdId String
+  weekStart   DateTime
+  facts       Json
+  text        String
+  createdAt   DateTime  @default(now())
+  Household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, weekStart])
 }

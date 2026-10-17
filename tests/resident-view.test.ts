@@ -24,6 +24,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -61,6 +62,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -106,6 +108,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -151,6 +154,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -196,6 +200,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -243,6 +248,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -279,6 +285,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -326,6 +333,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 
@@ -371,6 +379,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       requireResidentOk: false,
       preset: 'standard',
       aiEnabled: false,
+      aiGreeter: false,
       aiInterrogator: false,
     }
 

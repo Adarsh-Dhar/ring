@@ -35,7 +35,8 @@ export const deviceTokenFrom = (req: NextRequest) => {
  * For user sessions, roles are resolved from the database.
  */
 export async function getSession(req: NextRequest): Promise<Session | null> {
-  const t = verifyToken(tokenFrom(req))
+  const token = tokenFrom(req)
+  const t = verifyToken(token)
   if (t.ok === false) return residentFromDevice(req)
 
   const data = t.data
@@ -371,5 +372,5 @@ export async function parse<T extends z.ZodTypeAny>(req: NextRequest, schema: T)
   return { ok: true as const, data: r.data }
 }
 
-export const cookieOpts = { httpOnly: true, sameSite: 'none' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }
-export const deviceCookieOpts = { httpOnly: true, sameSite: 'none' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 365 }
+export const cookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 30 }
+export const deviceCookieOpts = { httpOnly: true, sameSite: 'lax' as const, secure: true, path: '/', maxAge: 60 * 60 * 24 * 365 }

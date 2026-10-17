@@ -6,7 +6,7 @@ import { assessRisk } from './riskJudge'
 import { liveAssessment } from '@/lib/ai/risk/combine'
 import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
 import { pickTalkback, interrogatorLines, LISTEN_SECONDS } from '@/lib/ai/talkback'
-import { clampWords, hasBannedPhrase, validQuestion } from '@/lib/ai/guard'
+import { clampWords, hasBannedPhrase, validQuestion, wrapUntrusted } from '@/lib/ai/guard'
 import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
 import { getDb } from '@/lib/db/client'
 import { isUnplannedVisit } from '../interrogation/gate'
@@ -59,9 +59,13 @@ export async function startInterrogator(householdId: string, caseId: string, dev
   }
 }
 
-/** Process a visitor's answer and return the next question or close. */
+/**
+ * Process a visitor's answer and return the next question or close.
+ * `answer` is the recorded audio (Buffer + mimeType) or, for the workspace simulator only, the typed text.
+ * Typed text is wrapped as untrusted data exactly like everything else a visitor says.
+ */
 export async function processAnswer(
-  householdId: string, caseId: string, audio: Buffer, mimeType: string
+  householdId: string, caseId: string, answer: Buffer | string, mimeType?: string
 ): Promise<{ question: string | null; final: boolean; close: string | null }> {
   try {
     // Server-side gate: re-check the case
@@ -75,7 +79,7 @@ export async function processAnswer(
 
     // Load existing turns
     const existing = await getCaseAi(householdId, caseId)
-    const turns: InterrogationTurn[] = Array.isArray(existing?.interrogationTurns) ? (existing.interrogationTurns as any) : []
+    const turns: InterrogationTurn[] = Array.isArray(existing?.interrogationTurns) ? existing.interrogationTurns : []
 
     // Stop conditions from DB state
     if (turns.length >= MAX_TURNS) {
@@ -95,7 +99,9 @@ export async function processAnswer(
       agent: 'interrogator', householdId, caseId, role: 'workhorse', schema: InterrogatorTurnOut, maxOutputTokens: 500,
       system: INTERROGATOR_SYSTEM,
       parts: [
-        { inlineData: { mimeType, data: audio.toString('base64') } },
+        typeof answer === 'string'
+          ? { text: `The visitor typed this reply (no audio):\n${wrapUntrusted('visitor_answer', answer, 500)}` }
+          : { inlineData: { mimeType: mimeType ?? 'audio/webm', data: answer.toString('base64') } },
         { text: `Previous Q&A:\n${history}\n\nCurrent answer: Transcribe and decide the next step.` },
       ],
     })

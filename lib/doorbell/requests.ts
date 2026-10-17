@@ -33,7 +33,25 @@ export async function createVisitRequest(i: {
 }): Promise<{ ok: true; statusToken: string } | Err> {
   const link = await dbr.findActiveLinkByHash(hashToken(i.linkToken))
   if (!link) return err('This link is no longer active.', 404)
+  return createVisitRequestForLink(link, i)
+}
 
+/**
+ * Everything after the link lookup. Split out so the workspace simulator can file a request
+ * against the household's active link without knowing the raw token (only its hash is stored).
+ */
+export async function createVisitRequestForLink(
+  link: { id: string; householdId: string },
+  i: {
+    name:        string
+    purpose:     Purpose
+    note?:       string
+    contactRaw:  string
+    startsAt:    number
+    endsAt:      number
+    ip:          string
+  }
+): Promise<{ ok: true; statusToken: string } | Err> {
   const now = Date.now()
   if (i.endsAt <= i.startsAt)                                       return err('The end time must be after the start.')
   if (i.endsAt <= now)                                              return err('That time has already passed.')

@@ -3,6 +3,23 @@ import type { Prisma } from '@prisma/client'
 import { getApprovedMemberships } from '@/lib/db/memberships'
 import { pushToMembership } from '@/lib/doorbell/notify'
 
+export type CaseAiData = {
+  id: string
+  kind: string
+  lane: string | null
+  expectedId: string | null
+  recurringId: string | null
+  visitorSummary: string | null
+  riskFlags: string[]
+  interrogationState: string | null
+  interrogationTurns: any
+  interrogationVerdict: string | null
+  interrogationClaims: any
+  riskLevel: string | null
+  riskAssessment: any
+  aiStatus: AiStatus
+}
+
 /** AI fields live on Case but are written ONLY here, never through the escalation store. */
 export async function setCaseAi(caseId: string, data: {
   visitorSummary?: string | null; riskFlags?: string[]; interrogationState?: string | null;
@@ -70,7 +87,7 @@ export async function aiFlags(householdId: string) {
   return { aiEnabled: !!h?.aiEnabled, aiInterrogator: !!h?.aiInterrogator, residentName: h?.residentName ?? null }
 }
 
-export async function getCaseAi(householdId: string, caseId: string) {
+export async function getCaseAi(householdId: string, caseId: string): Promise<CaseAiData | null> {
   const c = await getDb().case.findFirst({
     where: { id: caseId, householdId },
     select: {
@@ -90,7 +107,7 @@ export async function getCaseAi(householdId: string, caseId: string) {
     } as Prisma.CaseSelect,
   })
   if (!c) return null
-  return { ...c, aiStatus: await getAiStatus(householdId, caseId, c) }
+  return { ...c, aiStatus: await getAiStatus(householdId, caseId, c) } as CaseAiData
 }
 
 export type AiStatus = 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
