@@ -195,6 +195,8 @@ model Case {
   interrogationVerdict String?
   interrogationClaims  Json?     @db.Json
   noticeStatus         String?
+  riskScore            Int?
+  riskLedger           Json?     @db.Json
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
