@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import VideoUpload from '@/app/sim/VideoUpload'
+import VideoUpload from '@/app/workspace/[id]/VideoUpload'
 import LiveView from '@/app/helper/LiveView'
 import InterrogationCard from '@/app/helper/InterrogationCard'
 

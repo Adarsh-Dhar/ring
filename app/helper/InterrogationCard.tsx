@@ -145,7 +145,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   if (ai?.interrogationState === 'unsupported') {
     return (
       <p className="mb-3 rounded-xl bg-slate-800 p-3 text-sm text-slate-300">
-        🎙️ Interrogator unavailable on this doorbell (simulator only)
+        🎙️ Interrogator unavailable on this doorbell (workspace simulation only)
       </p>
     )
   }

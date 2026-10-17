@@ -7,7 +7,7 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 1. `npx prisma migrate deploy` (migrations `20261015000000_ai_agents`, additive only).
 2. Set `GEMINI_API_KEY` and the model IDs in `.env` (see `.env.example`).
 3. Guardian: `POST /api/ai/kill {"aiEnabled": true, "aiInterrogator": true}` (both default to **false** per household).
-4. **Where AI jobs run.** By default the interrogator runs **inline** in the web process, so no worker is needed (this is also how Docker runs out of the box). Set `AI_USE_QUEUE=1` only if you run a worker (`npm run worker`, or `docker compose --profile worker up -d`); jobs for real devices are then queued, and any queue failure falls back to inline. Simulator devices (`sim-*`) always run inline. The worker is still needed for the Monday digest schedule.
+4. **Where AI jobs run.** By default the interrogator runs **inline** in the web process, so no worker is needed (this is also how Docker runs out of the box). Set `AI_USE_QUEUE=1` only if you run a worker (`npm run worker`, or `docker compose --profile worker up -d`); jobs for real devices are then queued, and any queue failure falls back to inline. Simulator devices (`sim-*`) in the workspace simulation always run inline. The worker is still needed for the Monday digest schedule.
 
 ## Agents
 | Agent | Model role | Trigger | Output (who sees it) |
@@ -32,7 +32,7 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 
 ## Not done / needs your input
 - **Ring talk-back**: `lib/ai/talkback/ring.ts` is a stub. No speaker/two-way audio endpoint is verified in
-  `lib/ring/client.ts`. Until implemented, real rings set `interrogationState = 'unsupported'`; the interrogator works in `/sim`.
+  `lib/ring/client.ts`. Until implemented, real rings set `interrogationState = 'unsupported'`; the interrogator works in the workspace simulation.
 - **Model IDs** are placeholders (could not be verified as API IDs). Set them in `.env`.
 - **Calendar owner**: intake checks *every* approved guardian who connected Google Calendar (union).
 - **Privacy**: free-tier Gemini data may be used for training. Use a paid key before sending real door audio/images.

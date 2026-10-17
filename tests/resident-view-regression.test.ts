@@ -26,6 +26,10 @@ describe('ResidentView - Regression Tests', () => {
     aiEnabled: false,
     aiGreeter: false,
     aiInterrogator: false,
+    minNoticeHours: null,
+    shortNoticePolicy: 'helper_approval',
+    unknownVisitorPolicy: 'ai_first_contact',
+    preferences: null,
   }
 
   // Helper to create state with a single case

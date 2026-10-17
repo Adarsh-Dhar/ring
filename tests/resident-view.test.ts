@@ -26,6 +26,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -64,6 +68,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -110,6 +118,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -156,6 +168,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -202,6 +218,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -250,6 +270,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -287,6 +311,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -335,6 +363,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {
@@ -381,6 +413,10 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiEnabled: false,
       aiGreeter: false,
       aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
     }
 
     const state = {

@@ -12,7 +12,7 @@
  *   - Redirects unauthenticated visitors to /login, carrying the original URL
  *     as `?next=` so the login page can send them back after sign-in.
  *   - Resident pages (/resident, /pair) use the device cookie instead.
- *   - The /sim page additionally requires DEMO_MODE=1; if not set the page
+ *   - The workspace simulation requires DEMO_MODE=1; if not set the simulation panel
  *     itself shows a friendly "off" message, so the middleware just checks auth.
  *
  * Why not verify the signature here?
@@ -106,7 +106,6 @@ export const config = {
     '/invite/:path*',
     '/helper/:path*',
     '/setup/:path*',
-    '/sim/:path*',
     '/onboarding/:path*',
     '/resident/:path*',
     '/pair/:path*',

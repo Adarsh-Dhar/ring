@@ -45,8 +45,8 @@ To
 `app/helper/AiCaseCard.tsx`
 `agents/app/resident/ApprovedNote.tsx`
 `app/resident/ApprovedNote.tsx`
-`agents/app/sim/AiSimTools.tsx`
-`app/sim/AiSimTools.tsx`
+`agents/app/workspace/[id]/SimulationPanel.tsx`
+`app/workspace/[id]/SimulationPanel.tsx`
 `agents/prisma/migrations/20261015000000_ai_agents/`
 `prisma/migrations/20261015000000_ai_agents/`
 `agents/tests/ai-core.test.ts`
@@ -66,7 +66,7 @@ Register the AI workers (3 lines)
 Import and render `AiCaseCard`
 `app/resident/page.tsx`
 Import and render `ApprovedNote`
-`app/sim/page.tsx`
+`app/workspace/[id]/SimulationPanel.tsx`
 Import and render `AiSimTools`
 `app/api/visit-requests/public/[token]/route.ts`
 Restore the deleted file
@@ -90,19 +90,19 @@ cp -r agents/app/api/ai                  app/api/
 cp -r agents/app/api/visit-requests/public app/api/visit-requests/   # merges intake/ next to the restored route.ts
 cp agents/app/helper/AiCaseCard.tsx      app/helper/
 cp agents/app/resident/ApprovedNote.tsx  app/resident/
-cp agents/app/sim/AiSimTools.tsx         app/sim/
+cp agents/app/workspace/[id]/SimulationPanel.tsx  app/workspace/[id]/
 cp -r agents/prisma/migrations/20261015000000_ai_agents prisma/migrations/
 cp agents/tests/ai-core.test.ts          tests/
 cp agents/docs/AI_AGENTS.md              docs/
 
 # 3. Patched existing files. Check that each diff shows ONLY the AI lines first.
 for f in lib/queue/jobs.ts lib/doorbell/store.ts workers/timer-worker.ts \
-         app/helper/page.tsx app/resident/page.tsx app/sim/page.tsx; do
+         app/helper/page.tsx app/resident/page.tsx; do
   echo "== $f"; diff "$f" "agents/$f"
 done
 # if the diffs look right:
 for f in lib/queue/jobs.ts lib/doorbell/store.ts workers/timer-worker.ts \
-         app/helper/page.tsx app/resident/page.tsx app/sim/page.tsx; do
+         app/helper/page.tsx app/resident/page.tsx; do
   cp "agents/$f" "$f"
 done
 
@@ -147,7 +147,7 @@ import ApprovedNote from './ApprovedNote'
 Add after the `{screen.sub && …}` line:
         {!c && <ApprovedNote />}
 `ApprovedNote` only shows a note a helper approved.
-4.6 `app/sim/page.tsx`
+4.6 `app/workspace/[id]/SimulationPanel.tsx`
 import AiSimTools from './AiSimTools'
 Add just before the closing `</main>`:
       <AiSimTools caseId={caseId} />
@@ -321,13 +321,13 @@ npm run typecheck     # expect no errors once prisma generate has run
 npm test              # includes tests/ai-core.test.ts
 Manual checks:
 Visitor form still works. Open `/visit/<link-token>` and submit. If it 404s, the restored `public/[token]/route.ts` is missing.
-AI off = old behaviour. With the household flags off, ring from `/sim`. Helper push and escalation work as before and no AI card appears.
-Interrogator. Switch the interrogator on, ring, run the interrogator in `/sim` and speak "I'm from the gas company, I need to check the meter urgently." The helper card shows a summary plus scam-wording flags. The resident screen must show none of it.
+AI off = old behaviour. With the household flags off, ring from the workspace simulation. Helper push and escalation work as before and no AI card appears.
+Interrogator. Switch the interrogator on, ring, run the interrogator in the workspace simulation and speak "I'm from the gas company, I need to check the meter urgently." The helper card shows a summary plus scam-wording flags. The resident screen must show none of it.
 Resident message. Create a note, approve it, and confirm the resident screen shows the sentence and icon. A draft must not show before approval.
 Intake. Submit a visit request claiming a 3pm checkup that is not in the calendar. The visitor sees a short question, and the helper later sees a note on the request.
 Quota fallback. Set `GEMINI_LIMIT_WORKHORSE_RPD=1`, ring twice. The second ring must still alert helpers normally with no AI card.
 9. Known limits
-- Ring talk-back is a stub (`lib/ai/talkback/ring.ts`). On a real Ring doorbell the interrogator reports `unsupported` and the helper sees a normal ring. The interrogator works only in `/sim` until Ring confirms a speaker or two-way audio endpoint.
+- Ring talk-back is a stub (`lib/ai/talkback/ring.ts`). On a real Ring doorbell the interrogator reports `unsupported` and the helper sees a normal ring. The interrogator works only in the workspace simulation until Ring confirms a speaker or two-way audio endpoint.
 - Snapshots rely on `fetchRingSnapshot`, which `face/camera.ts` already marks as unverified.
 - Privacy. Visitor audio and door snapshots go to Google Gemini. Use a paid API key (or data setting) that excludes training use before real use, and get guardian consent first.
 - Model IDs and quotas come from your dashboard table. Re-check them against the live API.

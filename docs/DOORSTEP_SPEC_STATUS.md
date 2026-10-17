@@ -55,5 +55,5 @@ Done: `meets_minimum` / `short_notice` / `no_notice`, three household settings, 
 - [ ] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000002`)
 - [ ] `npx prisma generate && npm run typecheck`
 - [ ] `npm test` (new: `doorstep-notice-policy`, `doorstep-risk-rules`, `doorstep-controller`; changed: `ai-core`)
-- [ ] `/sim`: ring with no plan, then with a short-notice expected visit; the case log shows the notice line
+- [ ] Workspace simulation: ring with no plan, then with a short-notice expected visit; the case log shows the notice line
 - [ ] A scam-style interview: `Case.riskScore`, `riskLedger` and `controlMode` are filled and `riskAssessment.control` is present
