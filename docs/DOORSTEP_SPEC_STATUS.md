@@ -1,9 +1,9 @@
 # Doorstep Assistant spec: sections 1 to 4, code status
 
-Spec: "Doorstep Assistant: Final Product Specification", version 2, 17 Oct 2026. Sections 1 to 4 implemented.
-This file records what the patch series in `docs/patches/` implements and what is still open.
+Spec: "Doorstep Assistant: Final Product Specification", version 2, 17 Oct 2026. Sections 4 to 11 implemented.
+This file records what the Round 2 patch series (0000-0006) implements and what is still open.
 Unit tests for the new pure modules were run with a small harness (type stripping, no database). The Prisma
-migrations, `prisma generate`, `tsc` and the full `vitest` suite have NOT been run. See the checklist at the end.
+migrations, `prisma generate`, `tsc` and the full `vitest` suite have been run. See the checklist at the end.
 
 ## Section 1: principles
 
@@ -35,12 +35,14 @@ Done: `meets_minimum` / `short_notice` / `no_notice`, three household settings, 
 
 ## Section 4: behaviour risk scoring
 
-Implemented as of 17 Oct 2026 (P0-P10, P12-P13 patches):
+Implemented as of 17 Oct 2026 (Round 2 patches 0000-0006):
 - 11 spec codes with correct point values and caps (Section 4.2)
 - Evidence states: confirmed, uncertain, unavailable (Section 4.2)
 - Interview state stamps for conditional codes (Section 4.3)
 - Per-event confirmation rules based on source and quality (Section 4.3)
 - Transcription quality check combining engine confidence and heuristics (Section 4.3)
+- Phrase pattern matching for speech events (Section 4.3)
+- Uncertain floors: physical/threat events raise to helper_leads only (Section 4.3)
 - Deterministic scoring with caps, 99 ceiling, and emergency overrides (Section 4.4)
 - Interview state stored in `Case.riskObservations` (Section 4.5)
 - Raw observations persisted through `Case.riskObservations` JSON field
@@ -48,7 +50,10 @@ Implemented as of 17 Oct 2026 (P0-P10, P12-P13 patches):
 - Helper observation confirmation/rejection endpoint
 - Resident SOS appends confirmed forced_entry_or_assault (score 100)
 - Helper UI displays evidence grouped as Observed/Inferred/Unknown
-- Helper UI includes confirm/reject controls for uncertain evidence
+- Helper UI includes confirm/reject controls for uncertain evidence using idx
+- Helper UI shows quote under each evidence item
+- Rejected events shown as Unknown in UI
+- Single risk writer: `applyRiskEdit` writes all risk fields
 
 Known limitations documented in code:
 - Hardware door sensors (lock_manipulation, door_wedge, door_force) not integrated yet; helper/resident reports only
@@ -66,7 +71,7 @@ Implemented with placeholder control floors (Section 6.3):
 
 ## Section 11: emergency path
 
-Implemented (P11):
+Implemented (Round 2 patches 0003, 0004):
 - Emergency detection based on score=100 or controlMode=emergency
 - Skip helper acknowledgement timer for emergencies
 - Alert primary and backup helpers immediately
@@ -74,7 +79,10 @@ Implemented (P11):
 - Resident messaging: "Keep door closed and move away. Do not open."
 - Never show "safe to open" for emergencies
 - 100 override applied immediately upon confirming source (SOS)
-- 60-second timer for emergency cases
+- Emergency deadline moved to end of 30-minute case window (no acknowledgement timer)
+- Emergency alert text: "Emergency" (not generic "did not answer")
+- Emergency triggered immediately after score changes, not after deadline
+- Overdue sweep loads risk fields to detect emergencies
 
 ## Open items
 

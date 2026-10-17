@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorize, fail } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
+import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
+import { scoreObservations } from '@/lib/doorstep/riskRules'
+import { readStored } from '@/lib/doorstep/caseRisk'
+import { triggerEmergency } from '@/lib/doorbell/store'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -8,11 +12,13 @@ export const runtime = 'nodejs'
 /**
  * P10: Helper observation confirmation/rejection route.
  * POST /api/doorbell/observation
- * Body: { caseId, observationIndex, action: 'confirm' | 'reject' }
+ * Body: { caseId, idx, action: 'confirm' | 'reject' }
  * 
  * - Confirm: changes uncertain observation to confirmed with source 'helper'
  * - Reject: records a correction
  * - Cross-household requests are rejected
+ * - Returns new score and mode after re-scoring
+ * - Triggers emergency alert if case becomes emergency
  */
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper')
@@ -20,10 +26,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { caseId, observationIndex, action } = body
+    const { caseId, idx, action } = body
 
-    if (!caseId || observationIndex === undefined || !action) {
-      return fail('Missing required fields: caseId, observationIndex, action', 400)
+    if (!caseId || idx === undefined || !action) {
+      return fail('Missing required fields: caseId, idx, action', 400)
     }
 
     if (action !== 'confirm' && action !== 'reject') {
@@ -55,41 +61,25 @@ export async function POST(req: NextRequest) {
       return fail('Cross-household access not allowed', 403)
     }
 
-    const riskObs = c.riskObservations as any
-    if (!riskObs || !riskObs.observations) {
-      return fail('No observations found for this case', 400)
-    }
+    // Use the single risk writer to apply the helper action
+    await applyRiskEdit(caseId, { kind: 'helper', idx, action })
 
-    const observations = riskObs.observations
-    if (observationIndex < 0 || observationIndex >= observations.length) {
-      return fail('Invalid observation index', 400)
-    }
-
-    const observation = observations[observationIndex]
-
-    if (action === 'confirm') {
-      // Confirm: change state to confirmed and source to 'helper'
-      observation.state = 'confirmed'
-      observation.source = 'helper'
-    } else if (action === 'reject') {
-      // Reject: record a correction (this is a simplified implementation)
-      // In a full implementation, this would create a separate correction record
-      // For now, we mark it as unavailable and add a debug note
-      observation.state = 'unavailable'
-      observation.debug = { ...observation.debug, rejectedBy: 'helper', rejectedAt: new Date().toISOString() }
-    }
-
-    await db.case.update({
+    // Reload the case to get the new score and mode
+    const updated = await db.case.findUnique({
       where: { id: caseId },
-      data: {
-        riskObservations: {
-          observations,
-          interviewState: riskObs.interviewState ?? {},
-        },
-      },
+      select: { riskScore: true, controlMode: true, householdId: true },
     })
 
-    return NextResponse.json({ ok: true })
+    if (!updated) {
+      return fail('Case not found after update', 404)
+    }
+
+    // Check if this action raised the case to emergency
+    if (updated.controlMode === 'emergency' || updated.riskScore === 100) {
+      await triggerEmergency(updated.householdId, caseId)
+    }
+
+    return NextResponse.json({ ok: true, riskScore: updated.riskScore, controlMode: updated.controlMode })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[OBSERVATION]', e)

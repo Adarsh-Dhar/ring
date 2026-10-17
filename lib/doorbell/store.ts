@@ -442,6 +442,23 @@ function matchPlanned(
   return null
 }
 
+/** P11: Trigger emergency alert when risk score reaches emergency level */
+async function triggerEmergency(householdId: string, caseId: string) {
+  const state = await getOrCreateState(householdId)
+  const c = state.cases.find(c => c.id === caseId)
+  if (!c) return
+
+  // Check if already alerted to avoid duplicate alerts
+  const alreadyAlerted = c.log.some(e => e.msg.includes('⚠️ EMERGENCY'))
+  if (alreadyAlerted) return
+
+  // Log the emergency trigger
+  c.log.push({ t: Date.now(), msg: '⚠️ EMERGENCY: Risk score reached emergency level. Triggering emergency alert.' })
+
+  // Refresh the case from DB to get the latest risk fields
+  await refreshCasesFromDB(householdId, state)
+}
+
 function nextOccurrence(v: RecurringVisit, now: number, timezone: string): number | null {
   for (let i = 0; i <= 7 * v.everyNWeeks; i++) {
     const w = windowToday(v, now + i * 86_400_000, timezone)

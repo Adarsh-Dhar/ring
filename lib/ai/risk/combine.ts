@@ -93,6 +93,7 @@ export interface Assessment {
   level: RiskLevel
   categories: RiskCategory[]
   labels: string[]
+  observations: Observation[]
   evidence: Evidence[]
   rationale: string
   action: string | null
@@ -177,11 +178,12 @@ function assemble(a: {
   const judged = new Set(fromJudge.observations.map(o => o.code))
   // A keyword hit and a judge hit on the same behaviour are one observation, not two.
   const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
-  const risk = scoreObservations([...fromRules, ...fromJudge.observations], { transcript: a.transcript, interviewState: a.interviewState })
+  const allObs = [...fromRules, ...fromJudge.observations]
+  const risk = scoreObservations(allObs, { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
   const all = [...a.cats]
   return {
-    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), evidence: a.evidence, rationale: a.rationale,
+    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), observations: allObs, evidence: a.evidence, rationale: a.rationale,
     action: ACTION_TEXT[level], source: a.source, assessedAt: new Date().toISOString(),
     score: risk.score, ledger: risk.ledger, minMode: risk.minMode,
     notes: all.filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)),

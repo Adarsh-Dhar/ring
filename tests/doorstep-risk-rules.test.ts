@@ -80,17 +80,18 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
 
   it('repeating one behaviour cannot exceed its cap (extra_knock capped at 5)', () => {
     const interviewState: InterviewState = { respondingAt: new Date().toISOString() }
-    const obs = Array(10).fill(null).map(() => makeObs('extra_knock', 'sensor', ''))
+    const obs = Array(10).fill(null).map((_, i) => ({ ...makeObs('extra_knock', 'sensor', ''), at: new Date(Date.now() + i * 1000).toISOString() }))
     const r = scoreWithTranscript(obs, '', interviewState)
     expect(r.score).toBe(5)
     expect(r.ledger.filter(l => l.points > 0)).toHaveLength(5)
   })
 
   it('purpose_contradiction uses tiered scoring (15 then 10)', () => {
+    const two = (a: string, b: string): Observation => ({ ...makeObs('purpose_contradiction', 'transcript', a), quotes: [a, b] })
     const r = scoreWithTranscript([
-      makeObs('purpose_contradiction', 'transcript', 'council urgent', 'confirmed', 1.0),
-      makeObs('purpose_contradiction', 'transcript', 'let me in', 'confirmed', 1.0),
-      makeObs('purpose_contradiction', 'transcript', 'refuse to leave', 'confirmed', 1.0),
+      two('council urgent', 'let me in'),
+      two('let me in', 'refuse to leave'),
+      two('council urgent', 'refuse to leave'),
     ], 'council urgent let me in refuse to leave')
     expect(r.score).toBe(25) // 15 + 10, third instance ignored due to cap
   })
@@ -134,11 +135,19 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(0); expect(r.minMode).toBe('ai_leads'); expect(r.ledger[0].state).toBe('unavailable')
   })
 
-  it('uncertain state scores zero points but may still set floor for physical/threat events', () => {
+  it('uncertain speech event scores zero and sets no floor (spec 4.3)', () => {
     const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
     const r = scoreWithTranscript([makeObs('refuse_to_leave', 'transcript', 'not leaving', 'uncertain', 1.0)], 'not leaving', interviewState)
     expect(r.score).toBe(0)
-    expect(r.minMode).toBe('helper_leads') // floor still set
+    expect(r.minMode).toBe('ai_leads')
+  })
+
+  it('uncertain physical or threat event scores zero and raises the mode to helper_leads only (spec 4.3)', () => {
+    for (const [code, source] of [['lock_manipulation', 'helper'], ['door_wedge_or_follow_in', 'helper'], ['forced_entry_or_assault', 'helper'], ['immediate_threat', 'transcript']] as const) {
+      const r = scoreWithTranscript([makeObs(code, source, 'x', 'uncertain')], 'x')
+      expect(r.score, code).toBe(0)
+      expect(r.minMode, code).toBe('helper_leads')
+    }
   })
 
   it('unknown behaviour names are ignored, never scored', () => {

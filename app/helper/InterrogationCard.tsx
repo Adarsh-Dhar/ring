@@ -83,7 +83,7 @@ const PILL_TEXT: Record<RiskLevel, string> = { none: 'RISK: NONE SO FAR', low: '
 /** P12: Categorize evidence into Observed, Inferred, Unknown */
 type EvidenceGroup = 'observed' | 'inferred' | 'unknown'
 
-function categorizeEvidence(ledgerEntry: { source: string; state: string; quote: string }): EvidenceGroup {
+function categorizeEvidence(ledgerEntry: { source: string; state: string; quote: string; retracted?: boolean }): EvidenceGroup {
   // Observed: sensors or exact words from transcript (confirmed)
   if (ledgerEntry.state === 'confirmed' && (ledgerEntry.source === 'sensor' || ledgerEntry.source === 'transcript')) {
     return 'observed'
@@ -92,11 +92,15 @@ function categorizeEvidence(ledgerEntry: { source: string; state: string; quote:
   if (ledgerEntry.source === 'helper' || ledgerEntry.source === 'resident' || ledgerEntry.state === 'uncertain') {
     return 'inferred'
   }
+  // Retracted (rejected by helper): show as Unknown
+  if (ledgerEntry.retracted) {
+    return 'unknown'
+  }
   // Unknown: unavailable or unestablished facts
   return 'unknown'
 }
 
-function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>) {
+function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; retracted?: boolean }>) {
   const groups: Record<EvidenceGroup, Array<typeof ledger[0]>> = {
     observed: [],
     inferred: [],
@@ -110,12 +114,12 @@ function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; 
 }
 
 /** P12: Handle helper confirm/reject of uncertain evidence */
-async function handleObservationAction(caseId: string, index: number, action: 'confirm' | 'reject') {
+async function handleObservationAction(caseId: string, idx: number, action: 'confirm' | 'reject') {
   try {
     const r = await fetch('/api/doorbell/observation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ caseId, observationIndex: index, action }),
+      body: JSON.stringify({ caseId, idx, action }),
     })
     if (!r.ok) {
       console.error('Failed to update observation:', await r.text())
@@ -190,7 +194,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const risk = ai?.riskAssessment ?? null
   const riskLevel: RiskLevel = (ai?.riskLevel as RiskLevel) || risk?.level || 'none'
   const hasRisk = riskLevel !== 'none'
-  const ledger = Array.isArray(ai?.riskLedger) ? (ai.riskLedger as Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>) : []
+  const ledger = Array.isArray(ai?.riskLedger) ? (ai.riskLedger as Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; retracted?: boolean }>) : []
   const evidenceGroups = groupEvidence(ledger)
 
   // Show unsupported message
@@ -286,19 +290,21 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                           <span className="font-medium">{e.code}</span>
                           <span className="opacity-60"> ({e.source}, {e.state})</span>
                           {e.points > 0 && <span className="ml-1 text-amber-400">+{e.points}</span>}
+                          {/* Show the quote under each item */}
+                          {e.quote && <span className="ml-2 text-xs opacity-80">"{e.quote}"</span>}
                         </span>
                         {/* P12: Confirm/reject controls for uncertain evidence */}
-                        {e.state === 'uncertain' && (
+                        {e.state === 'uncertain' && e.idx !== undefined && (
                           <div className="flex gap-1">
                             <button
-                              onClick={() => handleObservationAction(caseId, i, 'confirm')}
+                              onClick={() => handleObservationAction(caseId, e.idx, 'confirm')}
                               className="px-2 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 rounded"
                               title="Confirm this evidence"
                             >
                               ✓
                             </button>
                             <button
-                              onClick={() => handleObservationAction(caseId, i, 'reject')}
+                              onClick={() => handleObservationAction(caseId, e.idx, 'reject')}
                               className="px-2 py-0.5 text-xs bg-red-700 hover:bg-red-600 rounded"
                               title="Reject this evidence"
                             >

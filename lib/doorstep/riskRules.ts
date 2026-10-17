@@ -80,8 +80,7 @@ export function passesTranscriptionQuality(
 /** Minimum quality threshold for transcription to be considered reliable. */
 export const TRANSCRIPT_QUALITY_THRESHOLD = 0.5
 
-/** P11: Emergency timer value (seconds) - Section 5.3 */
-export const EMERGENCY_TIMER_SECONDS = 60
+
 
 export const BEHAVIOURS = [
   'extra_knock',
@@ -110,6 +109,8 @@ export interface BehaviourRule {
   floor: ControlMode | null
   /** Which kinds of source may confirm it. */
   sources: readonly Source[]
+  /** Minimum mode while the event is only UNCERTAIN (spec 4.3: uncertain physical or threat events raise it to helper-led). */
+  uncertainFloor?: ControlMode
   /** If true, this code sets the score to a minimum instead of adding points. */
   minScore?: number
 }
@@ -176,6 +177,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     cap: 30,
     floor: 'helper_leads', // P11: Section 6.3 placeholder
     sources: HUMAN_OR_SENSOR,
+    uncertainFloor: 'helper_leads',
   },
   door_wedge_or_follow_in: {
     label: 'Wedged the door or tried to follow in',
@@ -183,6 +185,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     cap: 40,
     floor: 'helper_leads', // P11: Section 6.3 placeholder
     sources: HUMAN_OR_SENSOR,
+    uncertainFloor: 'helper_leads',
   },
   immediate_threat: {
     label: 'Made an immediate threat',
@@ -190,6 +193,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     cap: null,
     floor: 'emergency', // P11: Section 6.3 placeholder
     sources: SPEECH_OR_HELPER,
+    uncertainFloor: 'helper_leads',
     minScore: 80,
   },
   forced_entry_or_assault: {
@@ -198,6 +202,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     cap: null,
     floor: 'emergency',
     sources: HUMAN_OR_SENSOR,
+    uncertainFloor: 'helper_leads',
     minScore: 100,
   },
 }
@@ -223,9 +228,15 @@ export interface Observation {
   transcriptQuality?: number
   /** If true, this is an interview state stamp, not a real observation. */
   isStamp?: boolean
+  /** The transcript segment the quote came from. The quality check runs on this, never on the bare quote. */
+  segment?: string
+  /** A helper rejected this event. It never scores again, and a re-score never brings it back. */
+  retracted?: boolean
 }
 
 export interface LedgerEntry {
+  /** Position of this observation in the stored observation list. Confirm and reject use it. */
+  idx: number
   code: Behaviour
   /** ISO timestamp when the observation was made. */
   at: string
@@ -258,129 +269,113 @@ export function quoteIsGrounded(quote: string | undefined, transcript: string): 
   return q.length >= 3 && norm(transcript).includes(q)
 }
 
+/**
+ * Spec 4.3: a speech event is only confirmed when the words match the phrase category.
+ * Deliberately narrow. A quote that fails this check is shown as uncertain and a helper can confirm it.
+ * purpose_contradiction has no pattern: it needs two stored quotes instead.
+ */
+export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
+  credential_request: /\b(pin|otp|passcode|password|access code|door code|entry code|security code|verification code|one[- ]time (code|password))\b/i,
+  refuse_to_leave: /\b(not|won'?t|never|refuse[sd]?)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]?\b/i,
+  immediate_threat: /\b(hurt|kill|stab|shoot|beat|smash|burn|harm|break (in|down|the|your)|(you'?ll|you will) (regret|pay))\b/i,
+  hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
+  pressure_after_rule: /\b(just|please|come on|hurry|quick(ly)?|now|urgent(ly)?|right now|immediately|last chance|let me (in|inside|through)|open (it|up|the door))\b/i,
+  pressure_after_boundary: /\b(just|please|come on|hurry|quick(ly)?|now|urgent(ly)?|right now|immediately|last chance|let me (in|inside|through)|open (it|up|the door))\b/i,
+}
+
+export function phraseMatches(code: Behaviour, quote: string): boolean {
+  const re = PHRASE_PATTERNS[code]
+  return re ? re.test(quote) : true
+}
+
+/** Identity of an event. Speech events with the same words are one event. Sensor and report events are told apart by time. */
+export function observationKey(o: Pick<Observation, 'code' | 'quotes' | 'source' | 'at' | 'debug'>): string {
+  return o.source === 'transcript' ? `${o.code}|${o.quotes.map(norm).join('|')}` : `${o.code}|${o.source}|${o.debug?.eventId ?? o.at}`
+}
+
 export function scoreObservations(observations: Observation[], ctx: { transcript: string; interviewState?: InterviewState }): RiskScore {
-  const used = new Map<Behaviour, number>()
+  const usedPoints = new Map<Behaviour, number>()
+  const occurrences = new Map<Behaviour, number>()
+  const seen = new Set<string>()
   const confirmed = new Set<Behaviour>()
+  const uncertainCodes = new Set<Behaviour>()
   const ledger: LedgerEntry[] = []
   let total = 0
   let minScore = 0
   const interviewState = ctx.interviewState ?? {}
 
-  for (const o of observations) {
-    // Skip interview state stamps (they don't contribute to scoring directly)
-    if (o.isStamp) {
-      ledger.push({
-        code: o.code,
-        at: o.at,
-        quote: o.quotes[0] ?? '',
-        source: o.source,
-        state: 'confirmed',
-        points: 0,
-        debug: o.debug,
-      })
-      continue
-    }
+  observations.forEach((o, idx) => {
+    // Interview stamps are bookkeeping, not evidence. They never appear in the ledger.
+    if (o.isStamp) return
 
-    const quote = o.quotes[0] ?? ''
-    const entry = (state: EvidenceState, points: number): LedgerEntry => ({
-      code: o.code,
-      at: o.at,
-      quote,
-      source: o.source,
-      state,
-      points,
-      debug: o.debug,
+    const quote = o.quotes.join(' | ')
+    const entry = (state: EvidenceState, points: number, debug?: Record<string, unknown>): LedgerEntry => ({
+      idx, code: o.code, at: o.at, quote, source: o.source, state, points, debug: { ...o.debug, ...debug },
     })
+    const reject = (state: EvidenceState, why: string) => { ledger.push(entry(state, 0, { why })) }
 
-    if (!isBehaviour(o.code)) { ledger.push(entry('uncertain', 0)); continue }
-
+    if (!isBehaviour(o.code)) return reject('uncertain', 'unknown_code')
     const rule = RISK_RULES[o.code]
 
-    // Unavailable state: zero points
-    if (o.state === 'unavailable') {
-      ledger.push(entry('unavailable', 0))
-      continue
-    }
+    if (o.retracted) return reject('uncertain', 'retracted_by_helper')
+    if (o.state === 'unavailable') return reject('unavailable', 'evidence_unavailable')
 
-    // Uncertain state: zero points, but may still set floor for physical/threat events
     if (o.state === 'uncertain') {
-      ledger.push(entry('uncertain', 0))
-      // Physical or threat events still set the floor even if uncertain
-      if (rule.floor) {
-        confirmed.add(o.code)
-      }
-      continue
+      if (rule.uncertainFloor) uncertainCodes.add(o.code)
+      return reject('uncertain', 'marked_uncertain')
     }
 
-    // P7: Check interview state prerequisites for conditional codes
-    if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) {
-      ledger.push(entry('uncertain', 0))
-      continue
+    // A helper's confirmation replaces the automatic checks. Everything else must pass them.
+    const byHelper = o.source === 'helper'
+
+    if (!byHelper) {
+      if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) return reject('uncertain', 'rules_not_explained_yet')
+      if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) return reject('uncertain', 'boundary_not_stated_yet')
+      if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
+      if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
     }
-    if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) {
-      ledger.push(entry('uncertain', 0))
-      continue
-    }
-    if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) {
-      ledger.push(entry('uncertain', 0))
-      continue
-    }
-    if (o.code === 'extra_knock' && !interviewState.respondingAt) {
-      ledger.push(entry('uncertain', 0))
-      continue
+    if (!rule.sources.includes(o.source)) return reject('uncertain', 'source_not_allowed')
+
+    if (o.source === 'transcript') {
+      const needQuotes = o.code === 'purpose_contradiction' ? 2 : 1
+      if (o.quotes.length < needQuotes) return reject('uncertain', 'needs_two_quotes')
+      if (!o.quotes.every(q => quoteIsGrounded(q, ctx.transcript))) return reject('uncertain', 'quote_not_in_transcript')
+      // Quality is judged on the segment the words came from. A one-word quote ("pin") must still be able to confirm.
+      if (!passesTranscriptionQuality(o.segment ?? ctx.transcript, o.transcriptQuality)) return reject('uncertain', 'transcription_quality')
+      if (!o.quotes.every(q => phraseMatches(o.code, q))) return reject('uncertain', 'wording_does_not_match')
     }
 
-    // Confirmed state
-    if (!rule.sources.includes(o.source)) {
-      ledger.push(entry('uncertain', 0))
-      continue
-    }
-    if (o.source === 'transcript' && !quoteIsGrounded(quote, ctx.transcript)) {
-      ledger.push(entry('uncertain', 0))
-      continue
-    }
-    // Check transcription quality for transcript sources
-    if (o.source === 'transcript' && !passesTranscriptionQuality(quote, o.transcriptQuality)) {
-      ledger.push(entry('uncertain', 0))
-      continue
-    }
+    // Count each distinct event once.
+    const key = observationKey(o)
+    if (seen.has(key)) return reject('confirmed', 'duplicate_event')
+    seen.add(key)
 
     confirmed.add(o.code)
 
-    // Handle score-override codes (immediate_threat, forced_entry_or_assault)
     if (rule.minScore !== undefined) {
       minScore = Math.max(minScore, rule.minScore)
       ledger.push(entry('confirmed', 0))
-      continue
+      return
     }
 
-    // Handle tiered scoring (purpose_contradiction)
-    const count = (used.get(o.code) ?? 0)
-    const points = rule.tiers ? (rule.tiers[count] ?? rule.tiers[rule.tiers.length - 1]) : rule.points
-
-    // Handle cap
-    if (rule.cap !== null) {
-      const room = Math.max(0, rule.cap - count)
-      const add = Math.min(points, room)
-      used.set(o.code, count + add)
-      total += add
-      ledger.push(entry('confirmed', add))
-    } else {
-      used.set(o.code, count + points)
-      total += points
-      ledger.push(entry('confirmed', points))
-    }
-  }
+    const occ = occurrences.get(o.code) ?? 0
+    occurrences.set(o.code, occ + 1)
+    const wanted = rule.tiers ? (rule.tiers[occ] ?? rule.tiers[rule.tiers.length - 1]) : rule.points
+    const spent = usedPoints.get(o.code) ?? 0
+    const add = rule.cap === null ? wanted : Math.max(0, Math.min(wanted, rule.cap - spent))
+    usedPoints.set(o.code, spent + add)
+    total += add
+    ledger.push(entry('confirmed', add))
+  })
 
   let minMode: ControlMode = 'ai_leads'
   for (const b of confirmed) { const f = RISK_RULES[b].floor; if (f) minMode = maxMode(minMode, f) }
+  // An event that is not yet confirmed still raises the mode when it is physical or a threat. It never lowers one.
+  for (const b of uncertainCodes) { const f = RISK_RULES[b].uncertainFloor; if (f) minMode = maxMode(minMode, f) }
   for (const c of COMBO_FLOORS) if (c.all.every(b => confirmed.has(b))) minMode = maxMode(minMode, c.floor)
 
-  // Apply minScore from override codes
-  const finalScore = Math.max(minScore, total)
-  // Cap at 99 unless forced_entry_or_assault sets it to 100
-  const score = minScore === 100 ? 100 : Math.min(99, finalScore)
-
+  // 100 is reserved for a confirmed forced entry or assault. Ordinary points stop at 99.
+  const score = minScore >= 100 ? 100 : Math.min(99, Math.max(minScore, total))
   return { score, ledger, minMode }
 }
 
@@ -427,24 +422,28 @@ export const NOTE_ONLY_CATEGORIES = [
   'story_mismatch',
 ] as const
 
-export function observationsFromEvidence(evidence: { category: string; quote: string }[]): { observations: Observation[]; notes: string[] } {
+export function observationsFromEvidence(
+  evidence: { category: string; quote: string }[],
+  opts?: { segment?: string; transcriptQuality?: number },
+): { observations: Observation[]; notes: string[] } {
   const observations: Observation[] = []
   const notes: string[] = []
+  const contradictionQuotes: string[] = []
+  const base = (code: Behaviour, quotes: string[]): Observation => ({
+    code, at: new Date().toISOString(), quotes, source: 'transcript',
+    // The model only EXTRACTS. State here is the claim; scoreObservations applies the real checks (quote in transcript,
+    // quality, wording, interview state) and records 'uncertain' in the ledger when one fails.
+    state: 'confirmed', points: 0, segment: opts?.segment, transcriptQuality: opts?.transcriptQuality,
+  })
   for (const e of evidence) {
     const b = CATEGORY_TO_BEHAVIOUR[e.category]
-    if (b) {
-      observations.push({
-        code: b,
-        at: new Date().toISOString(),
-        quotes: [e.quote],
-        source: 'transcript',
-        state: 'uncertain', // Uncertain until confirmed by quality check or helper
-        points: 0,
-        transcriptQuality: undefined, // Will be set by caller if available
-      })
-    } else if (!notes.includes(e.category)) {
-      notes.push(e.category)
-    }
+    if (!b) { if (!notes.includes(e.category)) notes.push(e.category); continue }
+    if (b === 'purpose_contradiction') { contradictionQuotes.push(e.quote); continue }
+    observations.push(base(b, [e.quote]))
+  }
+  // Spec 4.3: a contradiction needs BOTH quotes. Quotes are paired in the order the model found them.
+  for (let i = 0; i < contradictionQuotes.length; i += 2) {
+    observations.push(base('purpose_contradiction', contradictionQuotes.slice(i, i + 2)))
   }
   return { observations, notes }
 }

@@ -27,7 +27,6 @@
  */
 
 import type { DoorCase } from './store'
-import { EMERGENCY_TIMER_SECONDS } from '@/lib/doorstep/riskRules'
 
 export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted'
 
@@ -102,10 +101,10 @@ export async function escalateEmergencyCase(
   const log = [...c.log, { t: now, msg: '⚠️ EMERGENCY: immediate threat or forced entry detected. All helpers alerted immediately.' }]
   log.push({ t: now, msg: 'Resident told to keep door closed and move away. Never show "safe to open".' })
 
-  // Update case to emergency mode with 60s timer (Section 5.3)
+  // Emergency: move deadline to end of 30-minute case window, no acknowledgement timer
   const change: StepChange = {
     helperIndex: c.helperIndex,
-    deadlineAt: now + EMERGENCY_TIMER_SECONDS * 1000,
+    deadlineAt: now + 30 * 60 * 1000, // 30-minute case window
     status: 'waiting',
     lane: c.lane,
   }

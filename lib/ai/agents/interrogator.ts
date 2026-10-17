@@ -32,18 +32,8 @@ export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'fail
 
 /** P7: Stamp interview state when specific lines are spoken. */
 async function stampInterviewState(householdId: string, caseId: string, stampType: keyof InterviewState) {
-  const existing = await getCaseAi(householdId, caseId)
-  const currentObs = existing?.riskObservations as any
-  const interviewState = currentObs?.interviewState ?? {}
-  interviewState[stampType] = new Date().toISOString()
-  const stamp = createInterviewStamp(stampType, interviewState[stampType])
-  const observations = currentObs?.observations ?? []
-  await setCaseAi(caseId, {
-    riskObservations: {
-      observations: [...observations, stamp],
-      interviewState,
-    },
-  })
+  const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
+  await applyRiskEdit(caseId, { kind: 'interview', stampType, at: new Date().toISOString() })
 }
 
 interface InterrogationTurn {
@@ -194,7 +184,7 @@ export async function processAnswer(
       await setCaseAi(caseId, {
         interrogationTurns: updated as any, interrogationState: 'asking',
         riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
-        riskScore: live.score, riskLedger: live.ledger as any, controlMode: control.mode,
+        // riskScore, riskLedger, controlMode are now written by applyRiskEdit
       })
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
@@ -268,7 +258,7 @@ export async function processAnswer(
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
       visitorSummary: out.realReasonSummary ?? undefined,
       riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
-      riskScore: live.score, riskLedger: live.ledger as any, controlMode: control.mode,
+      // riskScore, riskLedger, controlMode are now written by applyRiskEdit
     })
     return { question: nextQuestion, final: false, close: null }
   } catch (e) {
@@ -329,15 +319,20 @@ async function finishInterrogation(
   const verdict = modelResult?.verdict || 'unclear'
   const claims = modelResult?.claims || { name: null, organisation: null, reason: null, forWhom: null, time: null }
 
+  // Write the fresh model pass through the single risk writer.
+  const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
+  await applyRiskEdit(caseId, {
+    kind: 'fresh',
+    observations: risk.observations,
+    interviewState: interviewState,
+  })
+
+  // The remaining fields are still written by setCaseAi (no risk fields).
   await setCaseAi(caseId, {
     visitorSummary: summary,
     riskFlags: flags,
     riskLevel: risk.level,
     riskAssessment: { ...risk, control } as any,
-    riskScore: risk.score,
-    riskLedger: risk.ledger as any,
-    riskObservations: risk.ledger as any, // Store observations for re-scoring
-    controlMode: control.mode,
     interrogationTurns: turns as any,
     interrogationVerdict: verdict,
     interrogationClaims: { ...claims, checklist: coverage } as any,
