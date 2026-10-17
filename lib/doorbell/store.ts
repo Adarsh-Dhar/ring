@@ -6,6 +6,7 @@ import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHouse
 import { getMembership, getApprovedMemberships } from '../db/memberships'
 import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
+import { evaluateNotice, parseNoticeSettings, type NoticeStatus } from '../doorstep/noticePolicy'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
 import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
@@ -40,6 +41,7 @@ export interface ExpectedVisit {
   requestId?:  string   // VisitRequest that created this visit
   singleUse?:  boolean
   usedAt?:     number
+  arrangedAt?: number   // when the visit was arranged; the start of the minimum-notice check
 }
 
 export interface RecurringVisit {
@@ -93,6 +95,7 @@ export interface DoorCase {
   checkCodeEndsAt?: number // resident snapshot only — when the code changes next
   expectedId?:   string    // ExpectedVisit that matched (null for recurring or unplanned)
   selfVerifiedAt?: number  // set when resident confirms the passphrase
+  noticeStatus?: NoticeStatus // minimum-notice result (spec section 3). Never a risk input.
   regularId?:    string    // RegularVisitor whose face the door camera matched (a hint for the helper, never permission)
 }
 
@@ -186,6 +189,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       expectedId:    (c as any).expectedId    || undefined,
       selfVerifiedAt: (c as any).selfVerifiedAt ? new Date((c as any).selfVerifiedAt).getTime() : undefined,
       regularId:     (c as any).regularId     || undefined,
+      noticeStatus:  ((c as any).noticeStatus as NoticeStatus) || undefined,
     }))
 
     const approved = await getApprovedMemberships(householdId)
@@ -222,6 +226,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       requestId:  (e as any).requestId  || undefined,
       singleUse:  !!(e as any).singleUse,
       usedAt:     (e as any).usedAt ? new Date((e as any).usedAt).getTime() : undefined,
+      arrangedAt: (e as any).arrangedAt ? new Date((e as any).arrangedAt).getTime() : undefined,
     }))
 
     const dbRecurring = await getRecurringVisitsForHousehold(householdId)
@@ -332,6 +337,7 @@ async function refreshCasesFromDB(
       ? new Date((row as any).selfVerifiedAt).getTime()
       : undefined,
     regularId: (row as any).regularId || undefined,
+    noticeStatus: ((row as any).noticeStatus as NoticeStatus) || undefined,
   }));
 }
 
@@ -669,7 +675,16 @@ async function openCase(
     expectedId:  m && !m.recurring ? m.id : undefined,
   }
 
+  // Minimum-notice policy. Separate from risk: it can require approval, it never adds points.
+  const planned = m && !m.recurring ? state.expected.find(x => x.id === m.id) : undefined
+  const notice = evaluateNotice(
+    { arrangedAt: planned?.arrangedAt, visitStartsAt: planned?.startsAt, standing: !!m?.recurring },
+    parseNoticeSettings(household),
+  )
+  c.noticeStatus = notice.status
+
   addLog(c, note)
+  if (notice.status === 'short_notice') addLog(c, notice.reason)
 
   if (m) {
     if (m.recurring) {
@@ -1014,7 +1029,7 @@ export async function addExpected(
   who?: string, passphrase?: string
 ): Promise<ExpectedVisit> {
   const state = await getOrCreateState(householdId)
-  const e: ExpectedVisit = { id: newId('exp'), icon, label, startsAt, endsAt, who: clean(who), passphrase: clean(passphrase) }
+  const e: ExpectedVisit = { id: newId('exp'), icon, label, startsAt, endsAt, who: clean(who), passphrase: clean(passphrase), arrangedAt: Date.now() }
   await createExpectedVisit({ householdId, ...e })   // write first: a failed write leaves nothing half-created in memory
   state.expected.push(e)
   return e
@@ -1037,6 +1052,7 @@ export async function addExpectedFromRequest(
     codeSecret: newSecret(),
     requestId:  r.requestId,
     singleUse:  true,
+    arrangedAt: Date.now(),
   }
   await createExpectedVisit({ householdId, ...e })
   state.expected.push(e)

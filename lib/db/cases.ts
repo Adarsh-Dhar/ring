@@ -40,6 +40,7 @@ export async function createCase(data: DoorCase & { householdId: string }) {
       expectedId: data.expectedId ?? null,
       selfVerifiedAt: data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null,
       regularId: data.regularId ?? null,
+      noticeStatus: data.noticeStatus ?? null,
     }
   })
 }

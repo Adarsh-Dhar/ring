@@ -42,6 +42,9 @@ model Household {
   aiEnabled         Boolean            @default(false)
   aiGreeter         Boolean            @default(false)
   aiInterrogator    Boolean?           @default(false)
+  minNoticeHours       Int?
+  shortNoticePolicy    String             @default("helper_approval")
+  unknownVisitorPolicy String             @default("ai_first_contact")
   AiRun             AiRun[]
   cases             Case[]
   devices           Device[]
@@ -191,6 +194,7 @@ model Case {
   interrogationTurns   Json?     @default("[]") @db.Json
   interrogationVerdict String?
   interrogationClaims  Json?     @db.Json
+  noticeStatus         String?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])
@@ -210,6 +214,7 @@ model ExpectedVisit {
   requestId   String?
   singleUse   Boolean   @default(false)
   usedAt      DateTime?
+  arrangedAt  DateTime?
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])

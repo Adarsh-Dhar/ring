@@ -21,6 +21,7 @@ export async function createExpectedVisit(data: ExpectedVisit & { householdId: s
       requestId:   data.requestId  ?? null,
       singleUse:   !!data.singleUse,
       usedAt:      data.usedAt ? new Date(data.usedAt) : null,
+      arrangedAt:  data.arrangedAt ? new Date(data.arrangedAt) : null,
     }
   })
 }
