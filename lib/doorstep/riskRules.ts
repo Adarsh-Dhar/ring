@@ -226,12 +226,20 @@ export interface Observation {
   debug?: Record<string, unknown>
   /** Transcription quality (0-1) for transcript sources. */
   transcriptQuality?: number
-  /** If true, this is an interview state stamp, not a real observation. */
-  isStamp?: boolean
   /** The transcript segment the quote came from. The quality check runs on this, never on the bare quote. */
   segment?: string
   /** A helper rejected this event. It never scores again, and a re-score never brings it back. */
   retracted?: boolean
+}
+
+/** P11: Interview state stamp - a separate type from Observation, no longer a workaround. */
+export interface InterviewStamp {
+  /** The interview state milestone this represents. */
+  type: keyof InterviewState
+  /** ISO timestamp when this milestone was reached. */
+  at: string
+  /** Marked as a stamp for type safety. */
+  isStamp: true
 }
 
 export interface LedgerEntry {
@@ -279,8 +287,10 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   refuse_to_leave: /\b(not|won'?t|never|refuse[sd]?)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]?\b/i,
   immediate_threat: /\b(hurt|kill|stab|shoot|beat|smash|burn|harm|break (in|down|the|your)|(you'?ll|you will) (regret|pay))\b/i,
   hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
-  pressure_after_rule: /\b(just|please|come on|hurry|quick(ly)?|now|urgent(ly)?|right now|immediately|last chance|let me (in|inside|through)|open (it|up|the door))\b/i,
-  pressure_after_boundary: /\b(just|please|come on|hurry|quick(ly)?|now|urgent(ly)?|right now|immediately|last chance|let me (in|inside|through)|open (it|up|the door))\b/i,
+  // P1: Tightened pattern - requires access-demand wording, not just urgency words
+  pressure_after_rule: /\b(let me (in|inside|through)|open (it|up|the door))\b/i,
+  // P1: Tightened pattern - requires access-demand wording, not just urgency words
+  pressure_after_boundary: /\b(let me (in|inside|through)|open (it|up|the door)|i'?m not going to wait)\b/i,
 }
 
 export function phraseMatches(code: Behaviour, quote: string): boolean {
@@ -449,14 +459,10 @@ export function observationsFromEvidence(
 }
 
 /** Helper to create an interview state stamp. */
-export function createInterviewStamp(type: keyof InterviewState, timestamp?: string): Observation {
+export function createInterviewStamp(type: keyof InterviewState, timestamp?: string): InterviewStamp {
   return {
-    code: 'extra_knock' as any, // Stamp code (won't be scored, isStamp=true)
+    type,
     at: timestamp ?? new Date().toISOString(),
-    quotes: [`Interview state: ${type}`],
-    source: 'transcript',
-    state: 'confirmed',
-    points: 0,
     isStamp: true,
   }
 }

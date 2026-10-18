@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { scoreObservations, observationsFromEvidence, phraseMatches, type Observation, type InterviewState } from '@/lib/doorstep/riskRules'
+import { scoreObservations, observationsFromEvidence, phraseMatches, type Observation, type InterviewState, type InterviewStamp } from '@/lib/doorstep/riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk } from '@/lib/doorstep/caseRisk'
 
 describe('Round 2 patch tests (Section 4 live flow)', () => {
@@ -86,6 +86,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
         makeObs('credential_request', 'transcript', 'I need your PIN'),
         makeObs('refuse_to_leave', 'transcript', 'not leaving'),
       ],
+      stamps: [],
       interviewState: {},
       corrections: [],
     }
@@ -98,6 +99,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
   it('#13: reject marks event as retracted', () => {
     const stored: StoredRisk = {
       observations: [makeObs('credential_request', 'transcript', 'I need your PIN')],
+      stamps: [],
       interviewState: {},
       corrections: [],
     }
@@ -117,17 +119,17 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
       observations: [
         makeObs('extra_knock', 'sensor', ''),
         makeObs('forced_entry_or_assault', 'resident', 'SOS'),
-        { ...makeObs('credential_request', 'transcript', 'PIN'), isStamp: true },
       ],
+      stamps: [{ type: 'respondingAt', at: new Date().toISOString(), isStamp: true }],
       interviewState: {},
       corrections: [{ idx: 0, action: 'confirm', at: new Date().toISOString() }],
     }
     const fresh = [makeObs('refuse_to_leave', 'transcript', 'not leaving')]
     const merged = mergeFresh(stored, fresh)
-    expect(merged.observations.length).toBe(4) // All 3 kept + 1 fresh
+    expect(merged.observations.length).toBe(3) // 2 kept + 1 fresh
+    expect(merged.stamps.length).toBe(1) // Stamp kept separately
     expect(merged.observations[0].code).toBe('extra_knock')
     expect(merged.observations[1].code).toBe('forced_entry_or_assault')
-    expect(merged.observations[2].isStamp).toBe(true)
   })
 
   it('#3: mergeFresh drops non-touched model events', () => {
@@ -142,11 +144,11 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     expect(merged.observations[0].code).toBe('refuse_to_leave')
   })
 
-  it('#14: interview stamps have isStamp flag', () => {
+  it('#14: interview stamps are separate from observations', () => {
     const obs = makeObs('extra_knock', 'sensor', '')
-    obs.isStamp = true
     const risk = scoreObservations([obs], { transcript: '' })
-    expect(risk.ledger.some(e => e.code === 'extra_knock')).toBe(false) // Stamps don't appear in ledger
+    expect(risk.ledger.some(e => e.code === 'extra_knock')).toBe(true) // Observations appear in ledger
+    // Stamps are not passed to scoreObservations anymore
   })
 
   it('#11: ledger entries have idx field', () => {
@@ -217,6 +219,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     const oldLedger = [{ code: 'credential_request', at: new Date().toISOString(), quote: 'PIN', source: 'transcript', state: 'confirmed', points: 20 }]
     const stored = readStored(oldLedger)
     expect(stored.observations).toEqual([])
+    expect(stored.stamps).toEqual([])
     expect(stored.interviewState).toEqual({})
     expect(stored.corrections).toEqual([])
   })
@@ -224,11 +227,28 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
   it('readStored handles new format correctly', () => {
     const newFormat = {
       observations: [makeObs('credential_request', 'transcript', 'PIN')],
+      stamps: [],
       interviewState: { askedToLeaveAt: new Date().toISOString() },
       corrections: [],
     }
     const stored = readStored(newFormat)
     expect(stored.observations.length).toBe(1)
+    expect(stored.stamps).toEqual([])
     expect(stored.interviewState.askedToLeaveAt).toBeDefined()
+  })
+
+  it('readStored migrates old isStamp observations to stamps', () => {
+    const oldFormat = {
+      observations: [
+        makeObs('credential_request', 'transcript', 'PIN'),
+        { ...makeObs('extra_knock', 'transcript', ''), isStamp: true },
+      ],
+      interviewState: {},
+      corrections: [],
+    }
+    const stored = readStored(oldFormat)
+    expect(stored.observations.length).toBe(1) // Only real observation
+    expect(stored.stamps.length).toBe(1) // Stamp migrated
+    expect(stored.stamps[0].isStamp).toBe(true)
   })
 })

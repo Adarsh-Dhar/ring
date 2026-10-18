@@ -150,6 +150,42 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     }
   })
 
+  // P1: Tightened pressure phrase patterns
+  it('P1: parcel sentence with "please" scores 0 (no access demand)', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('pressure_after_rule', 'transcript', 'please can you tell the resident I have a parcel')], 'please can you tell the resident I have a parcel', interviewState)
+    expect(r.score).toBe(0)
+  })
+
+  it('P1: "let me in" scores 5 after rules explained', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('pressure_after_rule', 'transcript', 'let me in')], 'let me in', interviewState)
+    expect(r.score).toBe(5)
+  })
+
+  it('P1: "let me in" scores 0 before rules explained', () => {
+    const interviewState: InterviewState = {}
+    const r = scoreWithTranscript([makeObs('pressure_after_rule', 'transcript', 'let me in')], 'let me in', interviewState)
+    expect(r.score).toBe(0)
+  })
+
+  it('P1: repeated pressure attempts capped at 5 for pressure_after_rule', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const obs = [
+      makeObs('pressure_after_rule', 'transcript', 'let me in'),
+      makeObs('pressure_after_rule', 'transcript', 'open the door now'),
+      makeObs('pressure_after_rule', 'transcript', 'i need to get inside'),
+    ]
+    const r = scoreWithTranscript(obs, 'let me in open the door now i need to get inside', interviewState)
+    expect(r.score).toBe(5) // 5 + 1 + 1, capped at 5 for pressure_after_rule
+  })
+
+  it('P1: "open up" after boundary scores 1', () => {
+    const interviewState: InterviewState = { boundaryStatedAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('pressure_after_boundary', 'transcript', 'open up')], 'open up', interviewState)
+    expect(r.score).toBe(1)
+  })
+
   it('unknown behaviour names are ignored, never scored', () => {
     const r = score([makeObs('looks_suspicious', 'helper', '')])
     expect(r.score).toBe(0); expect(r.ledger[0].state).toBe('uncertain')

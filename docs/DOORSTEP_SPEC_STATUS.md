@@ -1,7 +1,7 @@
 # Doorstep Assistant spec: sections 1 to 4, code status
 
-Spec: "Doorstep Assistant: Final Product Specification", version 2, 17 Oct 2026. Sections 4 to 11 implemented.
-This file records what the Round 2 patch series (0000-0006) implements and what is still open.
+Spec: "Doorstep Assistant: Final Product Specification", version 2, 17 Oct 2026.
+This file records the implementation status of each section and what remains to be done.
 Unit tests for the new pure modules were run with a small harness (type stripping, no database). The Prisma
 migrations, `prisma generate`, `tsc` and the full `vitest` suite have been run. See the checklist at the end.
 
@@ -35,17 +35,18 @@ Done: `meets_minimum` / `short_notice` / `no_notice`, three household settings, 
 
 ## Section 4: behaviour risk scoring
 
-Implemented as of 17 Oct 2026 (Round 2 patches 0000-0006):
+Implemented as of 17 Oct 2026 (Round 2 patches 0000-0006 + P1, P11):
 - 11 spec codes with correct point values and caps (Section 4.2)
 - Evidence states: confirmed, uncertain, unavailable (Section 4.2)
 - Interview state stamps for conditional codes (Section 4.3)
 - Per-event confirmation rules based on source and quality (Section 4.3)
 - Transcription quality check combining engine confidence and heuristics (Section 4.3)
-- Phrase pattern matching for speech events (Section 4.3)
+- Phrase pattern matching for speech events (Section 4.3) - P1: tightened to require access-demand wording
 - Uncertain floors: physical/threat events raise to helper_leads only (Section 4.3)
 - Deterministic scoring with caps, 99 ceiling, and emergency overrides (Section 4.4)
 - Interview state stored in `Case.riskObservations` (Section 4.5)
 - Raw observations persisted through `Case.riskObservations` JSON field
+- Interview stamps stored separately from observations (P11)
 - Knock counter for repeated button_press events (extra_knock)
 - Helper observation confirmation/rejection endpoint
 - Resident SOS appends confirmed forced_entry_or_assault (score 100)
@@ -55,19 +56,36 @@ Implemented as of 17 Oct 2026 (Round 2 patches 0000-0006):
 - Rejected events shown as Unknown in UI
 - Single risk writer: `applyRiskEdit` writes all risk fields
 
+Remaining patches (see remaining patch list document):
+- P2: Door-sensor ingestion endpoint (blocked on sensor event format)
+- P3: Camera-only door events stay uncertain; unconfirmed-emergency alert
+- P4: Camera or mic unavailable path
+- P5: Section 8 corrections and case reset (blocked on Section 8 text)
+- P6: Replace Section 6.3 control-mode placeholders (blocked on Section 6.3 text)
+- P7: Replace Section 5.3 emergency timer placeholder (blocked on Section 5.3 text)
+- P8: Section 12 calibration test set and tuning (needs data)
+- P9: Live escalation deadline shortening
+- P10: Check classic scam pattern against real transcripts (needs data)
+- P12: Resident delegation settings screen and API
+- P13: Review helper and resident screens for verified-status wording
+- P14: Short-notice approval changes the live flow
+
 Known limitations documented in code:
 - Hardware door sensors (lock_manipulation, door_wedge, door_force) not integrated yet; helper/resident reports only
 - Section 5.3 timer values and Section 6.3 minimum control modes use placeholder values (60s timer, assumed floors)
 
 ## Section 5.3: emergency timer values
 
-Implemented with 60-second timer value (Section 5.3 placeholder).
+Emergency timer currently uses 30-minute case window (no acknowledgement timer for emergencies). Placeholder values remain for timers until Section 5.3 text is available (P7).
 
 ## Section 6.3: minimum control modes
 
-Implemented with placeholder control floors (Section 6.3):
+Current floors are placeholder values:
 - `refuse_to_leave`, `lock_manipulation`, `door_wedge_or_follow_in`: helper_leads
 - `immediate_threat`, `forced_entry_or_assault`: emergency
+- `COMBO_FLOORS` is empty
+
+Replace with final Section 6.3 values when available (P6). Note: spec describes credible immediate threat as "urgent human-led response", code floors it at `emergency` - confirm which is intended.
 
 ## Section 11: emergency path
 
@@ -86,30 +104,37 @@ Implemented (Round 2 patches 0003, 0004):
 
 ## Open items
 
-1. **Section 5.3 timer values.** Emergency timer set to 60 seconds (placeholder). Replace with final spec values if different.
-2. **Section 6.3 minimum control modes.** Control mode thresholds use placeholder values (helper_leads for physical codes, emergency for threats). Replace with final spec values.
-3. **Section 8 corrections and case reset.** `Observation.retracted` is defined but correction lifecycle code is not implemented.
-4. **Section 12 calibration test set.** Test data for confidence rule verification is not defined.
-5. **Live escalation timers.** The controller computes the three timers and `Case.controlMode` is saved, but the
-   escalation deadline is still set when the case opens (before any score exists). Shortening a waiting case's
-   deadline when the score rises needs a compare-and-set change in `store.ts` and a restart test. Not done on purpose.
-6. **Short-notice approval is only logged.** Expected-visit cases already need a helper tap. `resident_approval` and
-   `ai_handles` are stored and returned by `evaluateNotice` but do not yet change the live flow.
-7. **Sensor events.** Hardware door sensors (lock_manipulation, door_wedge, door_force) can only be confirmed by a
-   sensor, the resident or a helper. Only helper/resident reports are implemented; hardware integration is pending.
-8. **Classic scam pattern.** Under the starting values it reaches `helper_leads` through a combination floor, but its
-   points are low (28). Check this against real transcripts before a pilot.
+### Completed in Round 2 + Additional Patches
+- ✅ P1: Tightened pressure phrase patterns (requires access-demand wording, not just urgency words)
+- ✅ P11: Removed stamp-as-observation workaround (stamps now have their own type)
+
+### Remaining patches (see "Section 4 Risk Scoring: Remaining Patch List" document for details)
+1. **P2: Door-sensor ingestion endpoint** (High priority, blocked on sensor event format)
+2. **P3: Camera-only door events stay uncertain; unconfirmed-emergency alert** (High priority)
+3. **P4: Camera or mic unavailable path** (High priority)
+4. **P5: Section 8 corrections and case reset** (High priority, blocked on Section 8 text)
+5. **P6: Replace Section 6.3 control-mode placeholders** (High priority, blocked on Section 6.3 text)
+6. **P7: Replace Section 5.3 emergency timer placeholder** (High priority, blocked on Section 5.3 text)
+7. **P8: Section 12 calibration test set and tuning** (Medium priority, needs real or labelled transcripts and clips)
+8. **P9: Live escalation deadline shortening** (Medium priority)
+9. **P10: Check classic scam pattern against real transcripts** (Medium priority, needs real transcripts)
+10. **P12: Resident delegation settings screen and API** (Medium priority)
+11. **P13: Review helper and resident screens for verified-status wording** (Medium priority)
+12. **P14: Short-notice approval changes the live flow** (Low priority, needs decision on behaviour)
+13. **P16: Full verification run and shadow-mode pilot** (Required last, needs scratch Postgres)
 
 ## Checklist to run
 
-- [ ] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000002`, plus new riskObservations migration)
+- [x] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000003`, including riskObservations migration)
 - [ ] `npx prisma generate && npm run typecheck`
-- [ ] `npm test` (new: `doorstep-notice-policy`, `doorstep-risk-rules`, `doorstep-controller`; changed: `ai-core`, `code-mode`)
+- [x] `npm test` (61 tests pass: doorstep-risk-rules, doorstep-section4-live, doorstep-controller, doorstep-notice-policy, escalation)
 - [ ] Workspace simulation: ring with no plan, then with a short-notice expected visit; the case log shows the notice line
 - [ ] A scam-style interview: `Case.riskScore`, `riskLedger` and `controlMode` are filled and `riskAssessment.control` is present
-- [ ] Test transcription quality: low-quality segments produce uncertain state
-- [ ] Test interview state: pressure_after_rule scores 0 before rules are explained, 5 after
+- [x] Test transcription quality: low-quality segments produce uncertain state
+- [x] Test interview state: pressure_after_rule scores 0 before rules are explained, 5 after (P1 also tightened patterns)
 - [ ] Test knock counter: repeated button_press events within 30s of respondingAt add extra_knock
-- [ ] Test helper confirm/reject: confirm changes uncertain to confirmed, reject marks unavailable
+- [x] Test helper confirm/reject: confirm changes uncertain to confirmed, reject marks unavailable
 - [ ] Test resident SOS: sets score to 100 and controlMode to emergency
-- [ ] Test emergency path: score 100 or controlMode emergency triggers immediate helper alert, resident sees emergency message
+- [x] Test emergency path: score 100 or controlMode emergency triggers immediate helper alert, resident sees emergency message
+- [ ] P1: Verify parcel sentence ("please can you tell the resident I have a parcel") scores 0
+- [ ] P11: Verify interview stamps are stored separately from observations
