@@ -79,6 +79,9 @@ export async function GET(req: NextRequest) {
               checkWord: currentCase.checkWord,
               expectedId: currentCase.expectedId,
               regularId: currentCase.regularId,
+              riskScore: currentCase.riskScore,
+              controlMode: currentCase.controlMode,
+              unconfirmedAlertedAt: currentCase.unconfirmedAlertedAt != null ? new Date(currentCase.unconfirmedAlertedAt) : null,
             }] : [],
             deviceOnline: !state.offline,
             lastHeartbeat: new Date(), // the view is computed live; the client detects loss from missing heartbeat events

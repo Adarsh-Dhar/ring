@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authorize, fail } from '@/lib/guard'
 import { getDb } from '@/lib/db/client'
+import { effectiveScore, compareForDashboard } from '@/lib/doorstep/collaborationController'
+import { modeRank, type ControlMode } from '@/lib/doorstep/riskRules'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -88,9 +90,15 @@ export async function GET(
         deadlineAt: true,
         helperIndex: true,
         riskLevel: true,
+        riskScore: true,
+        controlMode: true,
         interrogationState: true,
       },
     })
+    // Spec 5.2: order by S_eff, then event severity, then the most recent event.
+    const ranked = pendingCases
+      .map(c => ({ ...c, effectiveScore: effectiveScore(c.riskScore ?? 0, c.controlMode as ControlMode | null), eventSeverity: modeRank((c.controlMode as ControlMode | null) ?? 'ai_leads'), lastEventAt: c.createdAt.getTime() }))
+      .sort(compareForDashboard)
 
     // Get scheduled visits for today
     const today = new Date()
@@ -130,7 +138,7 @@ export async function GET(
     return NextResponse.json({
       ringStatus: ringConnection ? 'connected' : 'not_connected',
       pendingAlerts: pendingCasesCount,
-      pendingCases: pendingCases,
+      pendingCases: ranked,
       scheduledVisits: scheduledVisits,
       activePasses: activePasses,
       googleCalendarConnected: !!(user?.googleRefreshToken || user?.googleAccessToken),

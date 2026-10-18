@@ -28,6 +28,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -70,6 +71,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -120,6 +122,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -170,6 +173,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -220,6 +224,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -272,6 +277,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -313,6 +319,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -365,6 +372,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -415,6 +423,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
       aiInterrogator: false,
       minNoticeHours: null,
       shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
       unknownVisitorPolicy: 'ai_first_contact',
       preferences: null,
     }
@@ -444,5 +453,59 @@ describe('ResidentView - Fail-Closed Properties', () => {
 
     expect(view.state).toBe('HELPER_CHECKING')
     expect(view.canOpen).toBe(false)
+  })
+
+  it('should return EMERGENCY when unconfirmedAlertedAt is set (spec 4.3 camera-description-alone path)', () => {
+    const household: Household = {
+      id: 'test',
+      residentName: 'Test',
+      timezone: 'Asia/Kolkata',
+      timeoutSec: 30,
+      quietStartHour: 22,
+      quietEndHour: 6,
+      quietEnabled: false,
+      emergencyNumber: '112',
+      residentEpoch: 1,
+      createdAt: new Date(),
+      plannedMode: 'helper',
+      requireResidentOk: false,
+      preset: 'standard',
+      aiEnabled: false,
+      aiGreeter: false,
+      aiInterrogator: false,
+      minNoticeHours: null,
+      shortNoticePolicy: 'helper_approval',
+      approvalTimerSec: null,
+      unknownVisitorPolicy: 'ai_first_contact',
+      preferences: null,
+    }
+
+    const state = {
+      cases: [
+        {
+          id: 'case1',
+          status: 'waiting',
+          kind: 'doorbell',
+          createdAt: new Date(),
+          helperIndex: 0,
+          deadlineAt: new Date(Date.now() + 30000),
+          unconfirmedAlertedAt: new Date(),
+        },
+      ],
+      deviceOnline: true,
+      lastHeartbeat: new Date(),
+      timezone: 'Asia/Kolkata',
+      quietEnabled: false,
+      quietStartHour: 22,
+      quietEndHour: 6,
+      nightLockActive: false,
+    }
+
+    const view = computeResidentView(state, household)
+
+    expect(view.state).toBe('EMERGENCY')
+    expect(view.canOpen).toBe(false)
+    expect(view.message).toContain('Keep the door closed')
+    expect(validateResidentView(view)).toBe(true)
   })
 })

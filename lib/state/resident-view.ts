@@ -45,8 +45,11 @@ export interface CaseInfo {
   checkWord?: string
   expectedId?: string
   regularId?: string
-  riskScore?: number // P11: For emergency detection
-  controlMode?: string // P11: For emergency detection
+  riskScore?: number    // P11: For confirmed emergency detection
+  controlMode?: string  // P11: For confirmed emergency detection
+  /** Spec 4.3: set when an uncertain forced_entry_or_assault has been observed (camera description alone).
+   *  The resident must be shown the keep-closed message even before confirmation arrives. */
+  unconfirmedAlertedAt?: Date | null
 }
 
 export interface StateInfo {
@@ -119,11 +122,13 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     // Get the most recent active case
     const activeCase = activeCases.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
 
-    // P11: Emergency detection - highest priority for active cases
-    if (activeCase.riskScore === 100 || activeCase.controlMode === 'emergency') {
+    // P11 / Spec 4.3: Emergency detection — confirmed OR unconfirmed forced entry both trigger keep-closed.
+    // Confirmed: riskScore===100 or controlMode==='emergency'.
+    // Unconfirmed (spec 4.3 camera-description-alone path): unconfirmedAlertedAt is set.
+    if (activeCase.riskScore === 100 || activeCase.controlMode === 'emergency' || activeCase.unconfirmedAlertedAt) {
       return {
         state: 'EMERGENCY',
-        message: '⚠️ EMERGENCY: Keep door closed and move away. Do not open.',
+        message: '⚠️ Keep the door closed and move away. Do not open. Your helper has been alerted.',
         backgroundColor: '#b71c1c',
         textColor: '#ffffff',
         showVideo: true,

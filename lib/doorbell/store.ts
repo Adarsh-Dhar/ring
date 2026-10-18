@@ -100,6 +100,9 @@ export interface DoorCase {
   regularId?:    string    // RegularVisitor whose face the door camera matched (a hint for the helper, never permission)
   riskScore?:    number    // P11: Risk score for emergency detection
   controlMode?:  string    // P11: Control mode for emergency detection
+  /** Spec 4.3: set when an uncertain forced_entry_or_assault was observed (camera description alone).
+   *  Used by the resident view to show the keep-closed message before confirmation arrives. */
+  unconfirmedAlertedAt?: number | null
 }
 
 /** Match result from matchPlanned() */
@@ -193,6 +196,9 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       selfVerifiedAt: (c as any).selfVerifiedAt ? new Date((c as any).selfVerifiedAt).getTime() : undefined,
       regularId:     (c as any).regularId     || undefined,
       noticeStatus:  ((c as any).noticeStatus as NoticeStatus) || undefined,
+      riskScore:     (c as any).riskScore ?? undefined,
+      controlMode:   (c as any).controlMode || undefined,
+      unconfirmedAlertedAt: (c as any).unconfirmedAlertedAt ? new Date((c as any).unconfirmedAlertedAt).getTime() : null,
     }))
 
     const approved = await getApprovedMemberships(householdId)
@@ -343,6 +349,7 @@ async function refreshCasesFromDB(
     noticeStatus: ((row as any).noticeStatus as NoticeStatus) || undefined,
     riskScore: row.riskScore, // P11: Include for emergency detection
     controlMode: row.controlMode, // P11: Include for emergency detection
+    unconfirmedAlertedAt: (row as any).unconfirmedAlertedAt ? new Date((row as any).unconfirmedAlertedAt).getTime() : null,
   }));
 }
 
@@ -725,7 +732,7 @@ async function openCase(
   const m        = kind === 'visitor' ? matchPlanned(state, now, household.timezone, forceRecurringId) : null
   const hasSecret     = !!m?.codeSecret
   const residentCheck = !!m && state.plannedMode === 'resident' && (!!m.passphrase || hasSecret)
-  const secs     = m ? EXPECTED_TIMEOUT_SECONDS : state.timeoutSec
+  let secs       = m ? EXPECTED_TIMEOUT_SECONDS : state.timeoutSec
   const approved = await getApprovedMemberships(state.householdId)
 
   const c: DoorCase = {
@@ -757,6 +764,11 @@ async function openCase(
     parseNoticeSettings(household),
   )
   c.noticeStatus = notice.status
+  // Spec 5.3 approval timer: a rule that needs helper approval uses the resident's timer, at any score (even 0).
+  if (notice.requiresApproval && notice.status === 'short_notice') {
+    secs = parseNoticeSettings(household).approvalTimerSec
+    c.deadlineAt = now + secs * 1000
+  }
 
   addLog(c, note)
   if (notice.status === 'short_notice') addLog(c, notice.reason)

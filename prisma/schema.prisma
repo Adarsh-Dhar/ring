@@ -44,6 +44,7 @@ model Household {
   aiInterrogator    Boolean?           @default(false)
   minNoticeHours       Int?
   shortNoticePolicy    String             @default("helper_approval")
+  approvalTimerSec     Int?
   unknownVisitorPolicy String             @default("ai_first_contact")
   preferences          Json?              @db.Json
   AiRun             AiRun[]

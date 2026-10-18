@@ -21,12 +21,16 @@ export interface NoticeSettings {
   minNoticeHours: number | null
   shortNoticePolicy: ShortNoticePolicy
   unknownVisitorPolicy: UnknownVisitorPolicy
+  /** Section 5.3 approval timer, set by the resident. Pilot default 120 s. */
+  approvalTimerSec: number
 }
 
+export const DEFAULT_APPROVAL_TIMER_SEC = 120
 export const DEFAULT_NOTICE_SETTINGS: NoticeSettings = {
   minNoticeHours: null,
   shortNoticePolicy: 'helper_approval',
   unknownVisitorPolicy: 'ai_first_contact',
+  approvalTimerSec: DEFAULT_APPROVAL_TIMER_SEC,
 }
 
 export interface NoticeInput {
@@ -98,5 +102,6 @@ export function parseNoticeSettings(h: unknown): NoticeSettings {
     minNoticeHours: min,
     shortNoticePolicy: sn === 'resident_approval' || sn === 'ai_handles' || sn === 'helper_approval' ? sn : DEFAULT_NOTICE_SETTINGS.shortNoticePolicy,
     unknownVisitorPolicy: uv === 'helper_first' || uv === 'ai_first_contact' ? uv : DEFAULT_NOTICE_SETTINGS.unknownVisitorPolicy,
+    approvalTimerSec: isNum(o.approvalTimerSec) && o.approvalTimerSec >= 15 && o.approvalTimerSec <= 900 ? Math.round(o.approvalTimerSec) : DEFAULT_APPROVAL_TIMER_SEC,
   }
 }

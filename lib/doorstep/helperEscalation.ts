@@ -9,9 +9,15 @@
 export { escalateDueCase, mergeSaved } from '../doorbell/escalation'
 export type { EscalationDeps, EscalationConfig, EscalationKind, StepChange, StepExpect } from '../doorbell/escalation'
 
-import type { Control } from './collaborationController'
+import { activeTimer, type Control } from './collaborationController'
 
 /** Escalation config for one case. `ackSeconds` is how long each helper has to answer before the next is asked. */
-export function escalationConfigFor(control: Pick<Control, 'timers'>, expectedTimeoutSec: number) {
-  return { timeoutSec: control.timers.ackSeconds, expectedTimeoutSec }
+export function escalationConfigFor(
+  control: Pick<Control, 'timers'>,
+  expectedTimeoutSec: number,
+  ctx: { needsApproval?: boolean; riskDecisionNeeded?: boolean } = {},
+) {
+  // Section 5.3: the shortest applicable timer. Emergency has none (both helpers are alerted at once elsewhere).
+  const t = activeTimer(control.timers, ctx)
+  return { timeoutSec: t?.seconds ?? control.timers.approvalSec, expectedTimeoutSec }
 }

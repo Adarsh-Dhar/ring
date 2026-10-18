@@ -28,6 +28,7 @@ describe('ResidentView - Regression Tests', () => {
     aiInterrogator: false,
     minNoticeHours: null,
     shortNoticePolicy: 'helper_approval',
+    approvalTimerSec: null,
     unknownVisitorPolicy: 'ai_first_contact',
     preferences: null,
   }

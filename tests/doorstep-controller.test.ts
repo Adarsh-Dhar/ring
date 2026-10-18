@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeControl, modeForScore, TIMER_CURVE } from '@/lib/doorstep/collaborationController'
+import { computeControl, modeForScore } from '@/lib/doorstep/collaborationController'
 import { DEFAULT_PREFERENCES, parsePreferences, permittedActions, ALWAYS_PROHIBITED, ACTIONS, type Preferences } from '@/lib/doorstep/residentPreferences'
 import { CONTROL_MODES, modeRank, type ControlMode } from '@/lib/doorstep/riskRules'
 import { escalationConfigFor, escalateDueCase } from '@/lib/doorstep/helperEscalation'
@@ -39,16 +39,9 @@ describe('collaboration controller (spec sections 1, 2, 5)', () => {
     expect(ctl(5, 'helper_only').helperPriority).toBeGreaterThan(ctl(35).helperPriority)
   })
 
-  it('three separate timers, each shrinking with the score and each reaching its own floor', () => {
-    const keys = ['ackSeconds', 'decisionSeconds', 'noResponseSeconds'] as const
-    for (const k of keys) {
-      let prev = Infinity
-      for (let s = 0; s <= 100; s++) {
-        const v = ctl(s).timers[k]
-        expect(v).toBeLessThanOrEqual(prev); expect(v).toBeGreaterThanOrEqual(TIMER_CURVE[k].min); prev = v
-      }
-      expect(ctl(100).timers[k]).toBe(TIMER_CURVE[k].min)
-    }
+  it('risk-decision timer is 120 minus S_eff between 1 and 99, none at 0 and 100', () => {
+    expect(ctl(0).timers.riskDecisionSec).toBeNull(); expect(ctl(100).timers.riskDecisionSec).toBeNull()
+    for (let s = 1; s <= 99; s++) expect(ctl(s).timers.riskDecisionSec).toBe(120 - s)
   })
 
   it('modeForScore clamps nonsense input', () => {
@@ -110,7 +103,7 @@ describe('resident preferences and permitted actions', () => {
 describe('helper escalation wrapper', () => {
   it('re-exports the tested step engine', () => { expect(typeof escalateDueCase).toBe('function') })
   it('takes its acknowledgement timeout from the control mode', () => {
-    expect(escalationConfigFor(ctl(0), 60)).toEqual({ timeoutSec: ctl(0).timers.ackSeconds, expectedTimeoutSec: 60 })
-    expect(escalationConfigFor(ctl(100), 60).timeoutSec).toBeLessThan(escalationConfigFor(ctl(0), 60).timeoutSec)
+    expect(escalationConfigFor(ctl(0), 60)).toEqual({ timeoutSec: ctl(0).timers.approvalSec, expectedTimeoutSec: 60 })
+    expect(escalationConfigFor(ctl(80), 60).timeoutSec).toBeLessThan(escalationConfigFor(ctl(0), 60).timeoutSec)
   })
 })

@@ -5,6 +5,7 @@
  * Pure, no imports. Defaults reproduce today's behaviour: the AI is advisory, helpers decide, nothing unlocks.
  */
 import type { ControlMode } from './riskRules'
+import { AUTHORITY_COST, type GatedTool } from './authorityCosts'
 
 export const DECISIONS = ['greet_visitor', 'ask_purpose', 'ask_for_id', 'tell_visitor_to_leave', 'accept_parcel', 'approve_short_notice'] as const
 export type Decision = (typeof DECISIONS)[number]
@@ -71,6 +72,15 @@ const AI_ACTIONS: { action: Action; decision: Decision }[] = [
   { action: 'accept_parcel', decision: 'accept_parcel' },
 ]
 
+/** Which gated tool each AI action uses (section 5.4). */
+export const ACTION_TOOL: Record<'greet_visitor' | 'ask_purpose' | 'ask_for_id' | 'tell_visitor_to_leave' | 'accept_parcel', GatedTool> = {
+  greet_visitor: 'greet_routine_request',
+  ask_purpose: 'neutral_verification_question',
+  ask_for_id: 'neutral_verification_question',
+  tell_visitor_to_leave: 'boundary_statement',
+  accept_parcel: 'greet_routine_request',
+}
+
 /**
  * What may happen next, given the control mode. The resident's own "keep closed" and SOS are not listed here
  * because they are always available and are never gated by a mode, a score or a preference.
@@ -79,13 +89,15 @@ const AI_ACTIONS: { action: Action; decision: Decision }[] = [
  *  - helper_leads and above: the AI stops acting on its own. It only notifies, reports and helps the helper.
  *  - emergency: alarm and emergency call are also allowed.
  */
-export function permittedActions(prefs: Preferences, mode: ControlMode): Permissions {
+/** With `sEff` the budget rule decides (cost <= 100 - S_eff). Without it, the old mode rule applies. */
+export function permittedActions(prefs: Preferences, mode: ControlMode, sEff?: number): Permissions {
   const allowed: Action[] = ['notify_helper']
   const needsHelper: Action[] = ['request_helper_approval', 'authorise_visit_procedure']
   const aiMayAct = mode === 'ai_leads' || mode === 'ai_assisted'
 
   for (const { action, decision } of AI_ACTIONS) {
-    if (aiMayAct && prefs.delegation[decision] === 'ai') allowed.push(action)
+    const fits = sEff === undefined ? aiMayAct : mode !== 'emergency' && AUTHORITY_COST[ACTION_TOOL[action]] <= 100 - sEff
+    if (fits && prefs.delegation[decision] === 'ai') allowed.push(action)
     else needsHelper.push(action)
   }
   if (mode === 'emergency') allowed.push('sound_alarm', 'call_emergency')

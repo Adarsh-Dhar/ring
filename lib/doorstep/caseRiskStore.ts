@@ -14,7 +14,7 @@ import { getDb } from '@/lib/db/client'
 import { scoreObservations, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
-import { DEFAULT_ESCALATION_SECONDS } from '@/lib/doorbell/config'
+import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor } from './collaborationController'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -36,7 +36,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   const SHADOW = process.env.RISK_SHADOW === '1'
   const c = await getDb().case.findUnique({
     where: { id: caseId },
-    select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
+    select: { id: true, riskObservations: true, householdId: true, controlMode: true, riskScore: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
   })
   if (!c) return { ok: false, error: 'case not found' }
 
@@ -181,23 +181,23 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   const prevMode = (c.controlMode as ControlMode | null) ?? null
   const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
   const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
+  // Spec 5: everything keys on the effective score S_eff = max(S, floor of the event minimum mode).
+  const eff = effectiveScore(risk.score, risk.minMode)
+  const prevEff = Math.max(c.riskScore ?? 0, MODE_FLOOR_SCORE[prevMode ?? 'ai_leads'])
 
   if (!SHADOW) {
     if (becameEmergency) {
       // P7: Emergency has no acknowledgement timer; everyone is alerted now, deadline left alone
       const { alertEmergency } = await import('@/lib/doorbell/store')
       await alertEmergency(c.householdId, caseId)
-    } else if (rose) {
-      // P7: Shorten deadline for non-emergency mode rises using score-based timer (compare-and-set to avoid race conditions)
+    } else if (eff > prevEff) {
+      // Spec 5.3: when S_eff rises, the governing timer shrinks. Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60)
+      // once helper-led. Compare-and-set below, and a deadline is never extended.
       const now = Date.now()
-      // Compute new timer based on risk score (DEFAULT_ESCALATION_SECONDS at 0 → 10s at 100, floor 10s)
-      const scoreRatio = Math.min(risk.score, 100) / 100
-      const baseSec = DEFAULT_ESCALATION_SECONDS // Default acknowledgement timer at score 0
-      const minSec = 10 // Floor
-      // Linear interpolation: 60s at score 0, 10s at score 100
-      const newTimerSec = Math.max(minSec, Math.floor(baseSec - (baseSec - minSec) * scoreRatio))
+      const timer = activeTimer(timersFor(eff, risk.minMode), { riskDecisionNeeded: true })
+      const newTimerSec = timer?.seconds ?? null
       // Set deadline to now + new timer, but never extend it
-      const target = now + newTimerSec * 1000
+      const target = newTimerSec === null ? Infinity : now + newTimerSec * 1000
       if (target < c.deadlineAt.getTime()) {
         // Compare-and-set: only write if nobody changed the deadline since we read it.
         await getDb().case.updateMany({

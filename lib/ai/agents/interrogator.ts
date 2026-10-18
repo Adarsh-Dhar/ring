@@ -2,7 +2,8 @@ import { generateJson } from '@/lib/ai/client'
 import { InterrogatorTurnOut, type InterrogatorTurnResult } from '@/lib/ai/schemas'
 import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
 import { riskFlagsFor, riskMatchesFor, semanticFlag } from './risk'
-import { computeControl } from '@/lib/doorstep/collaborationController'
+import { computeControl, MODE_FLOOR_SCORE } from '@/lib/doorstep/collaborationController'
+import { gateAction } from '@/lib/doorstep/actionGate'
 import { getPreferences } from '@/lib/db/preferences'
 import { assessRisk } from './riskJudge'
 import { liveAssessment } from '@/lib/ai/risk/combine'
@@ -65,6 +66,12 @@ const trailing = (turns: InterrogationTurn[], pred: (t: InterrogationTurn) => bo
 async function controlFor(householdId: string, a: { score: number; minMode: any }) {
   return computeControl({ score: a.score, minMode: a.minMode, prefs: await getPreferences(householdId) })
 }
+/** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone. */
+async function gateFor(householdId: string, caseId: string, tool: string) {
+  const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
+  const sEff = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
+  return gateAction(tool, sEff, await getPreferences(householdId), { holdOnly: row?.noticeStatus === 'short_notice' && row?.status === 'waiting' })
+}
 export async function startInterrogator(householdId: string, caseId: string, deviceId: string | null) {
   try {
     const f = await aiFlags(householdId)
@@ -94,6 +101,8 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     const householdData = await aiFlags(householdId)
     await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS, residentName: householdData.residentName })
     const opener = interrogatorLines(householdData.residentName).greet
+    const g = await gateFor(householdId, caseId, 'greet_routine_request')
+    if (g.decision !== 'allow') { console.warn('[AI interrogator] greeting not allowed alone:', g.reason, 'budget', g.budget); return }   // helpers are already alerted
     // P7: Stamp "respondingAt" when we start speaking
     await stampInterviewState(householdId, caseId, 'respondingAt')
     if (!(await tb.say(householdId, deviceId!, opener))) { await setCaseAi(caseId, { interrogationState: 'failed' }); return }
@@ -258,6 +267,12 @@ export async function processAnswer(
       interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState,
     })
     const control = await controlFor(householdId, live)
+    // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
+    const gq = gateAction('neutral_verification_question', control.effectiveScore, await getPreferences(householdId))
+    if (gq.decision !== 'allow') {
+      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+      return { question: null, final: true, close: interrogatorLines(null).close }
+    }
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
       visitorSummary: out.realReasonSummary ?? undefined,
@@ -276,7 +291,7 @@ async function finishInterrogation(
   householdId: string,
   caseId: string,
   turns: InterrogationTurn[],
-  reason: 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed',
+  reason: 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed' | 'over_budget',
   modelResult?: InterrogatorTurnResult
 ) {
   const finalTurn = turns[turns.length - 1]
