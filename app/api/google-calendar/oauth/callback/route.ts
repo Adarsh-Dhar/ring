@@ -21,18 +21,18 @@ export async function GET(req: NextRequest) {
   const h = searchParams.get('h') // householdId
 
   if (error === 'access_denied') {
-    const target = h ? `/workspace/${h}?error=calendar_cancelled` : '/login?error=calendar_cancelled'
+    const target = h ? `/workspace/${h}/calendar?error=calendar_cancelled` : '/login?error=calendar_cancelled'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
   if (error) {
     console.error('[CALENDAR OAUTH] OAuth error:', error)
-    const target = h ? `/workspace/${h}?error=calendar_oauth_error` : '/login?error=calendar_oauth_error'
+    const target = h ? `/workspace/${h}/calendar?error=calendar_oauth_error` : '/login?error=calendar_oauth_error'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
   if (!code || !state) {
-    const target = h ? `/workspace/${h}?error=invalid_response` : '/login?error=invalid_response'
+    const target = h ? `/workspace/${h}/calendar?error=invalid_response` : '/login?error=invalid_response'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     stateData = JSON.parse(oauthState)
   } catch (e) {
     console.error('[CALENDAR OAUTH] Failed to parse state cookie', e)
-    const target = h ? `/workspace/${h}?error=invalid_state` : '/login?error=invalid_state'
+    const target = h ? `/workspace/${h}/calendar?error=invalid_state` : '/login?error=invalid_state'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   const storedStateBuffer = Buffer.from(stateData.s, 'utf8')
   if (stateBuffer.length !== storedStateBuffer.length || !crypto.timingSafeEqual(new Uint8Array(stateBuffer), new Uint8Array(storedStateBuffer))) {
     console.error('[CALENDAR OAUTH] State mismatch')
-    const target = h ? `/workspace/${h}?error=state_mismatch` : '/login?error=state_mismatch'
+    const target = h ? `/workspace/${h}/calendar?error=state_mismatch` : '/login?error=state_mismatch'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 
@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
     })
 
     if (!user || user.googleSub !== googleSub) {
-      const target = householdId ? `/workspace/${householdId}?error=account_mismatch` : '/login?error=account_mismatch'
+      const target = householdId ? `/workspace/${householdId}/calendar?error=account_mismatch` : '/login?error=account_mismatch'
       return NextResponse.redirect(new URL(buildUrl(target, req.url)))
     }
 
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
     const encryptedRefreshToken = tokens.refresh_token ? encrypt(tokens.refresh_token) : null
 
     if (!encryptedAccessToken) {
-      const target = householdId ? `/workspace/${householdId}?error=encryption_failed` : '/login?error=encryption_failed'
+      const target = householdId ? `/workspace/${householdId}/calendar?error=encryption_failed` : '/login?error=encryption_failed'
       return NextResponse.redirect(new URL(buildUrl(target, req.url)))
     }
 
@@ -122,14 +122,14 @@ export async function GET(req: NextRequest) {
       },
     })
 
-    const target = householdId ? `/workspace/${householdId}?calendar=connected` : '/login?calendar=connected'
+    const target = householdId ? `/workspace/${householdId}/calendar?calendar=connected` : '/login?calendar=connected'
     const res = NextResponse.redirect(new URL(buildUrl(target, req.url)))
     res.cookies.set('calendar_oauth_state', '', { maxAge: 0, path: '/' })
 
     return res
   } catch (e) {
     console.error('[CALENDAR OAUTH] Error:', e)
-    const target = householdId ? `/workspace/${householdId}?error=server_error` : '/login?error=server_error'
+    const target = householdId ? `/workspace/${householdId}/calendar?error=server_error` : '/login?error=server_error'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 }

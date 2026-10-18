@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   // If user already has tokens, redirect directly to success
   if (user && (user.googleAccessToken || user.googleRefreshToken)) {
     console.log('[CALENDAR OAUTH START] User already has Google tokens, skipping OAuth')
-    const target = h ? `/workspace/${h}?calendar=connected` : '/login?calendar=connected'
+    const target = h ? `/workspace/${h}/calendar?calendar=connected` : '/login?calendar=connected'
     return NextResponse.redirect(new URL(buildUrl(target, req.url)))
   }
 

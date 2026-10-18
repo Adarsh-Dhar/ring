@@ -107,7 +107,7 @@ export default function WorkspacesPage() {
             {households.map((household) => (
               <Link
                 key={household.id}
-                href={`/workspace/${household.id}`}
+                href={`/workspace/${household.id}/dashboard`}
                 className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition-shadow cursor-pointer"
               >
                 <div className="flex items-center justify-between mb-4">

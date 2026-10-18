@@ -46,7 +46,7 @@ export default function CreateWorkspacePage() {
 
       const data = await res.json()
       if (data.householdId) {
-        router.push(`/workspace/${data.householdId}?role=resident`)
+        router.push(`/workspace/${data.householdId}/dashboard?role=resident`)
       } else {
         router.push('/select-role')
       }

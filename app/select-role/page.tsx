@@ -34,9 +34,9 @@ export default function SelectRolePage() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ householdId: guardianMembership.householdId }),
             }).then(() => {
-              router.push(`/workspace/${guardianMembership.householdId}`)
+              router.push(`/workspace/${guardianMembership.householdId}/dashboard`)
             }).catch(() => {
-              router.push(`/workspace/${guardianMembership.householdId}`)
+              router.push(`/workspace/${guardianMembership.householdId}/dashboard`)
             })
           } else {
             // User has helper memberships but no guardian - go to create

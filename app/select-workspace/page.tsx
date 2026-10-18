@@ -124,9 +124,9 @@ export default function SelectWorkspacePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ householdId }),
     }).then(() => {
-      router.push(`/workspace/${householdId}`)
+      router.push(`/workspace/${householdId}/dashboard`)
     }).catch(() => {
-      router.push(`/workspace/${householdId}`)
+      router.push(`/workspace/${householdId}/dashboard`)
     })
   }
 
