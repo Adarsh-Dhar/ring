@@ -2,7 +2,7 @@
  * Spec section 6: modes, event minimums, resident screen wording, action gate, scripted responses.
  */
 import { describe, it, expect } from 'vitest'
-import { computeControl, modeForScore } from '@/lib/doorstep/collaborationController'
+import { computeControl, modeForScore, effectiveModeFor } from '@/lib/doorstep/collaborationController'
 import { RESIDENT_SCREEN, residentScreenFor, MODE_LABEL } from '@/lib/doorstep/modeCopy'
 import { gateAction } from '@/lib/doorstep/actionGate'
 import { getEventResponse, renderEventResponse } from '@/lib/doorstep/eventResponses'
@@ -130,6 +130,27 @@ describe('6.2 resident view wording', () => {
   it('a helper "safe" answer at M1+ never shows "OK to open"', () => {
     const v = view({ status: 'answered', answer: 'safe', answeredBy: 'H', effectiveMode: 'ai_assisted' })
     expect(v.message).not.toContain('OK to open')
+    expect(v.canOpen).toBe(false)
+  })
+})
+
+describe('6.1 effective mode = more human-led of event minimum and score band', () => {
+  it('score 60 built only from M1-level events is M3, not M1', () => {
+    expect(effectiveModeFor(60, 'ai_assisted')).toBe('helper_only')
+    expect(effectiveModeFor(45, 'ai_assisted')).toBe('helper_leads')
+    expect(effectiveModeFor(30, 'helper_only')).toBe('helper_only')   // lock test: the floor wins
+    expect(effectiveModeFor(0, null)).toBe('ai_leads')
+    expect(effectiveModeFor(undefined, undefined)).toBe('ai_leads')
+    expect(effectiveModeFor(100, null)).toBe('emergency')
+  })
+  it('resident screen follows the score band even when only the event minimum is passed as the mode', () => {
+    const household = { id: 't', timezone: 'Asia/Kolkata', quietEnabled: false, quietStartHour: 22, quietEndHour: 6 } as unknown as Household
+    const v = computeResidentView({
+      cases: [{ id: 'c', status: 'waiting', kind: 'ring', createdAt: new Date(), helperIndex: 0, deadlineAt: new Date(Date.now() + 30000),
+        riskScore: 60, controlMode: 'ai_assisted', effectiveMode: 'ai_assisted' } as any],
+      deviceOnline: true, lastHeartbeat: new Date(), timezone: 'Asia/Kolkata', quietEnabled: false, quietStartHour: 22, quietEndHour: 6, nightLockActive: false,
+    }, household)
+    expect(v.message).toBe('Do not open the door. Your helper has been asked to take over.')
     expect(v.canOpen).toBe(false)
   })
 })

@@ -32,6 +32,12 @@ export function modeForScore(score: number): ControlMode {
  * Derived from MODE_THRESHOLDS so there is one source of truth. Confirm the helper-led value against section 6.3. */
 export const MODE_FLOOR_SCORE = Object.fromEntries(MODE_THRESHOLDS.map(t => [t.mode, t.atLeast])) as Record<ControlMode, number>
 
+/** Spec 6.1: the effective mode is the more human-led of the event minimum and the band of the confirmed score S.
+ *  The stored case.controlMode holds only the event minimum, so anything that shows or enforces a mode must use this. */
+export function effectiveModeFor(score: number | null | undefined, minMode?: ControlMode | null): ControlMode {
+  return maxMode(modeForScore(effectiveScore(score ?? 0, minMode)), minMode ?? 'ai_leads')
+}
+
 const clampScore = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : 0)))
 
 /** S_eff = max(S, event floor). With no serious event active the floor is 0, so S_eff = S. */

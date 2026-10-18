@@ -7,6 +7,7 @@
 import { Household } from '@prisma/client'
 import { residentScreenFor, type ControlMode } from '@/lib/doorstep/modeCopy'
 import { maxMode, modeRank } from '@/lib/doorstep/riskRules'
+import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
 
 export type ResidentViewState =
   | 'CLOSED_KEEP_SHUT'      // Connection lost, offline, or night lock - keep door closed
@@ -137,7 +138,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
       const confirmedEmergency = activeCase.riskScore === 100 || activeCase.controlMode === 'emergency'
       const emergencyMode: ControlMode = confirmedEmergency
         ? 'emergency'
-        : maxMode((activeCase.effectiveMode as ControlMode) ?? 'ai_leads', 'helper_only')
+        : maxMode(effectiveModeFor(activeCase.riskScore, activeCase.controlMode as ControlMode | null | undefined), (activeCase.effectiveMode as ControlMode) ?? 'ai_leads', 'helper_only')
       return {
         state: 'EMERGENCY',
         message: residentScreenFor(emergencyMode, !!activeCase.ackedAt),
@@ -153,7 +154,12 @@ export function computeResidentView(state: StateInfo, household: Household): Res
 
     // Case-specific states - explicit answer wins
     // P12: Never set canOpen or show "OK to open" while the mode is M1 or higher
-    const effectiveMode = (activeCase.effectiveMode as ControlMode) ?? 'ai_leads'
+    // Spec 6.1: never lower than the band of the score. case.controlMode is only the event minimum, so a caller that passes it
+    // as effectiveMode (score 60 built from M1-level events) would otherwise show M1 wording for an M3 case.
+    const effectiveMode: ControlMode = maxMode(
+      (activeCase.effectiveMode as ControlMode) ?? 'ai_leads',
+      effectiveModeFor(activeCase.riskScore, activeCase.controlMode as ControlMode | null | undefined),
+    )
     const modeRankVal = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(effectiveMode)
     const isM1OrHigher = modeRankVal >= 1
     const helperAcceptedEarly = !!activeCase.ackedAt

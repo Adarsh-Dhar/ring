@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { authorize } from '@/lib/guard'
 import { computeResidentView } from '@/lib/state/resident-view'
+import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
 import { getState } from '@/lib/doorbell/store'
 import { getDb } from '@/lib/db/client'
 
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
               riskScore: currentCase.riskScore,
               controlMode: currentCase.controlMode,
               ackedAt: currentCase.ackedAt != null ? new Date(currentCase.ackedAt) : null,
-              effectiveMode: currentCase.controlMode as any, // P11: Use controlMode as effective mode
+              effectiveMode: effectiveModeFor(currentCase.riskScore, currentCase.controlMode as any), // spec 6.1: event minimum AND score band
               unconfirmedAlertedAt: currentCase.unconfirmedAlertedAt != null ? new Date(currentCase.unconfirmedAlertedAt) : null,
             }] : [],
             deviceOnline: !state.offline,
