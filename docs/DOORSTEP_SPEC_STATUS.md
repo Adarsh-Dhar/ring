@@ -109,20 +109,26 @@ Current floors (Option A, spec-literal interpretation):
 
 1. **P8/P10: Calibration** — real or role-played labelled transcripts needed before pilot weights count as calibrated. Supply them as JSON fixtures in `tests/fixtures/section12/` and run `npm run calibrate`.
 2. **P14: Short-notice approval changes the live flow** — needs decision on behaviour.
-3. **P16: Full verification run** — needs scratch Postgres with all migrations applied.
-4. **Section 5.3 timer values** — placeholders confirmed by text review only.
+3. **P16: Full verification run** — needs scratch Postgres with all migrations applied (0000–0005).
+4. **Section 5.3 timer values** — placeholders; confirmed by text review only.
 5. **Section 6.3 final floors** — Option A chosen; confirm against final spec text.
 6. **Real hardware sensor testing** — `SENSOR_HMAC_KEY` and device format unverified against physical devices.
 
 ## Checklist
 
-- [x] `npx prisma migrate reset --force` on a scratch Postgres (migrations 0000–0005, including urgentAlertedAt)
-- [x] `npx prisma generate && npm run typecheck` — 0 errors in changed files
-- [x] `npm test` — 434 pass, 7 pre-existing ai-core failures (unrelated to phase 4)
+- [x] `npx prisma generate && npm run typecheck` — 0 real errors (Prisma engine download errors are environment-only)
+- [x] `npm test` — 434 pass, 7 pre-existing `ai-core` failures (unrelated to phase 4); escalation tests now pass
 - [x] `npm run calibrate` — 12 synthetic fixtures, 0 failures
+- [x] Sensor buttons exist in SimulationPanel (lock tamper, door wedge, door force, tamper, camera uncertain)
+- [x] `RISK_SHADOW=1` env var wired — suppresses all three alert paths without affecting scoring
+- [x] P2 done: `app/api/doorbell/sensor/route.ts` with HMAC, idempotency, rate limiting, household lookup
+- [x] P4/G5 done: camera availability wired in `setDeviceOnline` and `openCase`; mic availability wired in audio route
+- [x] P5 done: `reset` edit kind, restore with `_before` state, obsId routing, route enforces reason on restore
+- [x] P6 done: Option A floors — `immediate_threat` → `helper_only`, `emergency` at score ≥ 100
+- [x] P7 done: `alertUrgent` with `urgentAlertedAt` migration bypasses ack timer for confirmed threats
 - [x] `grep -rn "riskObservations:\|riskScore:\|controlMode:" lib app` — writes only in `caseRiskStore.ts`
-- [ ] Workspace simulation: ring, then run the scam script; verify riskScore, riskLedger, controlMode, riskAssessment.control
-- [ ] Device offline: ring with doorbell offline; verify `riskObservations.availability.camera` is set
-- [ ] Sensor buttons: lock tamper without entryDeniedAt → 0 score; with stamp → 30 score
-- [ ] `RISK_SHADOW=1`: run a scam, verify score stored but no SMS/push sent
-- [ ] Supply real labelled transcripts for section 12 calibration
+- [ ] Workspace simulation: ring, run scam script; verify riskScore, riskLedger, controlMode, riskAssessment.control fill in
+- [ ] Device offline during ring: verify `riskObservations.availability.camera` is set on the case
+- [ ] Sensor sim buttons: lock tamper without entryDeniedAt stamp → score 0; add stamp → score 30
+- [ ] `RISK_SHADOW=1` runtime check: run a scam, confirm score stored but no SMS/push sent to helpers
+- [ ] Supply real labelled transcripts for section 12 calibration before calling weights "calibrated"

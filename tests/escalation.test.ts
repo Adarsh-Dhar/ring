@@ -30,7 +30,7 @@ function fakeDb(row: { helperIndex: number; deadlineAt: number; status: string; 
 }
 
 const T0 = 1_000_000
-const CFG = { timeoutSec: 30, expectedTimeoutSec: 60 }
+const CFG = { timeoutSec: 30, expectedTimeoutSec: 60, decisionSec: 45, noResponseSec: 90 }
 
 function mkCase(over: Partial<DoorCase> = {}): DoorCase {
   return { id: 'c1', kind: 'visitor', eventType: 'button_press', createdAt: T0, helperIndex: 0, deadlineAt: T0 + 30_000,

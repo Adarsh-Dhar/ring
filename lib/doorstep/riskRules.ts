@@ -237,6 +237,11 @@ export interface Observation {
   segment?: string
   /** A helper rejected this event. It never scores again, and a re-score never brings it back. */
   retracted?: boolean
+  /**
+   * Saved before a helper confirms an uncertain observation, so restore can undo the confirm exactly.
+   * Never used in scoring; stripped when the observation is serialised without it.
+   */
+  _before?: { state: EvidenceState; source: Source }
 }
 
 /** P11: Interview state stamp - a separate type from Observation, no longer a workaround. */

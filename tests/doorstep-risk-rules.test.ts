@@ -137,6 +137,27 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(20)
   })
 
+  // Spec 4.5 worked example: credential_request (20) + refuse_to_leave (25) + lock_manipulation (30) = 75
+  it('spec 4.5: credential + refusal + lock = 75, forces helper_leads', () => {
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString(), entryDeniedAt: new Date().toISOString() }
+    const r = scoreWithTranscript([
+      makeObs('credential_request', 'transcript', 'what is your PIN number', 'confirmed', 1.0),
+      makeObs('refuse_to_leave', 'helper', ''),
+      makeObs('lock_manipulation', 'sensor', ''),
+    ], 'what is your PIN number', interviewState)
+    expect(r.score).toBe(75)
+    expect(r.minMode).toBe('helper_leads')
+  })
+
+  // Spec 4.5 worked example: purpose_contradiction (15) + pressure_after_rule (5) = 20
+  it('spec 4.5: contradiction + pressure = 20', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const contradictionObs: Observation = { ...makeObs('purpose_contradiction', 'transcript', 'council urgent'), quotes: ['council urgent', 'let me in'] }
+    const pressureObs = makeObs('pressure_after_rule', 'transcript', 'let me in')
+    const r = scoreWithTranscript([contradictionObs, pressureObs], 'council urgent let me in', interviewState)
+    expect(r.score).toBe(20)
+  })
+
   it('unavailable state scores zero points', () => {
     const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'unavailable', 1.0)], 'I will hurt you')
     expect(r.score).toBe(0); expect(r.minMode).toBe('ai_leads'); expect(r.ledger[0].state).toBe('unavailable')
