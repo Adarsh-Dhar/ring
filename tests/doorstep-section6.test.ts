@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest'
 import { computeControl, modeForScore, effectiveModeFor } from '@/lib/doorstep/collaborationController'
 import { RESIDENT_SCREEN, residentScreenFor, MODE_LABEL } from '@/lib/doorstep/modeCopy'
 import { gateAction } from '@/lib/doorstep/actionGate'
-import { getEventResponse, renderEventResponse } from '@/lib/doorstep/eventResponses'
+import { getEventResponse, renderEventResponse, getUncertainResponse } from '@/lib/doorstep/eventResponses'
 import { RISK_RULES, BEHAVIOURS, type Behaviour } from '@/lib/doorstep/riskRules'
 import { DEFAULT_PREFERENCES } from '@/lib/doorstep/residentPreferences'
 import { computeResidentView } from '@/lib/state/resident-view'
@@ -40,12 +40,12 @@ describe('6.3 event minimums', () => {
   const MIN: Record<Behaviour, string | null> = {
     extra_knock: null, pressure_after_rule: null,
     pressure_after_boundary: 'ai_assisted', purpose_contradiction: 'ai_assisted', hide_from_helper: 'ai_assisted', credential_request: 'ai_assisted',
-    refuse_to_leave: 'helper_only', lock_manipulation: 'helper_only', lock_manipulation_uncertain: null, door_wedge_or_follow_in: 'helper_only', door_wedge_or_follow_in_uncertain: null,
+    refuse_to_leave: 'helper_only', lock_manipulation: 'helper_only', door_wedge_or_follow_in: 'helper_only',
     immediate_threat: 'helper_urgent', forced_entry_or_assault: 'emergency',
-  }
+  } as Record<Behaviour, string | null>
   it.each(Object.entries(MIN))('%s -> %s', (b, floor) => expect(RISK_RULES[b as Behaviour].floor).toBe(floor))
   it('uncertain physical or threat events raise to M3', () => {
-    for (const b of ['lock_manipulation', 'lock_manipulation_uncertain', 'door_wedge_or_follow_in', 'door_wedge_or_follow_in_uncertain', 'immediate_threat', 'forced_entry_or_assault'] as Behaviour[])
+    for (const b of ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault'] as Behaviour[])
       expect(RISK_RULES[b].uncertainFloor).toBe('helper_only')
   })
   it('lock test: 30 points alone is M1, but the M3 floor makes S_eff 60', () => {
@@ -94,8 +94,10 @@ describe('6.3 scripted responses', () => {
     expect(renderEventResponse(getEventResponse('lock_manipulation')!)).not.toMatch(/helper has been alerted/i)
   })
   it('uncertain physical events use safety script', () => {
-    expect(getEventResponse('lock_manipulation_uncertain')?.tool).toBe('safety_script')
-    expect(getEventResponse('door_wedge_or_follow_in_uncertain')?.tool).toBe('safety_script')
+    expect(getUncertainResponse('lock_manipulation')?.tool).toBe('safety_script')
+    expect(getUncertainResponse('door_wedge_or_follow_in')?.tool).toBe('safety_script')
+    expect(getUncertainResponse('immediate_threat')?.tool).toBe('safety_script')
+    expect(getUncertainResponse('forced_entry_or_assault')?.tool).toBe('safety_script')
   })
   it('every confirmed event except immediate_threat and forced_entry has a script', () => {
     for (const b of ['extra_knock','pressure_after_rule','pressure_after_boundary','purpose_contradiction','hide_from_helper','credential_request','refuse_to_leave','lock_manipulation','door_wedge_or_follow_in'] as Behaviour[])

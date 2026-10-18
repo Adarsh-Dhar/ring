@@ -62,28 +62,18 @@ export const EVENT_RESPONSES: EventResponse[] = [
     tool: 'boundary_statement',
   },
   {
-    behaviour: 'lock_manipulation_uncertain',
-    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
-    tool: 'safety_script',
-  },
-  {
     behaviour: 'door_wedge_or_follow_in',
     response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
     tool: 'safety_script',
   },
   {
-    behaviour: 'door_wedge_or_follow_in_uncertain',
-    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
-    tool: 'safety_script',
-  },
-  {
     behaviour: 'immediate_threat',
-    response: 'Please stay where you are. Keep the door closed. A helper has been alerted.',
+    response: 'Please stay where you are. Keep the door closed.',
     tool: 'safety_script',
   },
   {
     behaviour: 'forced_entry_or_assault',
-    response: 'Please stay where you are. Keep the door closed. Emergency contacts have been alerted.',
+    response: 'Please stay where you are. Keep the door closed.',
     tool: 'safety_script',
   },
   {
@@ -93,11 +83,39 @@ export const EVENT_RESPONSES: EventResponse[] = [
   },
 ]
 
+/** Uncertain event responses (spec 6.3). Used when a physical/threat event is observed but not confirmed. */
+export const UNCERTAIN_RESPONSES: Record<string, { response: string; tool: 'safety_script' }> = {
+  lock_manipulation: {
+    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+  door_wedge_or_follow_in: {
+    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+  immediate_threat: {
+    response: 'Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+  forced_entry_or_assault: {
+    response: 'Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+}
+
 /**
  * Get the scripted response for a behaviour, if one exists.
  */
 export function getEventResponse(behaviour: Behaviour): EventResponse | undefined {
   return EVENT_RESPONSES.find(r => r.behaviour === behaviour)
+}
+
+/**
+ * Get the uncertain response for a behaviour (spec 6.3).
+ * Used when a physical/threat event is observed but not confirmed.
+ */
+export function getUncertainResponse(behaviour: string): { response: string; tool: 'safety_script' } | undefined {
+  return UNCERTAIN_RESPONSES[behaviour]
 }
 
 /** Resolve the line to speak. Pass the observation's quotes so quote-based lines can use them. Optional context for approved alternatives. */

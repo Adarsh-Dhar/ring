@@ -66,6 +66,40 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
     }
   }
 
+  const handleAlternativeUpdate = async (value: string) => {
+    if (!prefs) return
+
+    const updated = {
+      ...prefs,
+      approvedAlternative: value || undefined,
+    }
+
+    setSaving(true)
+    setMessage('')
+
+    try {
+      const res = await fetch('/api/resident/delegation', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences: updated }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setPrefs(data)
+        setMessage('Saved successfully')
+        setTimeout(() => setMessage(''), 2000)
+      } else {
+        setMessage('Failed to save preferences')
+      }
+    } catch (e) {
+      console.error('[DELEGATION] Failed to save preferences:', e)
+      setMessage('Failed to save preferences')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   if (!prefs) {
     return <div className="p-4">Loading...</div>
   }
@@ -116,6 +150,22 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
             </div>
           </div>
         ))}
+
+        <div className="border rounded-lg p-4">
+          <h3 className="font-semibold mb-3">Approved alternative (optional)</h3>
+          <p className="text-sm text-gray-600 mb-3">
+            If a visitor asks to enter after you have said no, the AI can offer them a safe alternative.
+            For example: "Go to the police station" or "Come back tomorrow at 10am."
+          </p>
+          <input
+            type="text"
+            value={prefs.approvedAlternative || ''}
+            onChange={(e) => handleAlternativeUpdate(e.target.value)}
+            disabled={saving}
+            placeholder="e.g., Go to the police station"
+            className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
       </div>
 
       {message && (
