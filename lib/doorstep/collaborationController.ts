@@ -8,6 +8,7 @@
  */
 import { CONTROL_MODES, maxMode, modeRank, type ControlMode } from './riskRules'
 import { permittedActions, type Permissions, type Preferences } from './residentPreferences'
+import { AUTHORITY_COST } from './authorityCosts'
 
 /** Score at which the control mode rises by itself (before any event floor). Pilot starting values.
  * Step 6 (Option A): emergency is now reserved for score 100 (forced entry / SOS / confirmed assault).
@@ -76,6 +77,12 @@ export function activeTimer(
   if (t.takeoverSec !== null) c.push({ kind: 'takeover', seconds: t.takeoverSec })
   if (ctx.riskDecisionNeeded && t.riskDecisionSec !== null) c.push({ kind: 'risk_decision', seconds: t.riskDecisionSec })
   return c.length ? c.reduce((a, b) => (b.seconds < a.seconds ? b : a)) : null
+}
+
+/** Spec 5.3: a helper decision is needed because of the score once the cheapest routine action no longer fits the budget.
+ *  greet_routine_request costs 81, so this is true from S_eff 20. Below that the AI handles the visit alone. */
+export function riskDecisionNeeded(sEff: number): boolean {
+  return AUTHORITY_COST.greet_routine_request > 100 - clampScore(sEff)
 }
 
 /** Section 7.2 (nobody in the chain answers) keeps its own curve. Unchanged from before. */

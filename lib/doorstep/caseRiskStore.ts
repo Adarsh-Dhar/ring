@@ -8,13 +8,14 @@
  *
  * The knock window (30 s from the AI starting to respond) and the cap of 5 live here.
  *
- * P7: Timer values from Section 5.3 are implemented (60s/180s/300s at score 0, shrinking to 10s/45s/90s at score 100).
+ * Timers follow spec 5.3: risk-decision 120 - S_eff, takeover min(120 - S_eff, 60), approval set by the resident.
+ * Only the section 7.2 no-response timer keeps its own curve (NO_RESPONSE_CURVE).
  */
 import { getDb } from '@/lib/db/client'
 import { scoreObservations, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
-import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor } from './collaborationController'
+import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -36,7 +37,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   const SHADOW = process.env.RISK_SHADOW === '1'
   const c = await getDb().case.findUnique({
     where: { id: caseId },
-    select: { id: true, riskObservations: true, householdId: true, controlMode: true, riskScore: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
+    select: { id: true, riskObservations: true, householdId: true, controlMode: true, riskScore: true, lastEventAt: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
   })
   if (!c) return { ok: false, error: 'case not found' }
 
@@ -166,6 +167,17 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     interviewState: newStored.interviewState,
   })
 
+  // G1c: Fire emergency alert if case newly became emergency
+  const prevMode = (c.controlMode as ControlMode | null) ?? null
+  const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
+  const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
+
+  // Spec 5: everything keys on the effective score S_eff = max(S, floor of the event minimum mode).
+  const eff = effectiveScore(risk.score, risk.minMode)
+  const prevEff = Math.max(c.riskScore ?? 0, MODE_FLOOR_SCORE[prevMode ?? 'ai_leads'])
+  // Spec 5.2: stamp the time of the last event. Only a real change counts, so a re-score with no change keeps the old time.
+  const changed = risk.score !== (c.riskScore ?? 0) || risk.minMode !== ((c.controlMode as ControlMode | null) ?? 'ai_leads')
+
   await getDb().case.update({
     where: { id: caseId },
     data: {
@@ -174,27 +186,20 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       controlMode: risk.minMode,
       riskLevel: risk.score >= 80 ? 'high' : risk.score >= 50 ? 'medium' : risk.score >= 20 ? 'low' : 'none',
       riskObservations: newStored as any,
+      ...(changed ? { lastEventAt: new Date() } : {}),
     },
   })
 
-  // G1c: Fire emergency alert if case newly became emergency
-  const prevMode = (c.controlMode as ControlMode | null) ?? null
-  const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
-  const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
-  // Spec 5: everything keys on the effective score S_eff = max(S, floor of the event minimum mode).
-  const eff = effectiveScore(risk.score, risk.minMode)
-  const prevEff = Math.max(c.riskScore ?? 0, MODE_FLOOR_SCORE[prevMode ?? 'ai_leads'])
-
   if (!SHADOW) {
     if (becameEmergency) {
-      // P7: Emergency has no acknowledgement timer; everyone is alerted now, deadline left alone
+      // Emergency has no timer; everyone is alerted now, deadline left alone
       const { alertEmergency } = await import('@/lib/doorbell/store')
       await alertEmergency(c.householdId, caseId)
     } else if (eff > prevEff) {
       // Spec 5.3: when S_eff rises, the governing timer shrinks. Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60)
       // once helper-led. Compare-and-set below, and a deadline is never extended.
       const now = Date.now()
-      const timer = activeTimer(timersFor(eff, risk.minMode), { riskDecisionNeeded: true })
+      const timer = activeTimer(timersFor(eff, risk.minMode), { riskDecisionNeeded: riskDecisionNeeded(eff) })
       const newTimerSec = timer?.seconds ?? null
       // Set deadline to now + new timer, but never extend it
       const target = newTimerSec === null ? Infinity : now + newTimerSec * 1000
@@ -229,4 +234,20 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   }
 
   return { ok: true }
+}
+
+/** Spec 5.3: an AI action exceeded its budget, so a helper decision is now needed. Shrinks the deadline to the
+ *  risk-decision timer, never extends it. Compare-and-set, same as applyRiskEdit. */
+export async function requestHelperDecision(caseId: string): Promise<void> {
+  const db = getDb()
+  const c = await db.case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, deadlineAt: true, status: true } })
+  if (!c || c.status !== 'waiting') return
+  const minMode = (c.controlMode as ControlMode | null) ?? null
+  const eff = effectiveScore(c.riskScore ?? 0, minMode)
+  const t = activeTimer(timersFor(eff, minMode), { riskDecisionNeeded: true })
+  if (!t || t.seconds === null) return          // S_eff 0 or 100: no risk-decision timer
+  const target = Date.now() + t.seconds * 1000
+  if (target < c.deadlineAt.getTime()) {
+    await db.case.updateMany({ where: { id: caseId, deadlineAt: c.deadlineAt }, data: { deadlineAt: new Date(target) } })
+  }
 }

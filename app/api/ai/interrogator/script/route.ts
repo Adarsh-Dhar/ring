@@ -33,5 +33,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ enabled: true, ...(await interrogatorScript(householdId, f.residentName)) })
+  return NextResponse.json({ enabled: true, ...(await interrogatorScript(householdId, f.residentName, caseId ?? undefined)) })
 }

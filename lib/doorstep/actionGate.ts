@@ -17,14 +17,16 @@ const RESIDENT_DECISION: Partial<Record<GatedTool, Decision>> = {
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : 0)))
 
-/** `holdOnly`: an approval is pending (spec 5.3), so the AI may use only its holding script and other zero-cost tools. */
-export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean } = {}): GateResult {
+/** `holdOnly`: an approval is pending (spec 5.3), so the AI may use only its holding script and other zero-cost tools.
+ *  `decision`: the resident delegation this action exercises when the tool alone is ambiguous (ask_for_id, accept_parcel,
+ *  tell_visitor_to_leave). Spec 5.4: a resident restriction always overrides the number. */
+export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean; decision?: Decision } = {}): GateResult {
   const budget = 100 - clamp(sEff)
   if ((PROHIBITED_TOOLS as readonly string[]).includes(tool)) return { decision: 'deny', reason: 'prohibited', cost: null, budget }
   if ((HELPER_ONLY_TOOLS as readonly string[]).includes(tool)) return { decision: 'ask_helper', reason: 'helper_only', cost: null, budget }
   if (!(tool in AUTHORITY_COST)) return { decision: 'deny', reason: 'unknown_tool', cost: null, budget }
   const cost = AUTHORITY_COST[tool as GatedTool]
-  const d = RESIDENT_DECISION[tool as GatedTool]
+  const d = opts.decision ?? RESIDENT_DECISION[tool as GatedTool]
   if (opts.holdOnly && cost > 0) return { decision: 'ask_helper', reason: 'approval_pending', cost, budget }
   if (prefs && d && prefs.delegation[d] !== 'ai') return { decision: 'ask_helper', reason: `resident_restriction:${d}`, cost, budget }
   if (cost > budget) return { decision: 'ask_helper', reason: 'over_budget', cost, budget }

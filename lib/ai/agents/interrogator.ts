@@ -3,8 +3,11 @@ import { InterrogatorTurnOut, type InterrogatorTurnResult } from '@/lib/ai/schem
 import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
 import { riskFlagsFor, riskMatchesFor, semanticFlag } from './risk'
 import { computeControl, MODE_FLOOR_SCORE } from '@/lib/doorstep/collaborationController'
-import { gateAction } from '@/lib/doorstep/actionGate'
+import { gateAction, LINE_TOOL } from '@/lib/doorstep/actionGate'
+import { requestHelperDecision } from '@/lib/doorstep/caseRiskStore'
 import { getPreferences } from '@/lib/db/preferences'
+import type { Decision } from '@/lib/doorstep/residentPreferences'
+import type { LineId } from '@/lib/ai/talkback'
 import { assessRisk } from './riskJudge'
 import { liveAssessment } from '@/lib/ai/risk/combine'
 import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
@@ -66,11 +69,34 @@ const trailing = (turns: InterrogationTurn[], pred: (t: InterrogationTurn) => bo
 async function controlFor(householdId: string, a: { score: number; minMode: any }) {
   return computeControl({ score: a.score, minMode: a.minMode, prefs: await getPreferences(householdId) })
 }
-/** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone. */
-async function gateFor(householdId: string, caseId: string, tool: string) {
+/** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone.
+ *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used. */
+async function gateFor(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
   const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
-  const sEff = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
-  return gateAction(tool, sEff, await getPreferences(householdId), { holdOnly: row?.noticeStatus === 'short_notice' && row?.status === 'waiting' })
+  const stored = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
+  const sEff = Math.max(stored, o.sEff ?? 0)
+  return gateAction(tool, sEff, await getPreferences(householdId), {
+    holdOnly: row?.noticeStatus === 'short_notice' && row?.status === 'waiting',
+    decision: o.decision,
+  })
+}
+
+/** Gate, and when the AI is over budget start the risk-decision timer (spec 5.3) so a helper is asked. */
+async function gateOrAsk(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
+  const g = await gateFor(householdId, caseId, tool, o)
+  if (g.decision === 'ask_helper' && g.reason === 'over_budget') {
+    await requestHelperDecision(caseId).catch(e => console.error('[AI interrogator] requestHelperDecision', e))
+  }
+  return g
+}
+
+/** Which fixed talkback lines the AI may speak alone right now. Safety lines (close, holding script) are always true. */
+export async function allowedLines(householdId: string, caseId: string): Promise<Record<LineId, boolean>> {
+  const out = {} as Record<LineId, boolean>
+  for (const [line, tool] of Object.entries(LINE_TOOL) as [LineId, string][]) {
+    out[line] = (await gateFor(householdId, caseId, tool)).decision === 'allow'
+  }
+  return out
 }
 export async function startInterrogator(householdId: string, caseId: string, deviceId: string | null) {
   try {
@@ -101,7 +127,7 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     const householdData = await aiFlags(householdId)
     await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS, residentName: householdData.residentName })
     const opener = interrogatorLines(householdData.residentName).greet
-    const g = await gateFor(householdId, caseId, 'greet_routine_request')
+    const g = await gateOrAsk(householdId, caseId, 'greet_routine_request')
     if (g.decision !== 'allow') { console.warn('[AI interrogator] greeting not allowed alone:', g.reason, 'budget', g.budget); return }   // helpers are already alerted
     // P7: Stamp "respondingAt" when we start speaking
     await stampInterviewState(householdId, caseId, 'respondingAt')
@@ -268,7 +294,7 @@ export async function processAnswer(
     })
     const control = await controlFor(householdId, live)
     // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
-    const gq = gateAction('neutral_verification_question', control.effectiveScore, await getPreferences(householdId))
+    const gq = await gateOrAsk(householdId, caseId, 'neutral_verification_question', { sEff: control.effectiveScore, decision: 'ask_purpose' })
     if (gq.decision !== 'allow') {
       await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
       return { question: null, final: true, close: interrogatorLines(null).close }
@@ -360,10 +386,11 @@ async function finishInterrogation(
 }
 
 /** Fixed lines (+ cached TTS audio when available) for the device/sim to play. */
-export async function interrogatorScript(householdId: string, residentName: string | null) {
+export async function interrogatorScript(householdId: string, residentName: string | null, caseId?: string) {
   const lines = interrogatorLines(residentName)
   const audio: Record<string, string | null> = {}
   for (const id of Object.keys(lines) as (keyof typeof lines)[]) audio[id] = await cachedLineAudio(householdId, id, lines[id])
-  return { lines, audio, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
+  const allowed = caseId ? await allowedLines(householdId, caseId) : null   // null = no case to gate against
+  return { lines, audio, allowed, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
 }
 export { wrapPcmAsWav }

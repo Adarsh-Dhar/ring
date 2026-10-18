@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { computeControl, modeForScore } from '@/lib/doorstep/collaborationController'
 import { DEFAULT_PREFERENCES, parsePreferences, permittedActions, ALWAYS_PROHIBITED, ACTIONS, type Preferences } from '@/lib/doorstep/residentPreferences'
 import { CONTROL_MODES, modeRank, type ControlMode } from '@/lib/doorstep/riskRules'
-import { escalationConfigFor, escalateDueCase } from '@/lib/doorstep/helperEscalation'
+import { backupTimeoutSec, escalateDueCase } from '@/lib/doorstep/helperEscalation'
 
 const P = DEFAULT_PREFERENCES
 const ctl = (score: number, minMode?: ControlMode) => computeControl({ score, minMode, prefs: P })
@@ -102,8 +102,9 @@ describe('resident preferences and permitted actions', () => {
 
 describe('helper escalation wrapper', () => {
   it('re-exports the tested step engine', () => { expect(typeof escalateDueCase).toBe('function') })
-  it('takes its acknowledgement timeout from the control mode', () => {
-    expect(escalationConfigFor(ctl(0), 60)).toEqual({ timeoutSec: ctl(0).timers.approvalSec, expectedTimeoutSec: 60 })
-    expect(escalationConfigFor(ctl(80), 60).timeoutSec).toBeLessThan(escalationConfigFor(ctl(0), 60).timeoutSec)
+  it('backup timeout is the shorter of household and 5.3 timer', () => {
+    expect(backupTimeoutSec(null, null, 60)).toBe(60)
+    expect(backupTimeoutSec(50, null, 60)).toBe(60)
+    expect(backupTimeoutSec(90, null, 60)).toBe(30)
   })
 })

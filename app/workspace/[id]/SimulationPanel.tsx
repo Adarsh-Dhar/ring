@@ -158,6 +158,10 @@ function DoorbellSim() {
     }
     setMaxTurns(typeof s.maxTurns === 'number' ? s.maxTurns : null)
     setPhase('thinking')
+    if (!s.allowed?.greet) {
+      setChat((c) => [...c, { from: 'system', text: 'The assistant may not greet alone at this risk level. Helpers have been alerted.' }])
+      return setPhase('done')
+    }
     await say(s.lines.greet)
     setPhase('waiting')
   }

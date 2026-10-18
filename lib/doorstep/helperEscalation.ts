@@ -9,15 +9,20 @@
 export { escalateDueCase, mergeSaved } from '../doorbell/escalation'
 export type { EscalationDeps, EscalationConfig, EscalationKind, StepChange, StepExpect } from '../doorbell/escalation'
 
-import { activeTimer, type Control } from './collaborationController'
+import { activeTimer, effectiveScore, riskDecisionNeeded, timersFor } from './collaborationController'
+import type { ControlMode } from './riskRules'
 
-/** Escalation config for one case. `ackSeconds` is how long each helper has to answer before the next is asked. */
-export function escalationConfigFor(
-  control: Pick<Control, 'timers'>,
-  expectedTimeoutSec: number,
-  ctx: { needsApproval?: boolean; riskDecisionNeeded?: boolean } = {},
-) {
-  // Section 5.3: the shortest applicable timer. Emergency has none (both helpers are alerted at once elsewhere).
-  const t = activeTimer(control.timers, ctx)
-  return { timeoutSec: t?.seconds ?? control.timers.approvalSec, expectedTimeoutSec }
+/** Seconds the NEXT helper gets (spec 5.3): the shorter of the household timeout and the risk/takeover timer for S_eff. */
+export function backupTimeoutSec(
+  score: number | null | undefined,
+  minMode: ControlMode | null | undefined,
+  householdSec: number,
+): number {
+  if (score == null && !minMode) return householdSec
+  const eff = effectiveScore(score ?? 0, minMode)
+  const t = activeTimer(timersFor(eff, minMode), { riskDecisionNeeded: riskDecisionNeeded(eff) })
+  return t && t.seconds !== null ? Math.min(t.seconds, householdSec) : householdSec
 }
+
+/** Re-export for backward compatibility (deprecated: use backupTimeoutSec instead). */
+export const escalationConfigFor = backupTimeoutSec

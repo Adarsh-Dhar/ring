@@ -6,6 +6,8 @@ import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHouse
 import { getMembership, getApprovedMemberships } from '../db/memberships'
 import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
+import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
+import type { ControlMode } from '@/lib/doorstep/riskRules'
 import { evaluateNotice, parseNoticeSettings, type NoticeStatus } from '../doorstep/noticePolicy'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
@@ -1352,6 +1354,13 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
 // ── Escalation wiring ─────────────────────────────────────────────────────────
 
+async function caseTimeoutSec(caseId: string, householdSec: number): Promise<number> {
+  try {
+    const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true } })
+    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec)
+  } catch { return householdSec }   // never block escalation on a read failure
+}
+
 /** Database claim + alerts for one household. Used by tick() and by the worker sweep. */
 function escalationDeps(householdId: string, residentName: string, timeoutSec: number): EscalationDeps {
   return {
@@ -1410,7 +1419,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
     try {
       const household = await getHousehold(row.householdId)
       if (!household) continue
-      const timeoutSec = household.timeoutSec || DEFAULT_ESCALATION_SECONDS
+      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS)
       const chain = ((row.chain as any) as string[]) || []
       const c: DoorCase = {
         id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
@@ -1449,11 +1458,12 @@ export async function tick(householdId?: string) {
 
     warnIfAlertsFailing(state, now)
 
-    const deps = escalationDeps(householdId, household.residentName, state.timeoutSec)
     for (const c of state.cases) {
       if (c.status !== 'waiting' || now < c.deadlineAt) continue
       try {
-        await escalateDueCase(c, now, { timeoutSec: state.timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
+        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec)
+        const deps = escalationDeps(householdId, household.residentName, timeoutSec)
+        await escalateDueCase(c, now, { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {
         reportError(e, { householdId, fn: 'tick/escalate', caseId: c.id })
       }

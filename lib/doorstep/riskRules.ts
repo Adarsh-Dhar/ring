@@ -13,7 +13,7 @@
  *  - A serious event sets a MINIMUM control mode, so the same total cannot hide different situations.
  *
  * P6: Control-mode floors (Section 6.3) are now implemented with proposed values.
- * P7: Timer values (Section 5.3) are now implemented with proposed values.
+ * Timer values live in collaborationController.ts (spec 5.3). Nothing in this file sets a timer.
  *
  * ALL NUMBERS ARE PILOT STARTING VALUES. They are operational priorities, not probabilities of danger.
  */

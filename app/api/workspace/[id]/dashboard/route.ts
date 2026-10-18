@@ -92,12 +92,13 @@ export async function GET(
         riskLevel: true,
         riskScore: true,
         controlMode: true,
+        lastEventAt: true,
         interrogationState: true,
       },
     })
     // Spec 5.2: order by S_eff, then event severity, then the most recent event.
     const ranked = pendingCases
-      .map(c => ({ ...c, effectiveScore: effectiveScore(c.riskScore ?? 0, c.controlMode as ControlMode | null), eventSeverity: modeRank((c.controlMode as ControlMode | null) ?? 'ai_leads'), lastEventAt: c.createdAt.getTime() }))
+      .map(c => ({ ...c, effectiveScore: effectiveScore(c.riskScore ?? 0, c.controlMode as ControlMode | null), eventSeverity: modeRank((c.controlMode as ControlMode | null) ?? 'ai_leads'), lastEventAt: (c.lastEventAt ?? c.createdAt).getTime() }))
       .sort(compareForDashboard)
 
     // Get scheduled visits for today

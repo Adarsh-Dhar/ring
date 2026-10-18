@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { computeControl, effectiveScore, timersFor, activeTimer, compareForDashboard, MODE_FLOOR_SCORE } from '@/lib/doorstep/collaborationController'
+import { computeControl, effectiveScore, timersFor, activeTimer, compareForDashboard, MODE_FLOOR_SCORE, riskDecisionNeeded } from '@/lib/doorstep/collaborationController'
 import { gateAction } from '@/lib/doorstep/actionGate'
 import { AUTHORITY_COST } from '@/lib/doorstep/authorityCosts'
 import { DEFAULT_PREFERENCES as P, permittedActions } from '@/lib/doorstep/residentPreferences'
+import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 
 const AI_PREFS = { ...P, delegation: { ...P.delegation, tell_visitor_to_leave: 'ai' as const } }
 
@@ -103,5 +104,32 @@ describe('approval timer settings', () => {
   it('holdOnly lets the AI use only zero-cost tools while an approval is pending', () => {
     expect(gateAction('safety_script', 0, P, { holdOnly: true }).decision).toBe('allow')
     expect(gateAction('neutral_verification_question', 0, P, { holdOnly: true }).reason).toBe('approval_pending')
+  })
+})
+
+describe('patches 3 and 4', () => {
+  it('a helper decision is needed from S_eff 20, the first edge where the AI loses a routine tool', () => {
+    expect(riskDecisionNeeded(19)).toBe(false)
+    expect(riskDecisionNeeded(20)).toBe(true)
+  })
+  it('backup helper timeout is the shorter of the household value and the 5.3 timer', () => {
+    expect(backupTimeoutSec(null, null, 60)).toBe(60)    // no risk data: household value
+    expect(backupTimeoutSec(10, null, 60)).toBe(60)      // S_eff 10: no risk timer
+    expect(backupTimeoutSec(50, null, 60)).toBe(60)      // 120 - 50 = 70, household 60 is shorter
+    expect(backupTimeoutSec(90, null, 60)).toBe(30)      // takeover min(30, 60) = 30
+    expect(backupTimeoutSec(5, 'helper_only', 60)).toBe(60)  // event floor 60 -> takeover 60
+  })
+})
+
+describe('patch 5: resident restriction by delegation', () => {
+  const noId = { ...P, delegation: { ...P.delegation, ask_for_id: 'helper' as const } }
+  it('ask_for_id restriction blocks the verification question when the caller names it', () => {
+    expect(gateAction('neutral_verification_question', 0, noId, { decision: 'ask_for_id' }).reason).toBe('resident_restriction:ask_for_id')
+    expect(gateAction('neutral_verification_question', 0, noId).decision).toBe('allow')   // ask_purpose is still delegated
+  })
+  it('tell_visitor_to_leave restriction applies to a boundary statement only when named', () => {
+    const noLeave = { ...P, delegation: { ...P.delegation, tell_visitor_to_leave: 'helper' as const } }
+    expect(gateAction('end_conversation', 0, noLeave, { decision: 'tell_visitor_to_leave' }).decision).toBe('ask_helper')
+    expect(gateAction('end_conversation', 0, noLeave).decision).toBe('allow')   // safety action stays free
   })
 })
