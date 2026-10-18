@@ -1380,8 +1380,9 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
 async function caseTimeoutSec(caseId: string, householdSec: number): Promise<number> {
   try {
-    const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true } })
-    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec)
+    const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true } })
+    const needsApproval = row?.noticeStatus === 'short_notice'
+    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval)
   } catch { return householdSec }   // never block escalation on a read failure
 }
 
@@ -1424,6 +1425,17 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         pushToMembership(to.id, { title: `🚪 ${step.fromName ?? 'Someone'} did not answer`, body: 'It is your turn. Open the app.', tag: c.id, url: '/helper' })
         if (to.user.phone) {
           sendSms(to.user.phone, `Doorbell for ${residentName}: ${step.fromName ?? 'the first helper'} did not answer. It is your turn. Open the helper app now.`, { urgent: true })
+        }
+      }
+      // Issue #4: When mode is helper-led or higher, also re-notify the primary helper (chain[0])
+      const controlMode = (c as any).controlMode as string | undefined
+      const effectiveMode = (c as any).effectiveMode as string | undefined
+      const mode = effectiveMode || controlMode
+      const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(mode || 'ai_leads')
+      if (modeRank >= 2 && step.fromId && step.fromId !== step.toId) {
+        const from = await getMembership(step.fromId)
+        if (from) {
+          pushToMembership(from.id, { title: '🚪 Reminder: still waiting', body: 'The case has moved to the next helper. Please check in.', tag: c.id, url: '/helper' })
         }
       }
     },

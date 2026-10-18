@@ -7,8 +7,8 @@ import { type Behaviour } from './riskRules'
 export interface EventResponse {
   /** The behaviour that triggers this response. */
   behaviour: Behaviour
-  /** The scripted response text. A function when the line must quote what the visitor said (purpose_contradiction). */
-  response: string | ((quotes: string[]) => string)
+  /** The scripted response text. A function when the line must quote what the visitor said (purpose_contradiction) or fetch context (pressure_after_rule). */
+  response: string | ((quotes: string[], ctx?: { approvedAlternative?: string }) => string)
   /** The tool to use for this response. */
   tool: 'restate_rule_refuse' | 'boundary_statement' | 'end_conversation' | 'safety_script'
 }
@@ -17,7 +17,13 @@ export interface EventResponse {
 export const EVENT_RESPONSES: EventResponse[] = [
   {
     behaviour: 'pressure_after_rule',
-    response: 'I cannot let you in. The rules are that I must check with a helper first.',
+    // Spec 6.3: offer the resident's approved alternative if one exists
+    response: (_quotes, ctx) => {
+      const alt = ctx?.approvedAlternative
+      return alt
+        ? `I cannot let you in. The resident has approved: ${alt}. Please contact them to arrange this.`
+        : 'I cannot let you in. The rules are that I must check with a helper first.'
+    },
     tool: 'restate_rule_refuse',
   },
   {
@@ -62,6 +68,16 @@ export const EVENT_RESPONSES: EventResponse[] = [
     tool: 'safety_script',
   },
   {
+    behaviour: 'immediate_threat',
+    response: 'Please stay where you are. Keep the door closed. A helper has been alerted.',
+    tool: 'safety_script',
+  },
+  {
+    behaviour: 'forced_entry_or_assault',
+    response: 'Please stay where you are. Keep the door closed. Emergency contacts have been alerted.',
+    tool: 'safety_script',
+  },
+  {
     behaviour: 'extra_knock',
     response: 'I am here. Please wait a moment while I continue.',
     tool: 'boundary_statement',
@@ -75,7 +91,7 @@ export function getEventResponse(behaviour: Behaviour): EventResponse | undefine
   return EVENT_RESPONSES.find(r => r.behaviour === behaviour)
 }
 
-/** Resolve the line to speak. Pass the observation's quotes so quote-based lines can use them. */
-export function renderEventResponse(r: EventResponse, quotes: string[] = []): string {
-  return typeof r.response === 'function' ? r.response(quotes) : r.response
+/** Resolve the line to speak. Pass the observation's quotes and optional context. */
+export function renderEventResponse(r: EventResponse, quotes: string[] = [], ctx?: { approvedAlternative?: string }): string {
+  return typeof r.response === 'function' ? r.response(quotes, ctx) : r.response
 }
