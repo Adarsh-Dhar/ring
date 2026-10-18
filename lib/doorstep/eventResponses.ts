@@ -7,7 +7,7 @@ import { type Behaviour } from './riskRules'
 export interface EventResponse {
   /** The behaviour that triggers this response. */
   behaviour: Behaviour
-  /** The scripted response text. A function when the line must quote what the visitor said (purpose_contradiction) or fetch context (pressure_after_rule). */
+  /** The scripted response text. A function when the line must quote what the visitor said (purpose_contradiction) or use context (pressure_after_rule). */
   response: string | ((quotes: string[], ctx?: { approvedAlternative?: string }) => string)
   /** The tool to use for this response. */
   tool: 'restate_rule_refuse' | 'boundary_statement' | 'end_conversation' | 'safety_script'
@@ -17,12 +17,11 @@ export interface EventResponse {
 export const EVENT_RESPONSES: EventResponse[] = [
   {
     behaviour: 'pressure_after_rule',
-    // Spec 6.3: offer the resident's approved alternative if one exists
-    response: (_quotes, ctx) => {
-      const alt = ctx?.approvedAlternative
-      return alt
-        ? `I cannot let you in. The resident has approved: ${alt}. Please contact them to arrange this.`
-        : 'I cannot let you in. The rules are that I must check with a helper first.'
+    response: (quotes, ctx) => {
+      if (ctx?.approvedAlternative) {
+        return `I cannot let you in. The rules are that I must check with a helper first. You can ask to be seen at: ${ctx.approvedAlternative}.`
+      }
+      return 'I cannot let you in. The rules are that I must check with a helper first.'
     },
     tool: 'restate_rule_refuse',
   },
@@ -63,7 +62,17 @@ export const EVENT_RESPONSES: EventResponse[] = [
     tool: 'boundary_statement',
   },
   {
+    behaviour: 'lock_manipulation_uncertain',
+    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+  {
     behaviour: 'door_wedge_or_follow_in',
+    response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
+    tool: 'safety_script',
+  },
+  {
+    behaviour: 'door_wedge_or_follow_in_uncertain',
     response: 'Entry is not permitted. Please stay where you are. Keep the door closed.',
     tool: 'safety_script',
   },
@@ -91,7 +100,7 @@ export function getEventResponse(behaviour: Behaviour): EventResponse | undefine
   return EVENT_RESPONSES.find(r => r.behaviour === behaviour)
 }
 
-/** Resolve the line to speak. Pass the observation's quotes and optional context. */
+/** Resolve the line to speak. Pass the observation's quotes so quote-based lines can use them. Optional context for approved alternatives. */
 export function renderEventResponse(r: EventResponse, quotes: string[] = [], ctx?: { approvedAlternative?: string }): string {
   return typeof r.response === 'function' ? r.response(quotes, ctx) : r.response
 }

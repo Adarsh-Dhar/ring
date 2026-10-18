@@ -26,6 +26,8 @@ export interface Preferences {
   communication: { sensory: 'low' | 'standard'; plainWordsOnly: boolean; textOnly: boolean; speakingPace: 'slow' | 'normal' }
   /** Entry without approval is not permitted in this design. Kept as data so a screen can show it. */
   entryWithoutApproval: 'never'
+  /** Approved alternative for pressure_after_rule: a safe place the visitor can go (e.g., "go to the police station"). */
+  approvedAlternative?: string
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -54,6 +56,7 @@ export function parsePreferences(raw: unknown): Preferences {
       speakingPace: c.speakingPace === 'normal' ? 'normal' : 'slow',
     },
     entryWithoutApproval: 'never',
+    approvedAlternative: typeof o.approvedAlternative === 'string' ? o.approvedAlternative : undefined,
   }
 }
 

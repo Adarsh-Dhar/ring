@@ -35,7 +35,7 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
   })
 
   it('all 11 spec codes exist with correct point values and caps', () => {
-    expect(BEHAVIOURS).toHaveLength(11)
+    expect(BEHAVIOURS).toHaveLength(13) // 11 original spec codes + 2 uncertain variants
     expect(RISK_RULES.extra_knock.points).toBe(1)
     expect(RISK_RULES.extra_knock.cap).toBe(5)
     expect(RISK_RULES.pressure_after_rule.points).toBe(5)

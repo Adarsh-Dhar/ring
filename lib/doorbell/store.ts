@@ -1427,15 +1427,15 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
           sendSms(to.user.phone, `Doorbell for ${residentName}: ${step.fromName ?? 'the first helper'} did not answer. It is your turn. Open the helper app now.`, { urgent: true })
         }
       }
-      // Issue #4: When mode is helper-led or higher, also re-notify the primary helper (chain[0])
+      // Issue #4: When mode is helper-led (M3+) or higher, also re-notify the primary helper (chain[0])
       const controlMode = (c as any).controlMode as string | undefined
       const effectiveMode = (c as any).effectiveMode as string | undefined
       const mode = effectiveMode || controlMode
       const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(mode || 'ai_leads')
-      if (modeRank >= 2 && step.fromId && step.fromId !== step.toId) {
-        const from = await getMembership(step.fromId)
-        if (from) {
-          pushToMembership(from.id, { title: '🚪 Reminder: still waiting', body: 'The case has moved to the next helper. Please check in.', tag: c.id, url: '/helper' })
+      if (modeRank >= 3 && c.chain[0] && c.chain[0] !== step.toId) {
+        const primary = await getMembership(c.chain[0])
+        if (primary) {
+          pushToMembership(primary.id, { title: '🚪 Reminder: still waiting', body: 'The case has moved to the next helper. Please check in.', tag: c.id, url: '/helper' })
         }
       }
     },

@@ -96,7 +96,9 @@ export const BEHAVIOURS = [
   'credential_request',
   'refuse_to_leave',
   'lock_manipulation',
+  'lock_manipulation_uncertain',
   'door_wedge_or_follow_in',
+  'door_wedge_or_follow_in_uncertain',
   'immediate_threat',
   'forced_entry_or_assault',
 ] as const
@@ -108,7 +110,9 @@ export const HELPER_RESOLVABLE: Behaviour[] = [
   'credential_request',
   'refuse_to_leave',
   'lock_manipulation',
+  'lock_manipulation_uncertain',
   'door_wedge_or_follow_in',
+  'door_wedge_or_follow_in_uncertain',
   'immediate_threat',
   'forced_entry_or_assault',
 ]
@@ -196,6 +200,14 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     sources: SENSOR_OR_HELPER,
     uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
   },
+  lock_manipulation_uncertain: {
+    label: 'Possible lock or door handling',
+    points: 0,
+    cap: 0,
+    floor: null,
+    sources: SENSOR_OR_HELPER,
+    uncertainFloor: 'helper_only',
+  },
   door_wedge_or_follow_in: {
     label: 'Wedged the door or tried to follow in',
     points: 40,
@@ -203,6 +215,14 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
     sources: SENSOR_OR_HELPER,
     uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
+  },
+  door_wedge_or_follow_in_uncertain: {
+    label: 'Possible door wedge or follow-in',
+    points: 0,
+    cap: 0,
+    floor: null,
+    sources: SENSOR_OR_HELPER,
+    uncertainFloor: 'helper_only',
   },
   immediate_threat: {
     label: 'Made an immediate threat',

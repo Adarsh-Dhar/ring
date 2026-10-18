@@ -328,6 +328,25 @@ export async function processAnswer(
       ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault'].includes(o.code)
     )
     if (modeRank(control.mode) >= modeRank('helper_only') && hasUncertainPhysicalOrThreat) {
+      // For uncertain physical events, use the event-specific response with safety script
+      const uncertainObs = live.observations.find(o =>
+        o.state === 'uncertain' &&
+        ['lock_manipulation', 'door_wedge_or_follow_in'].includes(o.code)
+      )
+      if (uncertainObs) {
+        // Map to uncertain behaviour code for scripted response
+        const uncertainCode = uncertainObs.code === 'lock_manipulation' ? 'lock_manipulation_uncertain' as any :
+                           uncertainObs.code === 'door_wedge_or_follow_in' ? 'door_wedge_or_follow_in_uncertain' as any :
+                           uncertainObs.code
+        const eventResponse = getEventResponse(uncertainCode)
+        if (eventResponse) {
+          const g = await gateFor(householdId, caseId, eventResponse.tool, { sEff: control.effectiveScore })
+          if (g.decision === 'allow') {
+            await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+            return { question: null, final: true, close: renderEventResponse(eventResponse, uncertainObs.quotes ?? []) }
+          }
+        }
+      }
       const closeLine = interrogatorLines(null).safety
       await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
       return { question: null, final: true, close: closeLine }
@@ -340,9 +359,15 @@ export async function processAnswer(
       if (eventResponse) {
         const g = await gateFor(householdId, caseId, eventResponse.tool, { sEff: control.effectiveScore })
         if (g.decision === 'allow') {
+          // Load approved alternative for pressure_after_rule if available
+          let approvedAlternative: string | undefined
+          if (obs.code === 'pressure_after_rule') {
+            const prefs = await getPreferences(householdId)
+            approvedAlternative = prefs.approvedAlternative
+          }
           // Speak the scripted response instead of the next question
           await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
-          return { question: null, final: true, close: renderEventResponse(eventResponse, obs.quotes ?? []) }
+          return { question: null, final: true, close: renderEventResponse(eventResponse, obs.quotes ?? [], { approvedAlternative }) }
         }
       }
     }
