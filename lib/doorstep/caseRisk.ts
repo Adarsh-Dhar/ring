@@ -137,11 +137,23 @@ export function applyHelperAction(
   if (action === 'reject') {
     obs[resolvedIdx] = { ...obs[resolvedIdx], retracted: true }
   } else if (action === 'confirm') {
-    obs[resolvedIdx] = { ...obs[resolvedIdx], state: 'confirmed', source: 'helper' }
+    // Save the pre-confirm state so restore can undo it exactly.
+    const current = obs[resolvedIdx]
+    obs[resolvedIdx] = {
+      ...current,
+      state: 'confirmed',
+      source: 'helper',
+      _before: current._before ?? { state: current.state, source: current.source },
+    } as Observation & { _before?: { state: string; source: string } }
   } else if (action === 'restore') {
-    // P5: Restore removes the retraction, reverting to original state
-    const { retracted, ...rest } = obs[resolvedIdx]
-    obs[resolvedIdx] = rest
+    // Restore removes retraction AND reverts a prior confirm back to the saved pre-confirm state.
+    const current = obs[resolvedIdx] as Observation & { _before?: { state: string; source: string } }
+    const { retracted, _before, ...rest } = current as any
+    if (_before) {
+      obs[resolvedIdx] = { ...rest, state: _before.state, source: _before.source }
+    } else {
+      obs[resolvedIdx] = rest
+    }
   }
 
   return {

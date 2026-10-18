@@ -70,6 +70,7 @@ const ENV_CONFIGS: EnvVarConfig[] = [
   { name: 'AI_TTS', required: false, defaultValue: '0', description: 'Enable TTS audio caching (0 or 1)' },
   { name: 'AI_EMBED_RISK', required: false, defaultValue: '0', description: 'Enable semantic scam detection (0 or 1)' },
   { name: 'AI_EMBED_RISK_THRESHOLD', required: false, defaultValue: '0.82', description: 'Scam detection similarity threshold', validator: (v) => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 1 },
+  { name: 'RISK_SHADOW', required: false, defaultValue: '0', description: 'Shadow mode: score is stored but controller/alerts are suppressed (0 or 1). P16 pilot.' },
   { name: 'RING_TALKBACK_ENABLED', required: false, defaultValue: '0', description: 'Enable Ring device talkback (0 or 1)' },
   { name: 'ESCALATION_SWEEP_MS', required: false, defaultValue: '5000', description: 'Escalation timer sweep interval (ms)', validator: (v) => !isNaN(Number(v)) && Number(v) > 0 },
   { name: 'CRON_SECRET', required: false, description: 'Secret for digest cron job protection' },

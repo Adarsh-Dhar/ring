@@ -29,11 +29,14 @@ export type RiskEdit =
 /**
  * Apply a single edit to a case's risk observations and re-score.
  * This is the ONLY code that writes riskScore, riskLedger, controlMode, riskLevel or riskObservations.
+ *
+ * RISK_SHADOW=1 stores the score without driving the controller or sending alerts (P16 shadow mode).
  */
 export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ ok: true } | { ok: false; error: string }> {
+  const SHADOW = process.env.RISK_SHADOW === '1'
   const c = await getDb().case.findUnique({
     where: { id: caseId },
-    select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true, unconfirmedAlertedAt: true },
+    select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
   })
   if (!c) return { ok: false, error: 'case not found' }
 
@@ -179,38 +182,50 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
   const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
 
-  if (becameEmergency) {
-    // P7: Emergency has no acknowledgement timer; everyone is alerted now, deadline left alone
-    const { alertEmergency } = await import('@/lib/doorbell/store')
-    await alertEmergency(c.householdId, caseId)
-  } else if (rose) {
-    // P7: Shorten deadline for non-emergency mode rises using score-based timer (compare-and-set to avoid race conditions)
-    const now = Date.now()
-    // Compute new timer based on risk score (DEFAULT_ESCALATION_SECONDS at 0 → 10s at 100, floor 10s)
-    const scoreRatio = Math.min(risk.score, 100) / 100
-    const baseSec = DEFAULT_ESCALATION_SECONDS // Default acknowledgement timer at score 0
-    const minSec = 10 // Floor
-    // Linear interpolation: 60s at score 0, 10s at score 100
-    const newTimerSec = Math.max(minSec, Math.floor(baseSec - (baseSec - minSec) * scoreRatio))
-    // Set deadline to now + new timer, but never extend it
-    const target = now + newTimerSec * 1000
-    if (target < c.deadlineAt.getTime()) {
-      // Compare-and-set: only write if nobody changed the deadline since we read it.
-      await getDb().case.updateMany({
-        where: { id: caseId, deadlineAt: c.deadlineAt },
-        data: { deadlineAt: new Date(target) },
-      })
+  if (!SHADOW) {
+    if (becameEmergency) {
+      // P7: Emergency has no acknowledgement timer; everyone is alerted now, deadline left alone
+      const { alertEmergency } = await import('@/lib/doorbell/store')
+      await alertEmergency(c.householdId, caseId)
+    } else if (rose) {
+      // P7: Shorten deadline for non-emergency mode rises using score-based timer (compare-and-set to avoid race conditions)
+      const now = Date.now()
+      // Compute new timer based on risk score (DEFAULT_ESCALATION_SECONDS at 0 → 10s at 100, floor 10s)
+      const scoreRatio = Math.min(risk.score, 100) / 100
+      const baseSec = DEFAULT_ESCALATION_SECONDS // Default acknowledgement timer at score 0
+      const minSec = 10 // Floor
+      // Linear interpolation: 60s at score 0, 10s at score 100
+      const newTimerSec = Math.max(minSec, Math.floor(baseSec - (baseSec - minSec) * scoreRatio))
+      // Set deadline to now + new timer, but never extend it
+      const target = now + newTimerSec * 1000
+      if (target < c.deadlineAt.getTime()) {
+        // Compare-and-set: only write if nobody changed the deadline since we read it.
+        await getDb().case.updateMany({
+          where: { id: caseId, deadlineAt: c.deadlineAt },
+          data: { deadlineAt: new Date(target) },
+        })
+      }
     }
-  }
 
-  // G4: Spec 4.3 – uncertain forced_entry_or_assault (camera model description alone) triggers an unconfirmed alert.
-  // immediate_threat at uncertain does NOT trigger G4 — it only raises the floor to helper_leads.
-  const hasUncertainForcedEntry = risk.ledger.some(
-    e => e.code === 'forced_entry_or_assault' && e.state === 'uncertain'
-  )
-  if (hasUncertainForcedEntry && !c.unconfirmedAlertedAt) {
-    const { alertUnconfirmedEmergency } = await import('@/lib/doorbell/store')
-    await alertUnconfirmedEmergency(c.householdId, caseId)
+    // G4: Spec 4.3 – uncertain forced_entry_or_assault (camera model description alone) triggers an unconfirmed alert.
+    // immediate_threat at uncertain does NOT trigger G4 — it only raises the floor to helper_leads.
+    const hasUncertainForcedEntry = risk.ledger.some(
+      e => e.code === 'forced_entry_or_assault' && e.state === 'uncertain'
+    )
+    if (hasUncertainForcedEntry && !c.unconfirmedAlertedAt) {
+      const { alertUnconfirmedEmergency } = await import('@/lib/doorbell/store')
+      await alertUnconfirmedEmergency(c.householdId, caseId)
+    }
+
+    // Spec 4.4 rule 5: a confirmed immediate_threat bypasses the helper-acknowledgement timer.
+    // This is NOT a full emergency — the alert is urgent, not the emergency workflow.
+    const hasConfirmedThreat = risk.ledger.some(
+      e => e.code === 'immediate_threat' && e.state === 'confirmed'
+    )
+    if (hasConfirmedThreat && !c.urgentAlertedAt) {
+      const { alertUrgent } = await import('@/lib/doorbell/store')
+      await alertUrgent(c.householdId, caseId)
+    }
   }
 
   return { ok: true }

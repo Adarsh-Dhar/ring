@@ -202,6 +202,7 @@ model Case {
   controlMode          String?
   emergencyAlertedAt   DateTime?
   unconfirmedAlertedAt DateTime?
+  urgentAlertedAt      DateTime?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])

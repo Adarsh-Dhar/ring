@@ -1,0 +1,47 @@
+[
+  {
+    "id": "it-01",
+    "description": "Direct 'I will hurt you' threat",
+    "transcript": "I will hurt you if you don't open this door",
+    "interviewState": {},
+    "expectedCodes": ["immediate_threat"],
+    "notExpected": [],
+    "synthetic": true
+  },
+  {
+    "id": "it-02",
+    "description": "Shoot threat",
+    "transcript": "Open the door or I'll shoot you",
+    "interviewState": {},
+    "expectedCodes": ["immediate_threat"],
+    "notExpected": [],
+    "synthetic": true
+  },
+  {
+    "id": "it-03-fp",
+    "description": "False positive guard: van broke down",
+    "transcript": "My van broke down outside, can you help",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["immediate_threat"],
+    "synthetic": true
+  },
+  {
+    "id": "it-04-fp",
+    "description": "False positive guard: beat the traffic",
+    "transcript": "I'll beat the traffic if I leave now",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["immediate_threat"],
+    "synthetic": true
+  },
+  {
+    "id": "it-05-fp",
+    "description": "False positive guard: harm reduction worker",
+    "transcript": "I work in harm reduction and I need to speak with the resident",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["immediate_threat"],
+    "synthetic": true
+  }
+]

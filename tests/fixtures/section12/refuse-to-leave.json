@@ -1,0 +1,38 @@
+[
+  {
+    "id": "rtl-01",
+    "description": "Explicit refusal after ask",
+    "transcript": "I'm not leaving until you open this door",
+    "interviewState": { "askedToLeaveAt": "2026-10-18T10:00:00.000Z" },
+    "expectedCodes": ["refuse_to_leave"],
+    "notExpected": [],
+    "synthetic": true
+  },
+  {
+    "id": "rtl-02",
+    "description": "refuses to go",
+    "transcript": "He refuses to go and is blocking the door",
+    "interviewState": { "askedToLeaveAt": "2026-10-18T10:00:00.000Z" },
+    "expectedCodes": ["refuse_to_leave"],
+    "notExpected": [],
+    "synthetic": true
+  },
+  {
+    "id": "rtl-03-fp",
+    "description": "False positive guard: bare refuse",
+    "transcript": "I refuse",
+    "interviewState": { "askedToLeaveAt": "2026-10-18T10:00:00.000Z" },
+    "expectedCodes": [],
+    "notExpected": ["refuse_to_leave"],
+    "synthetic": true
+  },
+  {
+    "id": "rtl-04-fp",
+    "description": "False positive guard: not sure",
+    "transcript": "I'm not sure what you mean",
+    "interviewState": { "askedToLeaveAt": "2026-10-18T10:00:00.000Z" },
+    "expectedCodes": [],
+    "notExpected": ["refuse_to_leave"],
+    "synthetic": true
+  }
+]

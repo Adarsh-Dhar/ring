@@ -491,6 +491,33 @@ export async function alertUnconfirmedEmergency(householdId: string, caseId: str
   return true
 }
 
+/**
+ * Spec 4.4 rule 5 — confirmed immediate_threat skips the helper-acknowledgement timer.
+ * Alerts every helper at once, exactly once, using an urgentAlertedAt claim.
+ * Does NOT trigger the full emergency workflow — that is reserved for forced_entry_or_assault and SOS.
+ */
+export async function alertUrgent(householdId: string, caseId: string): Promise<boolean> {
+  const db = getDb()
+  const claim = await db.case.updateMany({
+    where: { id: caseId, urgentAlertedAt: null },
+    data:  { urgentAlertedAt: new Date() },
+  })
+  if (claim.count !== 1) return false
+
+  const state = await getOrCreateState(householdId)
+  await refreshCasesFromDB(householdId, state)
+  const c = state.cases.find(x => x.id === caseId)
+  if (!c) return false
+
+  const household = await getHousehold(householdId)
+  const name = household?.residentName ?? 'The resident'
+  notifyAll(state, '⚠️ Threat at the door — urgent', 'A credible threat has been made. All helpers alerted. Resident has been told to stay back.', c.id)
+  smsAll(state, `URGENT: threat reported at ${name}'s door. Check the app immediately.`, name, true)
+  addLog(c, 'Urgent: confirmed immediate threat — all helpers alerted at once. Helper-acknowledgement timer bypassed (spec 4.4 rule 5).')
+  await updateCase(c.id, c)
+  return true
+}
+
 function nextOccurrence(v: RecurringVisit, now: number, timezone: string): number | null {
   for (let i = 0; i <= 7 * v.everyNWeeks; i++) {
     const w = windowToday(v, now + i * 86_400_000, timezone)
@@ -766,6 +793,15 @@ async function openCase(
   state.cases.unshift(c)
   if (state.cases.length > 200) state.cases.pop()
   await createCase({ ...c, householdId: state.householdId })
+
+  // Spec 4.3: if the camera is already offline when the case opens, mark it unavailable immediately.
+  if (anyDeviceOffline(state)) {
+    const offlineSince = Math.min(...Object.values(state.devices).filter(d => !d.online).map(d => d.since))
+    applyRiskEdit(c.id, {
+      kind: 'availability', device: 'camera', available: false,
+      since: new Date(offlineSince).toISOString(), reason: 'Doorbell was offline when this case was opened',
+    }).catch(e => console.error('[STORE] openCase availability mark failed', e))
+  }
 
   // G1d: SOS uses the same alert function (call before risk write so alert goes out even if scoring fails)
   if (kind === 'sos') await alertEmergency(state.householdId, c.id)
@@ -1081,8 +1117,25 @@ export async function setDeviceOnline(householdId: string, deviceId: string, onl
     state.devices[deviceId].alertedAt = now
     notifyAll(state, '⚠️ Doorbell offline', `The doorbell cannot be reached (${source}). ${household.residentName} will NOT be alerted about visitors.`, `device-${deviceId}`)
     smsAll(state, `Doorbell for ${household.residentName} is OFFLINE. Visitors will not be detected. Please check it and call ${household.residentName}.`, household.residentName, false)
+
+    // Mark camera unavailable on every open case for this household (spec 4.3 unavailable path).
+    const openCases = state.cases.filter(c => c.status === 'waiting')
+    for (const c of openCases) {
+      applyRiskEdit(c.id, {
+        kind: 'availability', device: 'camera', available: false,
+        since: new Date(now).toISOString(), reason: `Doorbell offline (${source})`,
+      }).catch(e => console.error('[STORE] availability mark failed', e))
+    }
   } else if (prev) {
     notifyAll(state, '✅ Doorbell back online', 'The doorbell is working again.', `device-${deviceId}`)
+
+    // Clear camera unavailable on every open case.
+    const openCases = state.cases.filter(c => c.status === 'waiting')
+    for (const c of openCases) {
+      applyRiskEdit(c.id, {
+        kind: 'availability', device: 'camera', available: true, since: new Date(now).toISOString(),
+      }).catch(e => console.error('[STORE] availability clear failed', e))
+    }
   }
 
   await saveState(householdId, state)

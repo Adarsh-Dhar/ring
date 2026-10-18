@@ -22,7 +22,8 @@
     "worker": "tsx workers/timer-worker.ts",
     "worker:once": "tsx workers/timer-worker.ts --once",
     "vercel:sync-env": "node scripts/sync-env-to-vercel.mjs",
-    "tunnel": "./tunnel.sh"
+    "tunnel": "./tunnel.sh",
+    "calibrate": "tsx scripts/calibrate-risk.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.10",
