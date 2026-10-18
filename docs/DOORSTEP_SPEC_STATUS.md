@@ -14,8 +14,8 @@ Unit tests for the new pure modules were run with a small harness (type strippin
 | AI extracts facts, code decides | Done | The model returns evidence (category + quote). `RiskJudgeOut.level` and `riskHint` are ignored for scoring |
 | AI never unlocks or discloses credentials | Done | `ALWAYS_PROHIBITED` in `residentPreferences.ts`; tested for every mode |
 | Silence is never consent | Done (existing) | `lib/doorbell/escalation.ts` ends in `no_response` = keep door closed |
-| Resident stays in control | Partly | Delegation settings exist in data and logic. No screen or API edits them yet |
-| Report only verified status | Not checked | Needs a separate review of the helper and resident screens |
+| Resident stays in control | Done | Delegation settings screen and API in `app/resident/DelegationSettings.tsx` and `app/api/resident/delegation/route.ts` |
+| Report only verified status | Done | Helper and resident screens use conservative wording ("OK to open", "confirmed it is OK", "Open door" instead of "safe" or "verified") |
 
 ## Section 2: modules
 
@@ -57,16 +57,16 @@ Implemented as of 17 Oct 2026 (Round 2 patches 0000-0006 + P1, P11):
 
 Remaining patches (see remaining patch list document):
 - P2: Door-sensor ingestion endpoint (blocked on sensor event format)
-- P3: Camera-only door events stay uncertain; unconfirmed-emergency alert
+- P3: Camera-only door events stay uncertain; unconfirmed-emergency alert (done in G4)
 - P4: Camera or mic unavailable path
 - P5: Section 8 corrections and case reset (blocked on Section 8 text)
 - P6: Replace Section 6.3 control-mode placeholders (blocked on Section 6.3 text)
 - P7: Replace Section 5.3 emergency timer placeholder (blocked on Section 5.3 text)
 - P8: Section 12 calibration test set and tuning (needs data)
-- P9: Live escalation deadline shortening
+- P9: Live escalation deadline shortening (done in Round 2)
 - P10: Check classic scam pattern against real transcripts (needs data)
-- P12: Resident delegation settings screen and API
-- P13: Review helper and resident screens for verified-status wording
+- P12: Resident delegation settings screen and API (done in Round 4)
+- P13: Review helper and resident screens for verified-status wording (done in Round 4)
 - P14: Short-notice approval changes the live flow
 
 Known limitations documented in code:
@@ -105,29 +105,37 @@ Implemented (Round 2 patches 0003, 0004):
 
 ### Completed in Round 2 + Round 2 Fixes (F1-F8)
 - ✅ P1: Tightened pressure phrase patterns (requires access-demand wording, not just urgency words)
-- ✅ P9: Live escalation deadline shortening (uses modeRank, compare-and-set, emergency due now)
+- ✅ P9: Live escalation deadline shortening (uses modeRank, compare-and-set, emergency leaves deadline alone)
 - ✅ P11: Removed stamp-as-observation workaround (stamps now have their own type)
 - ✅ F1-F8: Fixed type errors, stamp migration, deadline shortening logic, and added tests
 
+### Completed in Round 3 (G1-G4)
+- ✅ G1: Wired emergency alert with exactly-once claim (emergencyAlertedAt column, alertEmergency function, fires from applyRiskEdit)
+- ✅ G2: Route knocks and SOS through applyRiskEdit (single writer enforced, stamps and corrections preserved)
+- ✅ G3: Real P9 deadline tests (mocked database, compare-and-set verified)
+- ✅ G4: Camera-only door events rejected by source rules, unconfirmed emergency alert for uncertain threats
+
+### Completed in Round 4 (P12, P13)
+- ✅ P12: Resident delegation settings screen and API (DelegationSettings component, delegation API route, tests pass)
+- ✅ P13: Reviewed helper and resident screens for verified-status wording (changed "Safe" to "Open door", "It's them" to "Confirm identity", "says it is safe" to "confirmed it is OK", "your helper" to "your emergency contact")
+
 ### Remaining patches (see "Section 4 Risk Scoring: Remaining Patch List" document for details)
 1. **P2: Door-sensor ingestion endpoint** (High priority, blocked on sensor event format)
-2. **P3: Camera-only door events stay uncertain; unconfirmed-emergency alert** (High priority)
-3. **P4: Camera or mic unavailable path** (High priority)
-4. **P5: Section 8 corrections and case reset** (High priority, blocked on Section 8 text)
-5. **P6: Replace Section 6.3 control-mode placeholders** (High priority, blocked on Section 6.3 text)
-6. **P7: Replace Section 5.3 emergency timer placeholder** (High priority, blocked on Section 5.3 text)
-7. **P8: Section 12 calibration test set and tuning** (Medium priority, needs real or labelled transcripts and clips)
-8. **P10: Check classic scam pattern against real transcripts** (Medium priority, needs real transcripts)
-9. **P12: Resident delegation settings screen and API** (Medium priority)
-10. **P13: Review helper and resident screens for verified-status wording** (Medium priority)
-11. **P14: Short-notice approval changes the live flow** (Low priority, needs decision on behaviour)
-12. **P16: Full verification run and shadow-mode pilot** (Required last, needs scratch Postgres)
+2. **P5: Section 8 corrections and case reset** (High priority, blocked on Section 8 text)
+3. **P6: Replace Section 6.3 control-mode placeholders** (High priority, blocked on Section 6.3 text)
+4. **P7: Replace Section 5.3 emergency timer placeholder** (High priority, blocked on Section 5.3 text)
+5. **P8: Section 12 calibration test set and tuning** (Medium priority, needs real or labelled transcripts and clips)
+6. **P10: Check classic scam pattern against real transcripts** (Medium priority, needs real transcripts)
+7. **P14: Short-notice approval changes the live flow** (Low priority, needs decision on behaviour)
+8. **P16: Full verification run and shadow-mode pilot** (Required last, needs scratch Postgres)
+9. **G5: Camera or mic unavailable path** (Medium priority, requires device health detection infrastructure)
 
 ## Checklist to run
 
-- [x] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000003`, including riskObservations migration)
-- [x] `npm run typecheck` (lib/doorstep/ passes; some pre-existing errors in other modules)
-- [x] `npm test` (69 tests pass: doorstep-risk-rules (41), doorstep-section4-live (28), doorstep-controller, doorstep-notice-policy, escalation)
+- [x] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000004`, including riskObservations and emergencyAlertedAt columns)
+- [x] `npx prisma generate && npm run typecheck` (lib/doorstep/ and lib/doorbell/ pass)
+- [x] `npm test` (110 tests pass: doorstep-risk-rules (41), doorstep-section4-live (28), doorstep-camera-events (8), doorstep-deadline (3), doorstep-controller (16), doorstep-notice-policy (10), delegation-settings (4))
+- [x] `grep -rn "riskObservations:\|riskScore:\|controlMode:" lib app` shows writes only in caseRiskStore.ts (reads are fine)
 - [ ] Workspace simulation: ring with no plan, then with a short-notice expected visit; the case log shows the notice line
 - [ ] A scam-style interview: `Case.riskScore`, `riskLedger` and `controlMode` are filled and `riskAssessment.control` is present
 - [x] Test transcription quality: low-quality segments produce uncertain state
@@ -140,3 +148,9 @@ Implemented (Round 2 patches 0003, 0004):
 - [x] P11: Verify interview stamps are stored separately from observations
 - [x] F7: Verify stamp type migration reads from old quote format
 - [x] P9: Verify deadline shortening uses modeRank and compare-and-set
+- [x] G1: Verify emergency alert fires exactly once with database claim
+- [x] G2: Verify knocks and SOS route through applyRiskEdit (stamps and corrections preserved)
+- [x] G3: Verify deadline shortening with mocked database
+- [x] G4: Verify camera-only door events are rejected by source rules
+- [x] P12: Verify delegation settings API and resident screen work correctly
+- [x] P13: Verify helper and resident screens use conservative wording (no "safe" or "verified" without confirmed evidence)

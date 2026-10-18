@@ -1,4 +1,4 @@
-import { DEFAULT_ESCALATION_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, CODE_MAX_ATTEMPTS, type PublicHelper, type Consent } from './config'
+import { DEFAULT_ESCALATION_SECONDS, DEFAULT_DECISION_SECONDS, DEFAULT_NO_RESPONSE_SECONDS, RESULT_TTL_MS, NO_RESPONSE_TTL_MS, CHECKIN_HOUR, CHECKIN_GRACE_MIN, EXPECTED_TIMEOUT_SECONDS, RECURRING_GRACE_MIN, CODE_MAX_ATTEMPTS, type PublicHelper, type Consent } from './config'
 import { zonedHour, zonedDayKey, zonedHourOnSameDay, zonedWeekday, zonedDayNumber, zonedMinuteOnSameDay } from '../time'
 import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfiguredForHousehold, getConnectionForHousehold } from '../ring/client'
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
@@ -14,6 +14,7 @@ import { currentCode } from '../visit-code'
 import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
+import { applyRiskEdit } from '../doorstep/caseRiskStore'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -442,21 +443,52 @@ function matchPlanned(
   return null
 }
 
-/** P11: Trigger emergency alert when risk score reaches emergency level */
-async function triggerEmergency(householdId: string, caseId: string) {
+/** G1: Alert all helpers for a confirmed emergency, exactly once */
+export async function alertEmergency(householdId: string, caseId: string): Promise<boolean> {
+  const db = getDb()
+  // Claim: only one caller, on any server, gets count === 1.
+  const claim = await db.case.updateMany({
+    where: { id: caseId, emergencyAlertedAt: null },
+    data: { emergencyAlertedAt: new Date() },
+  })
+  if (claim.count !== 1) return false
+
   const state = await getOrCreateState(householdId)
-  const c = state.cases.find(c => c.id === caseId)
-  if (!c) return
-
-  // Check if already alerted to avoid duplicate alerts
-  const alreadyAlerted = c.log.some(e => e.msg.includes('⚠️ EMERGENCY'))
-  if (alreadyAlerted) return
-
-  // Log the emergency trigger
-  c.log.push({ t: Date.now(), msg: '⚠️ EMERGENCY: Risk score reached emergency level. Triggering emergency alert.' })
-
-  // Refresh the case from DB to get the latest risk fields
   await refreshCasesFromDB(householdId, state)
+  const c = state.cases.find(x => x.id === caseId)
+  if (!c) return false
+
+  const household = await getHousehold(householdId)
+  const name = household?.residentName ?? 'The resident'
+  notifyAll(state, '🆘 EMERGENCY at the door', 'Do not open. Keep the door closed and move away.', c.id)
+  smsAll(state, `EMERGENCY at ${name}'s door: possible threat or forced entry. Do not open the door. Check the app now.`, name, true)
+  addLog(c, 'Emergency: all helpers alerted at once by push and SMS. Resident told to keep the door closed and move away.')
+  await updateCase(c.id, c)
+  return true
+}
+
+/** G4: Alert all helpers for an unconfirmed emergency (camera-only threat), exactly once */
+export async function alertUnconfirmedEmergency(householdId: string, caseId: string): Promise<boolean> {
+  const db = getDb()
+  // Claim: only one caller, on any server, gets count === 1.
+  const claim = await db.case.updateMany({
+    where: { id: caseId, unconfirmedAlertedAt: null },
+    data: { unconfirmedAlertedAt: new Date() },
+  })
+  if (claim.count !== 1) return false
+
+  const state = await getOrCreateState(householdId)
+  await refreshCasesFromDB(householdId, state)
+  const c = state.cases.find(x => x.id === caseId)
+  if (!c) return false
+
+  const household = await getHousehold(householdId)
+  const name = household?.residentName ?? 'The resident'
+  notifyAll(state, 'Possible emergency at the door (not confirmed)', 'Check the clip now.', c.id)
+  smsAll(state, `Possible emergency at ${name}'s door (not confirmed). Check the clip now.`, name, true)
+  addLog(c, 'Unconfirmed emergency: model reports possible forced entry. Helpers alerted. Score unchanged until confirmed.')
+  await updateCase(c.id, c)
+  return true
 }
 
 function nextOccurrence(v: RecurringVisit, now: number, timezone: string): number | null {
@@ -530,12 +562,6 @@ function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, reside
   })
 }
 
-function alertSos(state: HouseholdState, c: DoorCase, residentName: string) {
-  // P11: Emergency alert - preserve evidence, tell resident to keep door closed and move away
-  notifyAll(state, '🆘 EMERGENCY: Resident needs help', 'Keep door closed and move away. Do not open.', c.id)
-  smsAll(state, `EMERGENCY: ${residentName} pressed "I need help". Keep door closed and move away. Do not open.`, residentName, true)
-  addLog(c, 'Emergency push and SMS sent to all helpers. Evidence preserved (clip and transcript).')
-}
 
 const addLog = (c: DoorCase, msg: string) => { c.log.push({ t: Date.now(), msg }) }
 
@@ -741,7 +767,8 @@ async function openCase(
   if (state.cases.length > 200) state.cases.pop()
   await createCase({ ...c, householdId: state.householdId })
 
-  if (kind === 'sos') alertSos(state, c, household.residentName)
+  // G1d: SOS uses the same alert function (call before risk write so alert goes out even if scoring fails)
+  if (kind === 'sos') await alertEmergency(state.householdId, c.id)
   return c
 }
 
@@ -777,67 +804,15 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 }
 
 /**
- * P9: Handle repeated button_press events as extra_knock observations.
+ * G2: Handle repeated button_press events as extra_knock observations through applyRiskEdit.
  * Counts presses within 30 seconds of the AI's "responding" stamp.
- * 
- * KNOWN LIMITATION: This implementation uses helper/resident reports only.
- * Hardware door sensors (lock_manipulation, door_wedge, door_force) are not integrated yet.
- * When hardware sensors are added, a signed sensor ingest route should be created with the same
- * HMAC validation as the Ring webhook.
  */
-async function handleExtraKnock(householdId: string, caseId: string, deviceId: string | null) {
+async function handleExtraKnock(householdId: string, caseId: string, _deviceId: string | null) {
   try {
-    const db = getDb()
-    const c = await db.case.findUnique({
-      where: { id: caseId },
-      select: { riskObservations: true },
-    })
-    if (!c) return
-
-    const riskObs = c.riskObservations as any
-    const interviewState = riskObs?.interviewState ?? {}
-    const respondingAt = interviewState.respondingAt
-
-    // Only count if we have a respondingAt timestamp and we're within 30 seconds
-    if (!respondingAt) return
-
-    const now = Date.now()
-    const respondingTime = new Date(respondingAt).getTime()
-    const thirtySecondsMs = 30 * 1000
-
-    if (now - respondingTime > thirtySecondsMs) {
-      // Outside the 30-second window, ignore
-      return
-    }
-
-    // Count existing extra_knock observations for this case
-    const observations = riskObs?.observations ?? []
-    const existingKnocks = observations.filter((o: any) => o.code === 'extra_knock').length
-
-    // Cap at 5 per spec
-    if (existingKnocks >= 5) return
-
-    // Add the extra_knock observation
-    const newObs = {
-      code: 'extra_knock',
-      at: new Date().toISOString(),
-      quotes: ['Repeated button press'],
-      source: 'sensor',
-      state: 'confirmed',
-      points: 1,
-    }
-
-    await db.case.update({
-      where: { id: caseId },
-      data: {
-        riskObservations: {
-          observations: [...observations, newObs],
-          interviewState,
-        },
-      },
-    })
+    // applyRiskEdit already enforces the 30-second window and the cap of 5, then re-scores.
+    await applyRiskEdit(caseId, { kind: 'knock', at: new Date().toISOString() })
   } catch (e) {
-    console.error('[P9] Failed to handle extra_knock:', e)
+    console.error('[G2] Failed to handle extra_knock:', e)
   }
 }
 
@@ -868,12 +843,13 @@ export async function raiseSos(householdId: string): Promise<DoorCase> {
     if (existing.kind === 'sos') return existing
     existing.kind = 'sos'
     addLog(existing, 'Resident pressed "I need help".')
-    const household = await getHousehold(householdId)
-    if (household) alertSos(state, existing, household.residentName)
-    
+
+    // G1d: SOS uses the same alert function (call before risk write so alert goes out even if scoring fails)
+    await alertEmergency(state.householdId, existing.id)
+
     // P10: SOS appends a confirmed forced_entry_or_assault with source 'resident' and sets score to 100
     await addSosObservation(householdId, existing.id)
-    
+
     await updateCase(existing.id, existing)
     return existing
   }
@@ -884,45 +860,23 @@ export async function raiseSos(householdId: string): Promise<DoorCase> {
 }
 
 /**
- * P10: Add SOS observation (confirmed forced_entry_or_assault from resident).
- * Sets score to 100.
+ * G2: SOS appends a confirmed forced_entry_or_assault with source 'resident' through applyRiskEdit
  */
 async function addSosObservation(householdId: string, caseId: string) {
   try {
-    const db = getDb()
-    const c = await db.case.findUnique({
-      where: { id: caseId },
-      select: { riskObservations: true },
-    })
-    if (!c) return
-
-    const riskObs = c.riskObservations as any
-    const interviewState = riskObs?.interviewState ?? {}
-    const observations = riskObs?.observations ?? []
-
-    // Add the forced_entry_or_assault observation from resident
-    const newObs = {
-      code: 'forced_entry_or_assault',
-      at: new Date().toISOString(),
-      quotes: ['Resident SOS pressed'],
-      source: 'resident',
-      state: 'confirmed',
-      points: 0, // forced_entry_or_assault sets score to 100 via override, not direct points
-    }
-
-    await db.case.update({
-      where: { id: caseId },
-      data: {
-        riskObservations: {
-          observations: [...observations, newObs],
-          interviewState,
-        },
-        riskScore: 100, // P10: SOS sets score to 100
-        controlMode: 'emergency', // P10: SOS triggers emergency mode
+    await applyRiskEdit(caseId, {
+      kind: 'append',
+      observation: {
+        code: 'forced_entry_or_assault',
+        at: new Date().toISOString(),
+        quotes: ['Resident SOS pressed'],
+        source: 'resident',
+        state: 'confirmed',
+        points: 0,
       },
     })
   } catch (e) {
-    console.error('[P10] Failed to add SOS observation:', e)
+    console.error('[G2] Failed to add SOS observation:', e)
   }
 }
 
@@ -1400,7 +1354,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
         chain: chain.length ? chain : (await getApprovedMemberships(row.householdId)).map(m => m.id),
         lane: (row.lane as 'normal' | 'expected' | null) ?? undefined,
       }
-      steps += await escalateDueCase(c, Date.now(), { timeoutSec, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
+      steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
     } catch (e) {
       reportError(e, { fn: 'sweepOverdueCases', caseId: row.id })
     }
@@ -1434,7 +1388,7 @@ export async function tick(householdId?: string) {
     for (const c of state.cases) {
       if (c.status !== 'waiting' || now < c.deadlineAt) continue
       try {
-        await escalateDueCase(c, now, { timeoutSec: state.timeoutSec, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
+        await escalateDueCase(c, now, { timeoutSec: state.timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {
         reportError(e, { householdId, fn: 'tick/escalate', caseId: c.id })
       }

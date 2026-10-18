@@ -10,14 +10,16 @@ export const runtime = 'nodejs'
 
 /**
  * P10: Helper observation confirmation/rejection route.
+ * P5: Extended to support restore action with audit trail.
  * POST /api/doorbell/observation
- * Body: { caseId, idx, action: 'confirm' | 'reject' }
- * 
+ * Body: { caseId, idx, action: 'confirm' | 'reject' | 'restore', reason? }
+ *
  * - Confirm: changes uncertain observation to confirmed with source 'helper'
- * - Reject: records a correction
+ * - Reject: records a correction, marks observation as retracted
+ * - Restore: removes a rejection (requires reason)
  * - Cross-household requests are rejected
  * - Returns new score and mode after re-scoring
- * - Triggers emergency alert if case becomes emergency
+ * - Emergency alert is sent by applyRiskEdit when case becomes emergency
  */
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper')
@@ -25,14 +27,19 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
-    const { caseId, idx, action } = body
+    const { caseId, idx, action, reason } = body
 
     if (!caseId || idx === undefined || !action) {
       return fail('Missing required fields: caseId, idx, action', 400)
     }
 
-    if (action !== 'confirm' && action !== 'reject') {
-      return fail('Action must be "confirm" or "reject"', 400)
+    if (action !== 'confirm' && action !== 'reject' && action !== 'restore') {
+      return fail('Action must be "confirm", "reject", or "restore"', 400)
+    }
+
+    // P5: Restore requires a reason
+    if (action === 'restore' && !reason) {
+      return fail('Restore action requires a reason', 400)
     }
 
     const db = getDb()
@@ -60,8 +67,8 @@ export async function POST(req: NextRequest) {
       return fail('Cross-household access not allowed', 403)
     }
 
-    // Use the single risk writer to apply the helper action
-    await applyRiskEdit(caseId, { kind: 'helper', idx, action })
+    // P5: Use the single risk writer to apply the helper action with audit trail
+    await applyRiskEdit(caseId, { kind: 'helper', idx, action, who: a.session!.membershipId, reason })
 
     // Reload the case to get the new score and mode
     const updated = await db.case.findUnique({

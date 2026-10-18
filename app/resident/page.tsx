@@ -93,7 +93,7 @@ export default function ResidentPage() {
   // For emergencies and general calls, always prefer the first helper (primary contact)
   // unless someone has already answered this specific case
   const callTarget = answeredBy ?? first
-  const callName = first?.name ?? 'your helper'
+  const emergencyContact = first?.name ?? 'your emergency contact'
 
   // Order matters: anything that means "we can't be sure" comes BEFORE any "all quiet" or "OK to open" screen.
   let screen: Screen
@@ -104,15 +104,15 @@ export default function ResidentPage() {
     }
     screen = { icon: '🔒', title: 'Not paired', sub: 'Enter the pairing code to connect your device.', bg: 'bg-amber-700', alarm: true }
   } else if (stale || (error && !snap)) {
-    screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
+    screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${emergencyContact}.`, bg: 'bg-amber-700', alarm: true }
   } else if (sseLost || (realtimeState?.state === 'CLOSED_KEEP_SHUT' && realtimeState?.canOpen === false)) {
-    screen = { icon: '⚠️', title: 'Keep the door closed', sub: `Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
+    screen = { icon: '⚠️', title: 'Keep the door closed', sub: `Call ${emergencyContact}.`, bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.dbHealthy) {
     screen = { icon: '⚠️', title: "Can't be sure", sub: 'Keep the door closed. Call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.ready) {
     screen = { icon: '🛠️', title: 'Not ready yet', sub: 'Nobody can be alerted. Keep the door closed and call for help.', bg: 'bg-amber-700', alarm: true }
   } else if (snap?.offline) {
-    screen = { icon: '⚠️', title: "Doorbell may not work", sub: `Do not open the door. Call ${callName}.`, bg: 'bg-amber-700', alarm: true }
+    screen = { icon: '⚠️', title: "Doorbell may not work", sub: `Do not open the door. Call ${emergencyContact}.`, bg: 'bg-amber-700', alarm: true }
   } else if (!c && (snap?.expectedNow?.length || snap?.recurringNow?.length)) {
     const e = snap!.recurringNow[0] ?? snap!.expectedNow[0]
     screen = { icon: e.icon, title: `${e.label} expected`, sub: `Until ${new Date(e.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Wait for the bell.`, bg: 'bg-sky-800' }
@@ -123,7 +123,7 @@ export default function ResidentPage() {
       screen = { icon: '🚨', title: 'Call for help now', sub: `Nobody has answered. Call ${emergency}.`, bg: 'bg-red-800', alarm: true }
     } else if (c.status === 'answered') {
       if (c.answer === 'safe') {
-        screen = { icon: '✅', title: `${answeredBy?.name ?? 'Your helper'} says it is safe`, sub: 'You can relax now. Stay where you are.', bg: 'bg-emerald-800' }
+        screen = { icon: '✅', title: `${answeredBy?.name ?? 'Your helper'} confirmed it is OK`, sub: 'You can relax now. Stay where you are.', bg: 'bg-emerald-800' }
       } else if (c.answer === 'not_safe') {
         screen = { icon: '⛔', title: `${answeredBy?.name ?? 'Your helper'} says stay inside`, sub: 'Do not open the door. They are helping you.', bg: 'bg-red-800', alarm: true }
       } else {
@@ -152,14 +152,14 @@ export default function ResidentPage() {
   } else if (c.status === 'waiting') {
     screen = { icon: '🚪', title: 'Someone is here', sub: `Keep the door closed. ${currentHelper?.name ?? 'A helper'} is checking.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'no_response') {
-    screen = { icon: '⚠️', title: "Don't open the door", sub: `Nobody answered. Call ${callName}`, bg: 'bg-amber-700', alarm: true }
+    screen = { icon: '⚠️', title: "Don't open the door", sub: 'Nobody answered. Call your emergency contact.', bg: 'bg-amber-700', alarm: true }
   } else if (c.answer === 'safe' && (c as any).selfVerifiedAt && !c.declinedAt) {
     screen = { icon: '✅', title: 'OK to open the door', sub: `You checked the word. ${currentHelper?.name ?? 'Your helper'} knows.`, bg: 'bg-emerald-800' }
   } else if (c.answer === 'safe') {
     if (c.declinedAt) screen = { icon: '🚪', title: 'Door stays closed', sub: 'You chose not to open', bg: 'bg-slate-700' }
     else if (!c.confirmedAt) {
       screen = { icon: '🙋', title: `${answeredBy?.name ?? 'Your helper'} says it is OK`, sub: c.lane === 'expected' && c.visitLabel ? `${c.visitIcon} ${c.visitLabel}. Open the door?` : c.visitor === 'delivery' ? '📦 A delivery. Open the door?' : '👤 Someone you know. Open the door?', bg: 'bg-teal-800' }
-    } else screen = { icon: '✅', title: 'OK to open the door', sub: `${answeredBy?.name ?? 'Your helper'} says it is safe`, bg: 'bg-emerald-800' }
+    } else screen = { icon: '✅', title: 'OK to open the door', sub: `${answeredBy?.name ?? 'Your helper'} confirmed it is OK`, bg: 'bg-emerald-800' }
   } else if (c.answer === 'not_safe') {
     screen = { icon: '⛔', title: "Don't open the door", sub: `${answeredBy?.name ?? 'Your helper'} says stay inside`, bg: 'bg-red-800' }
   } else {

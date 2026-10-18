@@ -27,9 +27,13 @@ export interface Correction {
   /** Position in the observations array this correction applies to. */
   idx: number
   /** Action taken. */
-  action: 'confirm' | 'reject'
+  action: 'confirm' | 'reject' | 'restore'
   /** ISO timestamp when the helper acted. */
   at: string
+  /** P5: Helper ID who made this correction (for audit trail). */
+  who: string
+  /** P5: Reason for the correction (required for restore, optional otherwise). */
+  reason?: string
 }
 
 /**
@@ -90,23 +94,27 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
 }
 
 /**
- * Apply a helper action (confirm or reject) to the stored observations.
- * Reject marks the event as retracted; confirm marks it as confirmed by a helper.
+ * Apply a helper action (confirm, reject, or restore) to the stored observations.
+ * P5: Reject marks the event as retracted; confirm marks it as confirmed by a helper; restore removes a rejection.
  */
-export function applyHelperAction(stored: StoredRisk, idx: number, action: 'confirm' | 'reject'): StoredRisk {
+export function applyHelperAction(stored: StoredRisk, idx: number, action: 'confirm' | 'reject' | 'restore', who: string, reason?: string): StoredRisk {
   const obs = [...stored.observations]
   if (idx < 0 || idx >= obs.length) return stored
 
   if (action === 'reject') {
     obs[idx] = { ...obs[idx], retracted: true }
-  } else {
+  } else if (action === 'confirm') {
     obs[idx] = { ...obs[idx], state: 'confirmed', source: 'helper' }
+  } else if (action === 'restore') {
+    // P5: Restore removes the retraction, reverting to original state
+    const { retracted, ...rest } = obs[idx]
+    obs[idx] = rest
   }
 
   return {
     observations: obs,
     stamps: stored.stamps,
     interviewState: stored.interviewState,
-    corrections: [...stored.corrections, { idx, action, at: new Date().toISOString() }],
+    corrections: [...stored.corrections, { idx, action, at: new Date().toISOString(), who, reason }],
   }
 }

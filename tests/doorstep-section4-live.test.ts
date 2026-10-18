@@ -90,7 +90,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
       interviewState: {},
       corrections: [],
     }
-    const updated = applyHelperAction(stored, 1, 'confirm')
+    const updated = applyHelperAction(stored, 1, 'confirm', 'helper-123')
     expect(updated.observations[1].state).toBe('confirmed')
     expect(updated.observations[1].source).toBe('helper')
     expect(updated.observations[0].state).toBe('confirmed') // Unchanged
@@ -103,7 +103,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
       interviewState: {},
       corrections: [],
     }
-    const updated = applyHelperAction(stored, 0, 'reject')
+    const updated = applyHelperAction(stored, 0, 'reject', 'helper-123')
     expect(updated.observations[0].retracted).toBe(true)
   })
 

@@ -200,6 +200,8 @@ model Case {
   riskLedger           Json?     @db.Json
   riskObservations     Json?     @db.Json
   controlMode          String?
+  emergencyAlertedAt   DateTime?
+  unconfirmedAlertedAt DateTime?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId])

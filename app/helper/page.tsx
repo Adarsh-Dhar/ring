@@ -71,8 +71,8 @@ export default function HelperPage() {
         ))}
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <button disabled={!canSafe} onClick={() => answer('safe')} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold disabled:opacity-30">✅ Safe</button>
-        <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Not safe</button>
+        <button disabled={!canSafe} onClick={() => answer('safe')} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold disabled:opacity-30">✅ Open door</button>
+        <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Don't open</button>
         <button onClick={() => answer('call_me')} className="rounded-2xl bg-indigo-600 py-5 text-lg font-bold">📞 I'll call</button>
       </div>
     </div>
@@ -80,7 +80,7 @@ export default function HelperPage() {
   const ExpectedButtons = (
     <div className="mt-4">
       <div className="grid grid-cols-3 gap-3">
-        <button onClick={() => { setVisitor('known'); void answer('safe', 'known') }} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold">✅ It's them</button>
+        <button onClick={() => { setVisitor('known'); void answer('safe', 'known') }} className="rounded-2xl bg-emerald-600 py-5 text-lg font-bold">✅ Confirm identity</button>
         <button onClick={() => answer('not_safe')} className="rounded-2xl bg-red-600 py-5 text-lg font-bold">⛔ Not them</button>
         <button onClick={() => answer('call_me')} className="rounded-2xl bg-indigo-600 py-5 text-lg font-bold">📞 I'll call</button>
       </div>
@@ -165,7 +165,7 @@ export default function HelperPage() {
           {c.status === 'waiting' && myTurn && (c.lane === 'expected' ? ExpectedButtons : Buttons)}
           {c.status === 'answered' && (
             <p className="mt-4 text-emerald-300">
-              Answered: {c.answer === 'safe' ? 'Safe' : c.answer === 'not_safe' ? 'Not safe' : 'Will call'} by{' '}
+              Answered: {c.answer === 'safe' ? 'Open door' : c.answer === 'not_safe' ? 'Don\'t open' : 'Will call'} by{' '}
               {snap.helpers.find((h) => h.id === c.answeredBy)?.name}.
             </p>
           )}

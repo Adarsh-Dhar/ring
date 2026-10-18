@@ -4,8 +4,7 @@
  * Pure, no imports apart from the other doorstep modules. Every score value gets its own autonomy budget,
  * oversight index, helper priority and timers (no hidden buckets). Permitted actions change only at the mode edges.
  *
- * PLACEHOLDER: the three timer values and their curves are starting values. The product spec's section 5.3 sets the
- * real ones; replace TIMER_CURVE when that text is final. Everything else here follows sections 1 and 2.
+ * P7: Timer values from Section 5.3 are implemented (60s/180s/300s at score 0, shrinking to 10s/45s/90s at score 100).
  */
 import { CONTROL_MODES, maxMode, type ControlMode } from './riskRules'
 import { permittedActions, type Permissions, type Preferences } from './residentPreferences'

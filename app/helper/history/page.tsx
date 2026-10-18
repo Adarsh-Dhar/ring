@@ -11,9 +11,9 @@ const label = (c: DoorCase) =>
     : c.status === 'no_response'
       ? '⚠️ Nobody answered'
       : c.answer === 'safe'
-        ? '✅ Safe'
+        ? '✅ Open door'
         : c.answer === 'not_safe'
-          ? '⛔ Not safe'
+          ? '⛔ Don\'t open'
           : '📞 Will call'
 
 export default function HistoryPage() {

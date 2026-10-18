@@ -20,7 +20,12 @@ export interface PublicHelper {
 }
 
 /** Default values for new households. These can be overridden per household. */
-export const DEFAULT_ESCALATION_SECONDS = Number(process.env.ESCALATION_SECONDS || 30)
+/** P7: Acknowledgement timer at score 0 (shrinks to 10s at score 100) */
+export const DEFAULT_ESCALATION_SECONDS = Number(process.env.ESCALATION_SECONDS || 60)
+/** P7: Decision timer after acknowledgement (shrinks to 45s at score 100) */
+export const DEFAULT_DECISION_SECONDS = Number(process.env.DECISION_SECONDS || 180)
+/** P7: No-response timer for unacknowledged helpers (shrinks to 90s at score 100) */
+export const DEFAULT_NO_RESPONSE_SECONDS = Number(process.env.NO_RESPONSE_SECONDS || 300)
 export const DEFAULT_TIMEZONE = 'Asia/Kolkata'
 export const DEFAULT_EMERGENCY_NUMBER = '112'
 export const DEFAULT_QUIET_START_HOUR = 22

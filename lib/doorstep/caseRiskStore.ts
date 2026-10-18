@@ -6,11 +6,14 @@
  * Edit kinds: 'fresh' (model pass), 'knock', 'append' (SOS or a report), 'interview' (stamp), 'helper'.
  *
  * The knock window (30 s from the AI starting to respond) and the cap of 5 live here.
+ *
+ * P7: Timer values from Section 5.3 are implemented (60s/180s/300s at score 0, shrinking to 10s/45s/90s at score 100).
  */
 import { getDb } from '@/lib/db/client'
 import { scoreObservations, modeRank, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
+import { DEFAULT_ESCALATION_SECONDS } from '@/lib/doorbell/config'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -18,7 +21,7 @@ export type RiskEdit =
   | { kind: 'knock'; at: string }
   | { kind: 'append'; observation: Observation }
   | { kind: 'interview'; stampType: keyof InterviewState; at: string }
-  | { kind: 'helper'; idx: number; action: 'confirm' | 'reject' }
+  | { kind: 'helper'; idx: number; action: 'confirm' | 'reject' | 'restore'; who: string; reason?: string }
 
 /**
  * Apply a single edit to a case's risk observations and re-score.
@@ -27,7 +30,7 @@ export type RiskEdit =
 export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<void> {
   const c = await getDb().case.findUnique({
     where: { id: caseId },
-    select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true },
+    select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true, unconfirmedAlertedAt: true },
   })
   if (!c) return
 
@@ -64,7 +67,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
           {
             code: 'extra_knock',
             at: edit.at,
-            quotes: [],
+            quotes: ['Repeated button press'],
             source: 'sensor',
             state: 'confirmed',
             points: 0,
@@ -96,8 +99,8 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     }
 
     case 'helper': {
-      // Apply a helper confirm or reject action.
-      newStored = applyHelperAction(stored, edit.idx, edit.action)
+      // P5: Apply a helper confirm, reject, or restore action with audit trail.
+      newStored = applyHelperAction(stored, edit.idx, edit.action, edit.who, edit.reason)
       break
     }
 
@@ -122,15 +125,27 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     },
   })
 
-  // P9: Shorten deadline when control mode rises (compare-and-set to avoid race conditions)
+  // G1c: Fire emergency alert if case newly became emergency
   const prevMode = (c.controlMode as ControlMode | null) ?? null
+  const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
   const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
 
-  if (rose) {
+  if (becameEmergency) {
+    // P7: Emergency has no acknowledgement timer; everyone is alerted now, deadline left alone
+    const { alertEmergency } = await import('@/lib/doorbell/store')
+    await alertEmergency(c.householdId, caseId)
+  } else if (rose) {
+    // P7: Shorten deadline for non-emergency mode rises using score-based timer (compare-and-set to avoid race conditions)
     const now = Date.now()
     const remaining = Math.max(0, c.deadlineAt.getTime() - now)
-    // PLACEHOLDER until Section 5.3: emergency is due now, other rises halve what is left.
-    const target = risk.minMode === 'emergency' ? now : now + Math.floor(remaining * 0.5)
+    // Compute new timer based on risk score (DEFAULT_ESCALATION_SECONDS at 0 → 10s at 100, floor 10s)
+    const scoreRatio = Math.min(risk.score, 100) / 100
+    const baseSec = DEFAULT_ESCALATION_SECONDS // Default acknowledgement timer at score 0
+    const minSec = 10 // Floor
+    // Linear interpolation: 60s at score 0, 10s at score 100
+    const newTimerSec = Math.max(minSec, Math.floor(baseSec - (baseSec - minSec) * scoreRatio))
+    // Set deadline to now + new timer, but never extend it
+    const target = now + newTimerSec * 1000
     if (target < c.deadlineAt.getTime()) {
       // Compare-and-set: only write if nobody changed the deadline since we read it.
       await getDb().case.updateMany({
@@ -138,5 +153,14 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
         data: { deadlineAt: new Date(target) },
       })
     }
+  }
+
+  // G4: Check for unconfirmed emergency (camera-only threat) and alert if not already alerted
+  const hasUncertainThreat = risk.ledger.some(
+    e => (e.code === 'forced_entry_or_assault' || e.code === 'immediate_threat') && e.state === 'uncertain'
+  )
+  if (hasUncertainThreat && !c.unconfirmedAlertedAt) {
+    const { alertUnconfirmedEmergency } = await import('@/lib/doorbell/store')
+    await alertUnconfirmedEmergency(c.householdId, caseId)
   }
 }

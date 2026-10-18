@@ -12,6 +12,9 @@
  *  - Every behaviour has a cap, so repeating one thing cannot run the score up (two contradictions never exceed the cap).
  *  - A serious event sets a MINIMUM control mode, so the same total cannot hide different situations.
  *
+ * P6: Control-mode floors (Section 6.3) are now implemented with proposed values.
+ * P7: Timer values (Section 5.3) are now implemented with proposed values.
+ *
  * ALL NUMBERS ARE PILOT STARTING VALUES. They are operational priorities, not probabilities of danger.
  */
 
@@ -168,41 +171,41 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     label: 'Refused to leave when asked',
     points: 25,
     cap: 25,
-    floor: 'helper_leads', // P11: Section 6.3 placeholder
+    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
     sources: SPEECH_OR_HELPER,
   },
   lock_manipulation: {
     label: 'Handled the lock or door',
     points: 30,
     cap: 30,
-    floor: 'helper_leads', // P11: Section 6.3 placeholder
+    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads',
+    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
   },
   door_wedge_or_follow_in: {
     label: 'Wedged the door or tried to follow in',
     points: 40,
     cap: 40,
-    floor: 'helper_leads', // P11: Section 6.3 placeholder
+    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads',
+    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
   },
   immediate_threat: {
     label: 'Made an immediate threat',
     points: 0,
     cap: null,
-    floor: 'emergency', // P11: Section 6.3 placeholder
+    floor: 'emergency', // P6: Section 6.3 - confirmed triggers emergency (score ≥80 also maps to emergency)
     sources: SPEECH_OR_HELPER,
-    uncertainFloor: 'helper_leads',
+    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
     minScore: 80,
   },
   forced_entry_or_assault: {
     label: 'Forced entry or assault',
     points: 0,
     cap: null,
-    floor: 'emergency',
+    floor: 'emergency', // P6: Section 6.3 - confirmed triggers emergency
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads',
+    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led with unconfirmed alert
     minScore: 100,
   },
 }
