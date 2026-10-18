@@ -18,7 +18,7 @@ export const ACTIONS = [
 export type Action = (typeof ACTIONS)[number]
 
 /** Never permitted, for anyone, at any score. The AI never opens the door and never discloses access credentials. */
-export const ALWAYS_PROHIBITED = ['unlock_door', 'disclose_access_credentials', 'compel_resident_to_open'] as const
+export const ALWAYS_PROHIBITED = ['unlock_door', 'disclose_access_credentials', 'grant_entry', 'compel_resident_to_open'] as const
 
 export interface Preferences {
   /** Who handles each decision while the AI is allowed to lead. */

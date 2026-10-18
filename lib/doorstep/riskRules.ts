@@ -133,6 +133,7 @@ export interface BehaviourRule {
 
 const ALL: readonly Source[] = ['transcript', 'sensor', 'resident', 'helper']
 const HUMAN_OR_SENSOR: readonly Source[] = ['sensor', 'resident', 'helper']
+const SENSOR_OR_HELPER: readonly Source[] = ['sensor', 'helper']
 const SPEECH_OR_HELPER: readonly Source[] = ['transcript', 'resident', 'helper']
 
 /** Helper-facing labels avoid words on the shared banned-phrase list. */
@@ -192,7 +193,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     points: 30,
     cap: 30,
     floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
-    sources: HUMAN_OR_SENSOR,
+    sources: SENSOR_OR_HELPER,
     uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
   },
   door_wedge_or_follow_in: {
@@ -200,7 +201,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     points: 40,
     cap: 40,
     floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
-    sources: HUMAN_OR_SENSOR,
+    sources: SENSOR_OR_HELPER,
     uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
   },
   immediate_threat: {
@@ -321,16 +322,23 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   refuse_to_leave: /\b(won'?t|will not|not going to|not gonna|never)\s+(leave|go away|go|move|budge)\b|\bnot\s+(leaving|going anywhere|going away|moving|budging)\b|\bnever\s+leaving\b|\brefuse[sd]?\s+to\s+(leave|go|move)\b/i,
   // Step 8: immediate_threat requires intent aimed at a person. Drop bare beat/smash/burn/harm/break down.
   immediate_threat: /\b(i('?ll| will|'?m going to|'?m gonna))\s+(hurt|kill|stab|shoot|beat (you )?up|burn)\b|\b(hurt|kill|stab|shoot) you\b/i,
-  hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
+  hide_from_helper: /\b(don'?t|do not|no need to|please don'?t|never)\s+(tell|call|ask|involve|phone|let)\s+(your|the|any)?\s*(helper|carer|son|daughter|family|anyone|anybody|them|him|her)\b|\b(keep (this|it) (a )?secret|between us|just us)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
   pressure_after_rule: /\b(let me (in|inside|through)|open up|open the door)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
   pressure_after_boundary: /\b(let me (in|inside|through)|open up|open the door|i'?m not (going )?to wait|i won'?t wait)\b/i,
 }
 
+/** Spec 4.2 says the visitor ASKS for a credential. A negated mention ("I will never ask for your PIN") is not a request. */
+const NEGATED: Partial<Record<Behaviour, RegExp>> = {
+  credential_request: /\b(never|not|don'?t|do not|won'?t|no need)\b[^.!?]{0,25}\b(ask|asking|need|want|give|tell)\b/i,
+}
+
 export function phraseMatches(code: Behaviour, quote: string): boolean {
   const re = PHRASE_PATTERNS[code]
-  return re ? re.test(quote) : true
+  if (re && !re.test(quote)) return false
+  const neg = NEGATED[code]
+  return !(neg && neg.test(quote))
 }
 
 /** Identity of an event. Speech events with the same words are one event. Sensor and report events are told apart by time. */
