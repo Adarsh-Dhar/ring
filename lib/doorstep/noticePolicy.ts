@@ -92,6 +92,38 @@ export function evaluateNotice(input: NoticeInput, settings: NoticeSettings = DE
   }
 }
 
+/** Does the resident's unknown-visitor policy say a helper, not the AI, makes first contact? Single source of truth: evaluateNotice. */
+export function helperMakesFirstContact(settings: NoticeSettings): boolean {
+  return evaluateNotice({}, settings).firstContact === 'helper'
+}
+
+export type NoticeSettingsPatch = {
+  minNoticeHours: number | null
+  shortNoticePolicy: ShortNoticePolicy
+  unknownVisitorPolicy: UnknownVisitorPolicy
+  approvalTimerSec: number
+}
+
+/** Strict validation for the settings API. parseNoticeSettings is tolerant (it falls back); this one rejects bad input. */
+export function validateNoticeSettingsInput(raw: unknown): { ok: true; value: NoticeSettingsPatch } | { ok: false; error: string } {
+  if (!raw || typeof raw !== 'object') return { ok: false, error: 'Settings object required' }
+  const o = raw as Record<string, unknown>
+  let minNoticeHours: number | null = null
+  if (o.minNoticeHours !== null && o.minNoticeHours !== undefined) {
+    if (!Number.isInteger(o.minNoticeHours) || (o.minNoticeHours as number) < 1 || (o.minNoticeHours as number) > 720) {
+      return { ok: false, error: 'minNoticeHours must be a whole number from 1 to 720, or empty to switch the rule off' }
+    }
+    minNoticeHours = o.minNoticeHours as number
+  }
+  const sn = o.shortNoticePolicy
+  if (sn !== 'helper_approval' && sn !== 'resident_approval' && sn !== 'ai_handles') return { ok: false, error: 'Invalid shortNoticePolicy' }
+  const uv = o.unknownVisitorPolicy
+  if (uv !== 'ai_first_contact' && uv !== 'helper_first') return { ok: false, error: 'Invalid unknownVisitorPolicy' }
+  const t = o.approvalTimerSec
+  if (!Number.isInteger(t) || (t as number) < 15 || (t as number) > 900) return { ok: false, error: 'approvalTimerSec must be a whole number from 15 to 900' }
+  return { ok: true, value: { minNoticeHours, shortNoticePolicy: sn, unknownVisitorPolicy: uv, approvalTimerSec: t as number } }
+}
+
 /** Read the three notice settings off a household row (or anything shaped like one). Bad values fall back to defaults. */
 export function parseNoticeSettings(h: unknown): NoticeSettings {
   const o = (h ?? {}) as Record<string, unknown>

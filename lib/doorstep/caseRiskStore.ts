@@ -12,7 +12,7 @@
  * Only the section 7.2 no-response timer keeps its own curve (NO_RESPONSE_CURVE).
  */
 import { getDb } from '@/lib/db/client'
-import { scoreObservations, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
+import { scoreObservations, riskLabelFor, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
 import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
@@ -193,7 +193,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       riskScore: risk.score,
       riskLedger: risk.ledger as any,
       controlMode: risk.minMode,
-      riskLevel: risk.score >= 80 ? 'high' : risk.score >= 50 ? 'medium' : risk.score >= 20 ? 'low' : 'none',
+      riskLevel: riskLabelFor(eff),
       riskObservations: newStored as any,
       ...(changed ? { lastEventAt: new Date() } : {}),
     },

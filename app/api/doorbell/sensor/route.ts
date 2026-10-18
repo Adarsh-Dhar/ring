@@ -27,6 +27,7 @@ import { IS_PROD } from '@/lib/auth'
 import { checkRateLimit } from '@/lib/ratelimit/redis'
 import { SensorEventSchema, type SensorEventType } from '@/lib/schemas/sensor'
 import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
+import { resolveSensorHousehold } from '@/lib/doorstep/sensorRouting'
 import { ingestEvent } from '@/lib/doorbell/store'
 import { newObsId } from '@/lib/doorstep/riskRules'
 import type { Observation } from '@/lib/doorstep/riskRules'
@@ -82,31 +83,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Timestamp out of window' }, { status: 400 })
   }
 
-  // 4. Household lookup by deviceId
+  // 4. Household lookup by deviceId. Exactly one registered match, or the event is dropped (never guess a household).
   const db = getDb()
-  const device = await db.device.findFirst({
+  const rows = await db.device.findMany({
     where: { ringDeviceId: evt.deviceId },
-    include: { household: true },
-  }).catch(() => null)
-
-  // Gracefully handle missing Device table (older migrations)
-  let householdId: string | null = null
-  if (device) {
-    householdId = device.householdId
-  } else {
-    // Fallback: try to find by ringConnection device if sensor shares an ID with the Ring device
-    const conn = await db.ringConnection.findFirst({
-      where: { status: 'linked' },
-      select: { householdId: true },
-    }).catch(() => null)
-    if (conn) householdId = conn.householdId
-    console.warn('[SENSOR] No device record for', evt.deviceId, '— falling back to first linked household')
+    select: { householdId: true },
+  }).catch(() => [] as { householdId: string }[])
+  const route = resolveSensorHousehold(rows)
+  if (route.ok === false) {
+    console.error('[SENSOR] Dropped event from', evt.deviceId, '-', route.reason)
+    return NextResponse.json({ status: 'ignored', reason: route.reason })
   }
-
-  if (!householdId) {
-    console.warn('[SENSOR] Cannot route event — no household for device', evt.deviceId)
-    return NextResponse.json({ status: 'ignored', reason: 'no_household' })
-  }
+  const householdId = route.householdId
 
   // 5. Rate limiting
   const rl = await checkRateLimit({ key: `sensor:${householdId}`, limit: 60, window: 60 })

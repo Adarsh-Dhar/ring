@@ -4,6 +4,7 @@ import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
 import { riskFlagsFor, riskMatchesFor, semanticFlag } from './risk'
 import { computeControl, MODE_FLOOR_SCORE } from '@/lib/doorstep/collaborationController'
 import { gateAction, LINE_TOOL } from '@/lib/doorstep/actionGate'
+import { helperMakesFirstContact, parseNoticeSettings } from '@/lib/doorstep/noticePolicy'
 import { requestHelperDecision } from '@/lib/doorstep/caseRiskStore'
 import { getPreferences } from '@/lib/db/preferences'
 import type { Decision } from '@/lib/doorstep/residentPreferences'
@@ -122,6 +123,14 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     }
     if (!isUnplannedVisit(c)) {
       console.log('[AI interrogator] Skipped: planned visit')
+      return
+    }
+
+    // Spec 3: the resident's unknown-visitor policy. With helper_first the AI makes no first contact;
+    // the case still escalates to helpers through the normal path.
+    const hh = await getDb().household.findUnique({ where: { id: householdId }, select: { minNoticeHours: true, shortNoticePolicy: true, unknownVisitorPolicy: true, approvalTimerSec: true } })
+    if (hh && helperMakesFirstContact(parseNoticeSettings(hh))) {
+      console.log('[AI interrogator] Skipped: resident policy is helper_first')
       return
     }
 

@@ -317,7 +317,8 @@ export function quoteIsGrounded(quote: string | undefined, transcript: string): 
 export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   credential_request: /\b(pin|otp|passcode|password|access code|door code|entry code|security code|verification code|one[- ]time (code|password))\b/i,
   // Spec 4.2: refuse_to_leave — "refuse(s/d) to (leave/go/move)" or negated-leave variants.
-  refuse_to_leave: /\b(not|won'?t|never)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]? to (leave|leaving|go|going|move|moving)\b/i,
+  // Needs the negation directly before a leave verb. "I did not know where to go" and "I'm not going to wait" no longer match.
+  refuse_to_leave: /\b(won'?t|will not|not going to|not gonna|never)\s+(leave|go away|go|move|budge)\b|\bnot\s+(leaving|going anywhere|going away|moving|budging)\b|\bnever\s+leaving\b|\brefuse[sd]?\s+to\s+(leave|go|move)\b/i,
   // Step 8: immediate_threat requires intent aimed at a person. Drop bare beat/smash/burn/harm/break down.
   immediate_threat: /\b(i('?ll| will|'?m going to|'?m gonna))\s+(hurt|kill|stab|shoot|beat (you )?up|burn)\b|\b(hurt|kill|stab|shoot) you\b/i,
   hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
@@ -450,6 +451,11 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   // 100 is reserved for a confirmed forced entry or assault. Ordinary points stop at 99.
   const score = minScore >= 100 ? 100 : Math.min(99, Math.max(minScore, total))
   return { score, ledger, minMode }
+}
+
+/** Stored riskLevel label. Takes the EFFECTIVE score (spec 5), so an event floor shows up even when the confirmed total is low. */
+export function riskLabelFor(effectiveScore: number): 'none' | 'low' | 'medium' | 'high' {
+  return effectiveScore >= 80 ? 'high' : effectiveScore >= 50 ? 'medium' : effectiveScore >= 20 ? 'low' : 'none'
 }
 
 /** The old four-level scale, so existing screens keep working. Derived from the score and floor, never from the model. */

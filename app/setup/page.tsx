@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import RegularVisitorsAdmin from './RegularVisitorsAdmin'
+import NoticeSettings from './NoticeSettings'
 
 interface Member {
   id: string
@@ -626,6 +627,8 @@ function SetupPage() {
           </ul>
         )}
       </div>
+
+      <NoticeSettings />
 
       <RegularVisitorsAdmin registerUrl={visitLinkUrl ? `${visitLinkUrl}/register` : undefined} />
 
