@@ -44,6 +44,7 @@ export const LINE_TOOL = {
   close: 'safety_script',
   safety: 'safety_script',
   emergency_guidance: 'emergency_guidance',
+  holding: 'safety_script',
   rules_explained: 'restate_rule_refuse',
   boundary_stated: 'boundary_statement',
   asked_to_leave: 'end_conversation',

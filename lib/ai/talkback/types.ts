@@ -2,7 +2,7 @@
  * Two-way audio abstraction. The opener, reprompt and close are fixed lines.
  * Follow-up questions are model-worded and validated before being spoken.
  */
-export type LineId = 'greet' | 'reprompt' | 'close' | 'rules_explained' | 'boundary_stated' | 'asked_to_leave' | 'entry_not_permitted' | 'safety' | 'emergency_guidance'
+export type LineId = 'greet' | 'reprompt' | 'close' | 'rules_explained' | 'boundary_stated' | 'asked_to_leave' | 'entry_not_permitted' | 'safety' | 'emergency_guidance' | 'holding'
 
 export interface TalkbackProvider {
   readonly name: 'ring' | 'sim'

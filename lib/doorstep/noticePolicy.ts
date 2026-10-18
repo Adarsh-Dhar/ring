@@ -92,6 +92,11 @@ export function evaluateNotice(input: NoticeInput, settings: NoticeSettings = DE
   }
 }
 
+/** Is this case a planned visit that is waiting on a short-notice approval? Then the AI may say only the holding line (spec 5.3). */
+export function isHoldingCase(c: { noticeStatus?: string | null; status?: string | null } | null | undefined): boolean {
+  return !!c && c.noticeStatus === 'short_notice' && c.status === 'waiting'
+}
+
 /** Does the resident's unknown-visitor policy say a helper, not the AI, makes first contact? Single source of truth: evaluateNotice. */
 export function helperMakesFirstContact(settings: NoticeSettings): boolean {
   return evaluateNotice({}, settings).firstContact === 'helper'

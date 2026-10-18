@@ -13,6 +13,9 @@ export function interrogatorLines(residentName?: string | null): Record<LineId, 
     asked_to_leave:     'Please leave now. I cannot continue this conversation.',
     // Step 2: Fixed line that triggers entryDeniedAt stamp (spec 4.2 precondition for lock_manipulation).
     entry_not_permitted: 'Entry is not permitted. Please do not touch the door or lock.',
+    // Spec 5.3: spoken while a short-notice visit waits for approval. Zero-cost safety line. It never claims help is
+    // coming and never promises entry, because silence is never consent and nobody has approved yet.
+    holding:            'Please wait a moment. This visit needs to be approved first. The door will stay closed.',
     // P6: Safety line - must never claim help is on the way
     safety:             'Please stay where you are. Keep the door closed.',
     // P6: Emergency guidance line - only allowed at S_eff 100

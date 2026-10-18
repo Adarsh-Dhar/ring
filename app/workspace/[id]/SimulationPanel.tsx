@@ -156,6 +156,12 @@ function DoorbellSim() {
       setPhase('done')
       return setNotice('The AI interrogator is off for this household (or this is a planned visit). Turn on AI + "AI interrogator" in Setup → AI Helpers, then ring again.')
     }
+    // Short-notice visit waiting for approval: say the holding line only, then stop. No greeting, no questions.
+    if (s.holdingOnly) {
+      if (s.allowed?.holding) await say(s.lines.holding)
+      setChat((c) => [...c, { from: 'system', text: 'This visit needs approval first. The door stays closed.' }])
+      return setPhase('done')
+    }
     setMaxTurns(typeof s.maxTurns === 'number' ? s.maxTurns : null)
     setPhase('thinking')
     if (!s.allowed?.greet) {

@@ -29,9 +29,12 @@ export async function onDoorEvent(householdId: string, ev: { caseId: string; dev
     }
     if (!f.aiInterrogator) return
 
-    // Unplanned-only gate: skip for planned visits
+    // Unplanned-only gate: planned visits are never interrogated. A short-notice visit that is waiting for
+    // approval still gets the fixed holding line (spec 5.3) and nothing else.
     if (!isUnplannedVisit(ev)) {
-      console.log('[AI hook] skipped: planned visit (interrogator only for unplanned visits)')
+      const { speakHoldingScript } = await import('./holding')
+      const spoke = await speakHoldingScript(householdId, ev.caseId, ev.deviceId).catch((e) => { console.warn('[AI hook] holding script failed', e); return false })
+      console.log(spoke ? '[AI hook] planned visit: holding script spoken' : '[AI hook] skipped: planned visit (interrogator only for unplanned visits)')
       return
     }
 

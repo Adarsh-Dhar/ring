@@ -6,6 +6,7 @@ import { useRealtime } from '../hooks/useRealtime'
 import LiveView from '../helper/LiveView'
 import RegularApprovals from './RegularApprovals'
 import ApprovedNote from './ApprovedNote'
+import DelegationSettings from './DelegationSettings'
 
 // calm = no vibration and no beep. Used while a helper is checking, so a visitor never startles the resident.
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
@@ -14,6 +15,7 @@ export default function ResidentPage() {
   // Try SSE for realtime updates, fall back to polling
   const [householdId, setHouseholdId] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   // Extract householdId from session on mount
   useEffect(() => {
@@ -207,6 +209,12 @@ export default function ResidentPage() {
       <div className="w-full max-w-md flex justify-between text-sm">
         <span>Resident screen</span>
         <div className="flex gap-2">
+          {/* Only when nothing is happening at the door, so it can never be tapped by accident during a visit. */}
+          {!c && householdId && (
+            <button onClick={() => setShowSettings(true)} className="px-3 py-1 rounded-full bg-black/30" aria-label="Settings: who handles what">
+              ⚙️ Settings
+            </button>
+          )}
           <button onClick={() => setShowVideo((s) => !s)} className="px-3 py-1 rounded-full bg-black/30" aria-label="Toggle video feed">
             {showVideo ? '📹 On' : '📹 Off'}
           </button>
@@ -256,6 +264,15 @@ export default function ResidentPage() {
           </div>
         )}
       </div>
+
+      {showSettings && householdId && !c && (
+        <div className="fixed inset-0 z-50 overflow-auto bg-white text-slate-900" role="dialog" aria-modal="true" aria-label="Who handles what">
+          <div className="flex justify-end p-4">
+            <button onClick={() => setShowSettings(false)} className="rounded-full bg-slate-200 px-4 py-2 text-lg font-semibold">Close</button>
+          </div>
+          <DelegationSettings householdId={householdId} />
+        </div>
+      )}
 
       <div className="w-full max-w-md flex flex-col gap-4">
         {trusted && !c && <RegularApprovals />}
