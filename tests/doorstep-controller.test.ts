@@ -19,7 +19,11 @@ describe('collaboration controller (spec sections 1, 2, 5)', () => {
 
   it('events outrank the score: a floor lifts a low score, and a high score is never lowered by a low floor', () => {
     expect(ctl(5, 'helper_only').mode).toBe('helper_only')
-    expect(ctl(90, 'ai_assisted').mode).toBe('emergency')
+    // Score 90 maps to helper_only (Option A: emergency only at score 100 or confirmed forced entry/SOS)
+    expect(ctl(90, 'ai_assisted').mode).toBe('helper_only')
+    // emergency requires score 100 or an event floor of emergency
+    expect(ctl(100).mode).toBe('emergency')
+    expect(ctl(50, 'emergency').mode).toBe('emergency')
   })
 
   it('every score value has its own budget, oversight index and dashboard rank', () => {

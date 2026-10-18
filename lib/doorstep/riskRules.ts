@@ -35,6 +35,8 @@ export interface InterviewState {
   askedToLeaveAt?: string
   /** Timestamp when AI started responding (for extra_knock 30s window). */
   respondingAt?: string
+  /** Timestamp when entry was denied (required before lock_manipulation scores). */
+  entryDeniedAt?: string
 }
 
 export type EvidenceState = 'confirmed' | 'uncertain' | 'unavailable'
@@ -194,7 +196,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     label: 'Made an immediate threat',
     points: 0,
     cap: null,
-    floor: 'emergency', // P6: Section 6.3 - confirmed triggers emergency (score ≥80 also maps to emergency)
+    floor: 'helper_only', // Spec 6.3 Option A: threat → urgent human-led, not full emergency. Emergency is reserved for forced entry/assault/SOS.
     sources: SPEECH_OR_HELPER,
     uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
     minScore: 80,
@@ -214,6 +216,8 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
 export const COMBO_FLOORS: { all: Behaviour[]; floor: ControlMode; why: string }[] = []
 
 export interface Observation {
+  /** Stable identity generated at creation. Used by LedgerEntry and Correction instead of positional idx. */
+  id?: string
   code: Behaviour
   /** ISO timestamp when the observation was made. */
   at: string
@@ -246,8 +250,11 @@ export interface InterviewStamp {
 }
 
 export interface LedgerEntry {
-  /** Position of this observation in the stored observation list. Confirm and reject use it. */
+  /** Position of this observation in the stored observation list. Confirm and reject use it.
+   *  @deprecated Use obsId when available; idx is unreliable after mergeFresh reorders observations. */
   idx: number
+  /** Stable observation id (set at creation). Preferred over idx for corrections. */
+  obsId?: string
   code: Behaviour
   /** ISO timestamp when the observation was made. */
   at: string
@@ -261,6 +268,8 @@ export interface LedgerEntry {
   points: number
   /** Optional debug object (never used in scoring). */
   debug?: Record<string, unknown>
+  /** Whether the observation has been retracted by a helper. */
+  retracted?: boolean
 }
 
 export interface RiskScore {
@@ -287,8 +296,10 @@ export function quoteIsGrounded(quote: string | undefined, transcript: string): 
  */
 export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   credential_request: /\b(pin|otp|passcode|password|access code|door code|entry code|security code|verification code|one[- ]time (code|password))\b/i,
-  refuse_to_leave: /\b(not|won'?t|never|refuse[sd]?)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]?\b/i,
-  immediate_threat: /\b(hurt|kill|stab|shoot|beat|smash|burn|harm|break (in|down|the|your)|(you'?ll|you will) (regret|pay))\b/i,
+  // Spec 4.2: refuse_to_leave — "refuse(s/d) to (leave/go/move)" or negated-leave variants.
+  refuse_to_leave: /\b(not|won'?t|never)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]? to (leave|leaving|go|going|move|moving)\b/i,
+  // Step 8: immediate_threat requires intent aimed at a person. Drop bare beat/smash/burn/harm/break down.
+  immediate_threat: /\b(i('?ll| will|'?m going to|'?m gonna))\s+(hurt|kill|stab|shoot|beat (you )?up|burn)\b|\b(hurt|kill|stab|shoot) you\b/i,
   hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
   pressure_after_rule: /\b(let me (in|inside|through)|open up|open the door)\b/i,
@@ -320,7 +331,9 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   observations.forEach((o, idx) => {
     const quote = o.quotes.join(' | ')
     const entry = (state: EvidenceState, points: number, debug?: Record<string, unknown>): LedgerEntry => ({
-      idx, code: o.code, at: o.at, quote, source: o.source, state, points, debug: { ...o.debug, ...debug },
+      idx, obsId: o.id, code: o.code, at: o.at, quote, source: o.source, state, points,
+      debug: { ...o.debug, ...debug },
+      retracted: o.retracted,
     })
     const reject = (state: EvidenceState, why: string) => { ledger.push(entry(state, 0, { why })) }
 
@@ -343,6 +356,17 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
       if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) return reject('uncertain', 'boundary_not_stated_yet')
       if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
       if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
+      // Spec 4.2: lock_manipulation requires entry to have been denied first.
+      // For sensor events we also check the timestamp is after the denial (allow 60s clock skew).
+      if (o.code === 'lock_manipulation') {
+        if (!interviewState.entryDeniedAt) return reject('uncertain', 'entry_not_denied_yet')
+        if (o.source === 'sensor') {
+          const eventMs = new Date(o.at).getTime()
+          const deniedMs = new Date(interviewState.entryDeniedAt).getTime()
+          const CLOCK_SKEW_MS = 60_000
+          if (eventMs < deniedMs - CLOCK_SKEW_MS) return reject('uncertain', 'sensor_before_entry_denied')
+        }
+      }
     }
     if (!rule.sources.includes(o.source)) return reject('uncertain', 'source_not_allowed')
 
@@ -435,6 +459,13 @@ export const NOTE_ONLY_CATEGORIES = [
   'story_mismatch',
 ] as const
 
+/** Generate a stable observation id. Cheap, no external deps. */
+export function newObsId(): string {
+  const ts = Date.now().toString(36)
+  const rand = Math.random().toString(36).slice(2, 7)
+  return `obs-${ts}-${rand}`
+}
+
 export function observationsFromEvidence(
   evidence: { category: string; quote: string }[],
   opts?: { segment?: string; transcriptQuality?: number },
@@ -443,6 +474,7 @@ export function observationsFromEvidence(
   const notes: string[] = []
   const contradictionQuotes: string[] = []
   const base = (code: Behaviour, quotes: string[]): Observation => ({
+    id: newObsId(),
     code, at: new Date().toISOString(), quotes, source: 'transcript',
     // The model only EXTRACTS. State here is the claim; scoreObservations applies the real checks (quote in transcript,
     // quality, wording, interview state) and records 'uncertain' in the ledger when one fails.

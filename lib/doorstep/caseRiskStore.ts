@@ -3,14 +3,15 @@
  * Round 2 patch #3: the interviewer no longer overwrites the observation store with the ledger array.
  *
  * applyRiskEdit(caseId, edit) reads the stored list, applies one edit, re-scores the whole list, and saves everything.
- * Edit kinds: 'fresh' (model pass), 'knock', 'append' (SOS or a report), 'interview' (stamp), 'helper'.
+ * Edit kinds: 'fresh' (model pass), 'knock', 'append' (SOS or a report), 'interview' (stamp), 'helper',
+ *             'availability' (camera/mic availability), 'reset' (soft-retract all observations).
  *
  * The knock window (30 s from the AI starting to respond) and the cap of 5 live here.
  *
  * P7: Timer values from Section 5.3 are implemented (60s/180s/300s at score 0, shrinking to 10s/45s/90s at score 100).
  */
 import { getDb } from '@/lib/db/client'
-import { scoreObservations, modeRank, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
+import { scoreObservations, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
 import { DEFAULT_ESCALATION_SECONDS } from '@/lib/doorbell/config'
@@ -21,18 +22,20 @@ export type RiskEdit =
   | { kind: 'knock'; at: string }
   | { kind: 'append'; observation: Observation }
   | { kind: 'interview'; stampType: keyof InterviewState; at: string }
-  | { kind: 'helper'; idx: number; action: 'confirm' | 'reject' | 'restore'; who: string; reason?: string }
+  | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore'; who: string; reason?: string }
+  | { kind: 'availability'; device: 'camera' | 'mic'; available: boolean; since: string; reason?: string }
+  | { kind: 'reset'; who: string; reason: string }
 
 /**
  * Apply a single edit to a case's risk observations and re-score.
  * This is the ONLY code that writes riskScore, riskLedger, controlMode, riskLevel or riskObservations.
  */
-export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<void> {
+export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ ok: true } | { ok: false; error: string }> {
   const c = await getDb().case.findUnique({
     where: { id: caseId },
     select: { id: true, riskObservations: true, householdId: true, controlMode: true, deadlineAt: true, unconfirmedAlertedAt: true },
   })
-  if (!c) return
+  if (!c) return { ok: false, error: 'case not found' }
 
   // Read the current stored observations. The old format (ledger array) reads as empty.
   const stored = readStored(c.riskObservations as unknown)
@@ -41,7 +44,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
 
   switch (edit.kind) {
     case 'fresh': {
-      // A fresh model pass merges with the existing observations, keeping knocks, SOS, stamps, and helper-touched events.
+      // A fresh model pass merges with the existing observations, keeping non-transcript sources, stamps, and helper-touched events.
       newStored = mergeFresh(stored, edit.observations)
       if (edit.interviewState) {
         newStored.interviewState = { ...stored.interviewState, ...edit.interviewState }
@@ -52,19 +55,20 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     case 'knock': {
       // A knock is only counted if it occurs within 30 seconds of the AI starting to respond.
       const respondingAt = stored.interviewState.respondingAt
-      if (!respondingAt) return // No AI response yet, ignore knock
+      if (!respondingAt) return { ok: true } // No AI response yet, silently ignore knock
       const elapsed = new Date(edit.at).getTime() - new Date(respondingAt).getTime()
-      if (elapsed > 30000) return // Outside the 30-second window
+      if (elapsed > 30000) return { ok: true } // Outside the 30-second window
 
       // Count existing knocks, cap at 5
       const existingKnocks = stored.observations.filter(o => o.code === 'extra_knock').length
-      if (existingKnocks >= 5) return
+      if (existingKnocks >= 5) return { ok: true }
 
       newStored = {
         ...stored,
         observations: [
           ...stored.observations,
           {
+            id: newObsId(),
             code: 'extra_knock',
             at: edit.at,
             quotes: ['Repeated button press'],
@@ -79,10 +83,11 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     }
 
     case 'append': {
-      // Append a new observation (SOS or a report from a helper).
+      // Append a new observation (SOS or a report from a helper). Assign id if missing.
+      const obs: Observation = edit.observation.id ? edit.observation : { ...edit.observation, id: newObsId() }
       newStored = {
         ...stored,
-        observations: [...stored.observations, edit.observation],
+        observations: [...stored.observations, obs],
       }
       break
     }
@@ -100,12 +105,54 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
 
     case 'helper': {
       // P5: Apply a helper confirm, reject, or restore action with audit trail.
-      newStored = applyHelperAction(stored, edit.idx, edit.action, edit.who, edit.reason)
+      const result = applyHelperAction(stored, edit.idx, edit.action, edit.who, edit.reason, edit.obsId)
+      if (result._error) return { ok: false, error: result._error }
+      newStored = result
+      break
+    }
+
+    case 'availability': {
+      // Mark a device (camera or mic) as available or unavailable.
+      // This writes no points and does not lower the mode.
+      const prevAvailability = stored.availability ?? {}
+      if (edit.available) {
+        // Coming back online: clear the marker.
+        const updated = { ...prevAvailability }
+        delete updated[edit.device]
+        newStored = { ...stored, availability: Object.keys(updated).length ? updated : undefined }
+      } else {
+        newStored = {
+          ...stored,
+          availability: {
+            ...prevAvailability,
+            [edit.device]: { since: edit.since, reason: edit.reason ?? 'unavailable' },
+          },
+        }
+      }
+      break
+    }
+
+    case 'reset': {
+      // Soft-retract all observations. Score drops to 0. Audit trail is preserved.
+      // emergencyAlertedAt is NOT touched — the helper must explicitly decide what to do.
+      const retractAll = stored.observations.map(o => ({ ...o, retracted: true }))
+      const resetCorrection: Correction = {
+        idx: -1, // sentinel: applies to all
+        action: 'reject' as const,
+        at: new Date().toISOString(),
+        who: edit.who,
+        reason: `RESET: ${edit.reason}`,
+      }
+      newStored = {
+        ...stored,
+        observations: retractAll,
+        corrections: [...stored.corrections, resetCorrection],
+      }
       break
     }
 
     default:
-      return
+      return { ok: false, error: 'unknown edit kind' }
   }
 
   // Re-score the entire observation list.
@@ -139,7 +186,6 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
   } else if (rose) {
     // P7: Shorten deadline for non-emergency mode rises using score-based timer (compare-and-set to avoid race conditions)
     const now = Date.now()
-    const remaining = Math.max(0, c.deadlineAt.getTime() - now)
     // Compute new timer based on risk score (DEFAULT_ESCALATION_SECONDS at 0 → 10s at 100, floor 10s)
     const scoreRatio = Math.min(risk.score, 100) / 100
     const baseSec = DEFAULT_ESCALATION_SECONDS // Default acknowledgement timer at score 0
@@ -157,12 +203,15 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     }
   }
 
-  // G4: Check for unconfirmed emergency (camera-only threat) and alert if not already alerted
-  const hasUncertainThreat = risk.ledger.some(
-    e => (e.code === 'forced_entry_or_assault' || e.code === 'immediate_threat') && e.state === 'uncertain'
+  // G4: Spec 4.3 – uncertain forced_entry_or_assault (camera model description alone) triggers an unconfirmed alert.
+  // immediate_threat at uncertain does NOT trigger G4 — it only raises the floor to helper_leads.
+  const hasUncertainForcedEntry = risk.ledger.some(
+    e => e.code === 'forced_entry_or_assault' && e.state === 'uncertain'
   )
-  if (hasUncertainThreat && !c.unconfirmedAlertedAt) {
+  if (hasUncertainForcedEntry && !c.unconfirmedAlertedAt) {
     const { alertUnconfirmedEmergency } = await import('@/lib/doorbell/store')
     await alertUnconfirmedEmergency(c.householdId, caseId)
   }
+
+  return { ok: true }
 }

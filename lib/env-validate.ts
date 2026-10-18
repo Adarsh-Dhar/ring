@@ -24,6 +24,9 @@ const ENV_CONFIGS: EnvVarConfig[] = [
   { name: 'NEXT_PUBLIC_RING_CLIENT_ID', required: true, description: 'Ring OAuth client ID (public)' },
   { name: 'NEXT_PUBLIC_APP_URL', required: true, description: 'Public URL (public)' },
 
+  // Sensor HMAC (door / lock / tamper sensors)
+  { name: 'SENSOR_HMAC_KEY', required: false, description: 'HMAC signing key for sensor webhook (required when sensor hardware is deployed)' },
+
   // Database
   { name: 'DATABASE_URL', required: true, description: 'PostgreSQL connection string' },
 

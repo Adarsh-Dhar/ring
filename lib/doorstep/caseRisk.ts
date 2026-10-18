@@ -21,11 +21,19 @@ export interface StoredRisk {
   interviewState: Record<string, string>
   /** Helper corrections: index-based confirm/reject actions. */
   corrections: Correction[]
+  /** Step 4: device availability (camera / mic). Present when a device was unavailable during the case. */
+  availability?: {
+    camera?: { since: string; reason: string }
+    mic?:    { since: string; reason: string }
+  }
 }
 
 export interface Correction {
-  /** Position in the observations array this correction applies to. */
+  /** Position in the observations array this correction applies to.
+   *  @deprecated Use obsId when available. */
   idx: number
+  /** Stable observation id. Preferred over idx. */
+  obsId?: string
   /** Action taken. */
   action: 'confirm' | 'reject' | 'restore'
   /** ISO timestamp when the helper acted. */
@@ -47,7 +55,7 @@ export function readStored(raw: unknown): StoredRisk {
   const obs = Array.isArray(r.observations) ? r.observations as Observation[] : []
   // P11: Handle old format where stamps were stored as observations with isStamp
   const OLD_STAMP_QUOTE = /^Interview state:\s*(\w+)$/
-  const STAMP_TYPES = new Set(['respondingAt', 'rulesExplainedAt', 'boundaryStatedAt', 'askedToLeaveAt'])
+  const STAMP_TYPES = new Set(['respondingAt', 'rulesExplainedAt', 'boundaryStatedAt', 'askedToLeaveAt', 'entryDeniedAt'])
   const stamps: InterviewStamp[] = []
   const filteredObs: Observation[] = []
   for (const o of obs) {
@@ -55,21 +63,25 @@ export function readStored(raw: unknown): StoredRisk {
       const parsed = OLD_STAMP_QUOTE.exec(o.quotes?.[0] ?? '')?.[1]
       const type = (o as any).type ?? parsed
       if (type && STAMP_TYPES.has(type)) {
-        stamps.push({ type: type as 'respondingAt' | 'rulesExplainedAt' | 'boundaryStatedAt' | 'askedToLeaveAt', at: o.at, isStamp: true })
+        stamps.push({ type: type as keyof InterviewState, at: o.at, isStamp: true })
       }
       continue
     }
-    filteredObs.push(o)
+    // Assign a legacy id to observations that predate stable ids (format: code-at).
+    const withId: Observation = o.id ? o : { ...o, id: `${o.code}-${o.at}` }
+    filteredObs.push(withId)
   }
   const interviewState = typeof r.interviewState === 'object' && r.interviewState !== null ? r.interviewState as Record<string, string> : {}
   const corrections = Array.isArray(r.corrections) ? r.corrections as Correction[] : []
-  return { observations: filteredObs, stamps, interviewState, corrections }
+  const availability = typeof r.availability === 'object' && r.availability !== null ? r.availability as StoredRisk['availability'] : undefined
+  return { observations: filteredObs, stamps, interviewState, corrections, availability }
 }
 
 /**
  * Merge a fresh model pass with the existing stored observations.
- * - Knock events, SOS, interview stamps, and anything a helper touched are kept.
- * - A fresh model pass can add new observations from the model or keyword rules.
+ * - Sensor, resident, and helper observations are ALWAYS kept (they are not model output).
+ * - Anything a helper has touched (confirmed or rejected) is kept regardless of source.
+ * - A fresh model pass replaces prior transcript observations.
  * - Helper-rejected events stay rejected on every later pass.
  * P11: stamps are stored separately and always kept.
  */
@@ -78,8 +90,9 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
   const kept: Observation[] = []
 
   for (const [i, o] of stored.observations.entries()) {
-    // Keep knocks, SOS, and anything a helper touched
-    if (o.code === 'extra_knock' || o.code === 'forced_entry_or_assault' || touchedIdxs.has(i)) {
+    // Always keep non-transcript observations (sensor, resident, helper) — they are ground truth, not model output.
+    // Also keep anything a helper has explicitly touched (confirm / reject / restore).
+    if (o.source !== 'transcript' || touchedIdxs.has(i)) {
       kept.push(o)
     }
   }
@@ -90,31 +103,52 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
     stamps: stored.stamps, // P11: stamps are always kept
     interviewState: stored.interviewState,
     corrections: stored.corrections,
+    availability: stored.availability,
   }
 }
 
 /**
  * Apply a helper action (confirm, reject, or restore) to the stored observations.
+ * Resolves the target by obsId first, then falls back to idx.
+ * Returns { stored, error } — caller checks error before using stored.
  * P5: Reject marks the event as retracted; confirm marks it as confirmed by a helper; restore removes a rejection.
  */
-export function applyHelperAction(stored: StoredRisk, idx: number, action: 'confirm' | 'reject' | 'restore', who: string, reason?: string): StoredRisk {
+export function applyHelperAction(
+  stored: StoredRisk,
+  idx: number,
+  action: 'confirm' | 'reject' | 'restore',
+  who: string,
+  reason?: string,
+  obsId?: string,
+): StoredRisk & { _error?: string } {
   const obs = [...stored.observations]
-  if (idx < 0 || idx >= obs.length) return stored
+
+  // Prefer obsId lookup (stable across reorders); fall back to positional idx.
+  let resolvedIdx = idx
+  if (obsId) {
+    const found = obs.findIndex(o => o.id === obsId)
+    if (found !== -1) resolvedIdx = found
+  }
+
+  if (resolvedIdx < 0 || resolvedIdx >= obs.length) {
+    return { ...stored, _error: `observation index ${resolvedIdx} out of range (${obs.length} observations)` }
+  }
 
   if (action === 'reject') {
-    obs[idx] = { ...obs[idx], retracted: true }
+    obs[resolvedIdx] = { ...obs[resolvedIdx], retracted: true }
   } else if (action === 'confirm') {
-    obs[idx] = { ...obs[idx], state: 'confirmed', source: 'helper' }
+    obs[resolvedIdx] = { ...obs[resolvedIdx], state: 'confirmed', source: 'helper' }
   } else if (action === 'restore') {
     // P5: Restore removes the retraction, reverting to original state
-    const { retracted, ...rest } = obs[idx]
-    obs[idx] = rest
+    const { retracted, ...rest } = obs[resolvedIdx]
+    obs[resolvedIdx] = rest
   }
 
   return {
     observations: obs,
     stamps: stored.stamps,
     interviewState: stored.interviewState,
-    corrections: [...stored.corrections, { idx, action, at: new Date().toISOString(), who, reason }],
+    corrections: [...stored.corrections, { idx: resolvedIdx, obsId: obs[resolvedIdx].id, action, at: new Date().toISOString(), who, reason }],
+    availability: stored.availability,
   }
 }

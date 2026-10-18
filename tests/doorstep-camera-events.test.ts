@@ -37,11 +37,12 @@ describe('G4: Camera-only door events and unconfirmed emergency', () => {
     expect(risk.minMode).toBe('ai_leads') // No floor because source is invalid
   })
 
-  it('camera-only immediate_threat sets minScore 80 even from transcript', () => {
+  it('camera-only immediate_threat sets minScore 80 and floor to helper_only (Option A)', () => {
     const obs = makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed')
     const risk = scoreObservations([obs], { transcript: 'I will hurt you' })
     expect(risk.score).toBe(80) // minScore override
-    expect(risk.minMode).toBe('emergency')
+    // Option A: immediate_threat → helper_only (emergency reserved for forced entry/SOS)
+    expect(risk.minMode).toBe('helper_only')
   })
 
   it('uncertain lock_manipulation from valid source sets helper-led floor', () => {
@@ -58,11 +59,19 @@ describe('G4: Camera-only door events and unconfirmed emergency', () => {
     expect(risk.minMode).toBe('helper_leads') // uncertainFloor applies
   })
 
-  it('sensor-sourced lock_manipulation scores 30 and sets helper-led floor', () => {
+  it('sensor-sourced lock_manipulation scores 30 when entryDeniedAt is set', () => {
     const obs = makeObs('lock_manipulation', 'sensor', 'Trying the lock', 'confirmed')
-    const risk = scoreObservations([obs], { transcript: '' })
+    const entryDeniedAt = new Date(Date.now() - 5000).toISOString() // 5 seconds ago
+    const risk = scoreObservations([obs], { transcript: '', interviewState: { entryDeniedAt } })
     expect(risk.score).toBe(30)
     expect(risk.minMode).toBe('helper_leads')
+  })
+
+  it('sensor-sourced lock_manipulation scores 0 without entryDeniedAt (spec 4.2 precondition)', () => {
+    const obs = makeObs('lock_manipulation', 'sensor', 'Trying the lock', 'confirmed')
+    const risk = scoreObservations([obs], { transcript: '' })
+    expect(risk.score).toBe(0) // entry_not_denied_yet
+    expect(risk.ledger[0].debug?.why).toBe('entry_not_denied_yet')
   })
 
   it('helper-sourced forced_entry_or_assault scores 100 and sets emergency', () => {

@@ -9,13 +9,15 @@
 import { CONTROL_MODES, maxMode, type ControlMode } from './riskRules'
 import { permittedActions, type Permissions, type Preferences } from './residentPreferences'
 
-/** Score at which the control mode rises by itself (before any event floor). Pilot starting values. */
+/** Score at which the control mode rises by itself (before any event floor). Pilot starting values.
+ * Step 6 (Option A): emergency is now reserved for score 100 (forced entry / SOS / confirmed assault).
+ * Score 80–99 maps to helper_only, matching the immediate_threat floor. */
 export const MODE_THRESHOLDS: { atLeast: number; mode: ControlMode }[] = [
-  { atLeast: 80, mode: 'emergency' },
-  { atLeast: 60, mode: 'helper_only' },
-  { atLeast: 40, mode: 'helper_leads' },
-  { atLeast: 20, mode: 'ai_assisted' },
-  { atLeast: 0,  mode: 'ai_leads' },
+  { atLeast: 100, mode: 'emergency' },
+  { atLeast: 60,  mode: 'helper_only' },
+  { atLeast: 40,  mode: 'helper_leads' },
+  { atLeast: 20,  mode: 'ai_assisted' },
+  { atLeast: 0,   mode: 'ai_leads' },
 ]
 
 export function modeForScore(score: number): ControlMode {

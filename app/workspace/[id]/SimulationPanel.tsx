@@ -276,6 +276,44 @@ function DoorbellSim() {
             ))}
           </div>
         </div>
+
+        {/* Sensor sim buttons — no hardware needed */}
+        {caseId && (
+          <div className={CARD}>
+            <h3 className={H3}>🔧 Sensor events (simulated)</h3>
+            <p className="text-xs text-gray-500 mb-2">
+              Inject physical-sensor observations without real hardware. Each button appends a confirmed sensor observation to the open case.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['🔒 Lock tamper', 'lock_tamper'],
+                ['🚪 Door wedge', 'door_wedge'],
+                ['💥 Door force', 'door_force'],
+                ['⚠️ Tamper', 'tamper'],
+              ] as const).map(([label, type]) => (
+                <button
+                  key={type}
+                  className={BTN_GHOST}
+                  onClick={async () => {
+                    const r = await postJson('/api/dev/simulate', { action: 'sensor', type, caseId })
+                    setNotice(r.ok ? `✅ ${label} applied (${r.data.code})` : r.data.error || 'Failed')
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                className={BTN_GHOST}
+                onClick={async () => {
+                  const r = await postJson('/api/dev/simulate', { action: 'camera_uncertain_forced_entry', caseId })
+                  setNotice(r.ok ? '📷 Camera uncertain forced-entry injected' : r.data.error || 'Failed')
+                }}
+              >
+                📷 Camera says forced entry (uncertain)
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* RIGHT: interrogator conversation */}

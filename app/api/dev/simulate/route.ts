@@ -20,6 +20,9 @@ import {
 } from '@/lib/doorbell/store'
 import { getDb } from '@/lib/db/client'
 import { getMembership, getApprovedMemberships } from '@/lib/db/memberships'
+import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
+import { newObsId } from '@/lib/doorstep/riskRules'
+import type { Observation } from '@/lib/doorstep/riskRules'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -74,6 +77,18 @@ const Body = z.discriminatedUnion('action', [
   // ── G. State + reset ───────────────────────────────────────────────────────
   z.object({ action: z.literal('state') }),
   z.object({ action: z.literal('reset') }),
+
+  // ── H. Sensor events (no hardware needed) ──────────────────────────────────
+  z.object({
+    action:  z.literal('sensor'),
+    type:    z.enum(['lock_tamper', 'door_wedge', 'door_force', 'tamper']),
+    caseId:  z.string().min(1).max(80),
+  }),
+  // Simulate a camera-model "uncertain" forced-entry observation (camera sees it but can't confirm)
+  z.object({
+    action: z.literal('camera_uncertain_forced_entry'),
+    caseId: z.string().min(1).max(80),
+  }),
 ])
 
 /**
@@ -245,6 +260,50 @@ export async function POST(req: NextRequest) {
       case 'reset': {
         await resetAll(householdId)
         return NextResponse.json({ ok: true, result: 'reset' })
+      }
+
+      // ── H. Sensor events ─────────────────────────────────────────────────
+      case 'sensor': {
+        const at = new Date().toISOString()
+        const eventId = `sim-sensor-${Date.now()}`
+        const TYPE_TO_CODE: Record<string, Observation['code']> = {
+          lock_tamper: 'lock_manipulation',
+          door_wedge:  'door_wedge_or_follow_in',
+          door_force:  'forced_entry_or_assault',
+          tamper:      'forced_entry_or_assault',
+        }
+        const code = TYPE_TO_CODE[b.type]
+        if (!code) return fail(`Unknown sensor type: ${b.type}`, 400)
+        const obs: Observation = {
+          id: newObsId(),
+          code,
+          at,
+          quotes: [`Simulated sensor: ${b.type}`],
+          source: 'sensor',
+          state: 'confirmed',
+          points: 0,
+          debug: { eventId },
+        }
+        const r = await applyRiskEdit(b.caseId, { kind: 'append', observation: obs })
+        if (!r.ok) return fail((r as { ok: false; error: string }).error, 409)
+        return NextResponse.json({ ok: true, result: 'sensor_applied', code, caseId: b.caseId })
+      }
+
+      case 'camera_uncertain_forced_entry': {
+        // Simulates a camera model describing forced entry but not confirming it (spec 4.3)
+        const obs: Observation = {
+          id: newObsId(),
+          code: 'forced_entry_or_assault',
+          at: new Date().toISOString(),
+          quotes: ['Camera model: possible forced entry (uncertain)'],
+          source: 'transcript', // camera-model descriptions use transcript source → uncertain
+          state: 'uncertain',
+          points: 0,
+          debug: { eventId: `sim-camera-${Date.now()}` },
+        }
+        const r2 = await applyRiskEdit(b.caseId, { kind: 'append', observation: obs })
+        if (!r2.ok) return fail((r2 as { ok: false; error: string }).error, 409)
+        return NextResponse.json({ ok: true, result: 'camera_uncertain_applied', caseId: b.caseId })
       }
     }
   } catch (e) {

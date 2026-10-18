@@ -242,7 +242,11 @@ export async function processAnswer(
         await stampInterviewState(householdId, caseId, 'rulesExplainedAt')
       } else if (qLower.includes('not acceptable') || qLower.includes('boundary')) {
         await stampInterviewState(householdId, caseId, 'boundaryStatedAt')
-      } else if (qLower.includes('leave') || qLower.includes('cannot continue')) {
+      } else if (qLower.includes('not permitted') || qLower.includes('cannot enter') || qLower.includes('entry is not')) {
+        // Stamping entryDeniedAt also counts as boundary and as asking to leave.
+        await stampInterviewState(householdId, caseId, 'entryDeniedAt')
+        await stampInterviewState(householdId, caseId, 'boundaryStatedAt')
+      } else if (/\b(please leave|you must leave|cannot continue|need (you )?to leave)\b/i.test(modelQ)) {
         await stampInterviewState(householdId, caseId, 'askedToLeaveAt')
       }
     }

@@ -32,7 +32,13 @@ type Ai = {
   interrogationVerdict: string | null
   interrogationClaims: Claims | unknown
   riskScore?: number | null
-  riskLedger?: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }> | unknown
+  riskLedger?: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; obsId?: string; retracted?: boolean }> | unknown
+  riskObservations?: {
+    availability?: {
+      camera?: { since: string; reason: string }
+      mic?: { since: string; reason: string }
+    }
+  } | null
   aiStatus?: 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
 }
 
@@ -100,7 +106,7 @@ function categorizeEvidence(ledgerEntry: { source: string; state: string; quote:
   return 'unknown'
 }
 
-function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; retracted?: boolean }>) {
+function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; obsId?: string; retracted?: boolean }>) {
   const groups: Record<EvidenceGroup, Array<typeof ledger[0]>> = {
     observed: [],
     inferred: [],
@@ -113,19 +119,27 @@ function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; 
   return groups
 }
 
-/** P12: Handle helper confirm/reject of uncertain evidence */
-async function handleObservationAction(caseId: string, idx: number, action: 'confirm' | 'reject') {
+/** P12: Handle helper confirm/reject/restore of uncertain evidence */
+async function handleObservationAction(
+  caseId: string,
+  idx: number,
+  action: 'confirm' | 'reject' | 'restore',
+  obsId?: string,
+  reason?: string,
+): Promise<{ ok: boolean; error?: string }> {
   try {
     const r = await fetch('/api/doorbell/observation', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ caseId, idx, action }),
+      body: JSON.stringify({ caseId, idx, obsId, action, reason }),
     })
     if (!r.ok) {
-      console.error('Failed to update observation:', await r.text())
+      const text = await r.text()
+      return { ok: false, error: text || `HTTP ${r.status}` }
     }
+    return { ok: true }
   } catch (e) {
-    console.error('Failed to update observation:', e)
+    return { ok: false, error: e instanceof Error ? e.message : 'Network error' }
   }
 }
 
@@ -144,6 +158,7 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const [ai, setAi] = useState<Ai | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     let stop = false
@@ -194,8 +209,9 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   const risk = ai?.riskAssessment ?? null
   const riskLevel: RiskLevel = (ai?.riskLevel as RiskLevel) || risk?.level || 'none'
   const hasRisk = riskLevel !== 'none'
-  const ledger = Array.isArray(ai?.riskLedger) ? (ai.riskLedger as Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; retracted?: boolean }>) : []
+  const ledger = Array.isArray(ai?.riskLedger) ? (ai.riskLedger as Array<{ code: string; at: string; quote: string; source: string; state: string; points: number; idx?: number; obsId?: string; retracted?: boolean }>) : []
   const evidenceGroups = groupEvidence(ledger)
+  const availability = ai?.riskObservations?.availability ?? {}
 
   // Show unsupported message
   if (ai?.interrogationState === 'unsupported') {
@@ -297,14 +313,20 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                         {e.state === 'uncertain' && e.idx !== undefined && (
                           <div className="flex gap-1">
                             <button
-                              onClick={() => handleObservationAction(caseId, e.idx, 'confirm')}
+                              onClick={async () => {
+                                const r = await handleObservationAction(caseId, e.idx!, 'confirm', e.obsId)
+                                if (!r.ok) setActionError(`Confirm failed: ${r.error}`)
+                              }}
                               className="px-2 py-0.5 text-xs bg-emerald-700 hover:bg-emerald-600 rounded"
                               title="Confirm this evidence"
                             >
                               ✓
                             </button>
                             <button
-                              onClick={() => handleObservationAction(caseId, e.idx, 'reject')}
+                              onClick={async () => {
+                                const r = await handleObservationAction(caseId, e.idx!, 'reject', e.obsId)
+                                if (!r.ok) setActionError(`Reject failed: ${r.error}`)
+                              }}
                               className="px-2 py-0.5 text-xs bg-red-700 hover:bg-red-600 rounded"
                               title="Reject this evidence"
                             >
@@ -317,21 +339,52 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                   </ul>
                 </div>
               )}
-              {evidenceGroups.unknown.length > 0 && (
+              {/* Unknown: unavailable, retracted, or unestablished. Also shows device availability. */}
+              {(evidenceGroups.unknown.length > 0 || availability.camera || availability.mic) && (
                 <div>
                   <p className="text-xs font-medium text-slate-400">Unknown (unavailable or unestablished)</p>
+                  {/* Device availability markers */}
+                  {availability.camera && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      📷 Camera offline since {new Date(availability.camera.since).toLocaleTimeString()} — {availability.camera.reason}
+                    </p>
+                  )}
+                  {availability.mic && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      🎙️ Microphone unavailable — {availability.mic.reason}
+                    </p>
+                  )}
                   <ul className="mt-1 space-y-1">
                     {evidenceGroups.unknown.map((e, i) => (
                       <li key={i} className="text-xs flex items-start gap-2 opacity-60">
                         <span>{new Date(e.at).toLocaleTimeString()}</span>
-                        <span>
+                        <span className="flex-1">
                           <span>{e.code}</span>
-                          <span> ({e.state})</span>
+                          <span> ({e.retracted ? 'rejected by helper' : e.state})</span>
+                          {e.quote && <span className="ml-2 opacity-80">"{e.quote}"</span>}
                         </span>
+                        {/* Restore button for rejected entries */}
+                        {e.retracted && e.idx !== undefined && (
+                          <button
+                            onClick={async () => {
+                              const reason = window.prompt('Reason for restoring this evidence:')
+                              if (!reason) return
+                              const r = await handleObservationAction(caseId, e.idx!, 'restore', e.obsId, reason)
+                              if (!r.ok) setActionError(`Restore failed: ${r.error}`)
+                            }}
+                            className="px-2 py-0.5 text-xs bg-slate-600 hover:bg-slate-500 rounded opacity-100"
+                            title="Restore this rejected evidence"
+                          >
+                            ↩
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
                 </div>
+              )}
+              {actionError && (
+                <p className="text-xs text-red-400 mt-1" role="alert">{actionError}</p>
               )}
             </div>
           )}

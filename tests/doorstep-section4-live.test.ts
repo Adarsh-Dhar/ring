@@ -122,7 +122,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
       ],
       stamps: [{ type: 'respondingAt', at: new Date().toISOString(), isStamp: true }],
       interviewState: {},
-      corrections: [{ idx: 0, action: 'confirm', at: new Date().toISOString() }],
+      corrections: [{ idx: 0, action: 'confirm', at: new Date().toISOString(), who: 'test-helper' }],
     }
     const fresh = [makeObs('refuse_to_leave', 'transcript', 'not leaving')]
     const merged = mergeFresh(stored, fresh)

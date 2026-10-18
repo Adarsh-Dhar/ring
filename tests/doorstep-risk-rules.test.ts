@@ -96,9 +96,9 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(25) // 15 + 10, third instance ignored due to cap
   })
 
-  it('immediate_threat sets minimum score to 80', () => {
+  it('immediate_threat sets minimum score to 80 and floor to helper_only (Option A: emergency reserved for forced entry/SOS)', () => {
     const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
-    expect(r.score).toBe(80); expect(r.minMode).toBe('emergency')
+    expect(r.score).toBe(80); expect(r.minMode).toBe('helper_only')
   })
 
   it('forced_entry_or_assault sets score to exactly 100, the only way to reach 100', () => {
@@ -107,7 +107,8 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
   })
 
   it('score is capped at 99 unless forced_entry_or_assault sets it to 100', () => {
-    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
+    // lock_manipulation now requires entryDeniedAt (spec 4.2) — include it
+    const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString(), entryDeniedAt: new Date().toISOString() }
     const r = scoreWithTranscript([
       makeObs('door_wedge_or_follow_in', 'sensor', ''),
       makeObs('lock_manipulation', 'sensor', ''),
@@ -120,9 +121,15 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
     const r = scoreWithTranscript([makeObs('refuse_to_leave', 'transcript', 'refuse to leave', 'confirmed', 1.0)], 'refuse to leave', interviewState)
     expect(r.score).toBe(25)
-    const lock = score([makeObs('lock_manipulation', 'sensor', '')])
-    expect(lock.score).toBe(30)
-    expect(lock.minMode).toBe('helper_leads'); expect(r.minMode).toBe('helper_leads')
+    // lock_manipulation requires entryDeniedAt — without it, scores 0 and registers as uncertain
+    const lockNoStamp = score([makeObs('lock_manipulation', 'sensor', '')])
+    expect(lockNoStamp.score).toBe(0) // entry_not_denied_yet
+    expect(lockNoStamp.minMode).toBe('ai_leads') // no floor without confirmation
+    // With entryDeniedAt, lock_manipulation scores 30 and sets helper_leads floor
+    const lockWithStamp = scoreWithTranscript([makeObs('lock_manipulation', 'sensor', '')], '', { entryDeniedAt: new Date().toISOString() })
+    expect(lockWithStamp.score).toBe(30)
+    expect(lockWithStamp.minMode).toBe('helper_leads')
+    expect(r.minMode).toBe('helper_leads')
   })
 
   it('credential_request alone scores 20 points', () => {
@@ -320,10 +327,11 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.minMode).toBe('emergency')
   })
 
-  it('P11: immediate_threat sets minimum score to 80', () => {
+  it('P11: immediate_threat sets minimum score to 80 and floor to helper_only (Option A)', () => {
     const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
     expect(r.score).toBe(80)
-    expect(r.minMode).toBe('emergency')
+    // Option A: immediate_threat → helper_only, NOT emergency. Emergency is for forced_entry/SOS only.
+    expect(r.minMode).toBe('helper_only')
   })
 
   // F7: Additional tests for Round 2 fixes
