@@ -5,7 +5,6 @@ import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '@/lib/google-calendar/co
 import { sign, createSession } from '@/lib/auth'
 import { COOKIE, cookieOpts } from '@/lib/guard'
 import { normalizeEmail } from '@/lib/identity'
-import { buildUrl } from '@/lib/redirect'
 import { encrypt } from '@/lib/auth'
 import crypto from 'crypto'
 
@@ -18,27 +17,28 @@ export async function GET(req: NextRequest) {
   const state = searchParams.get('state')
   const error = searchParams.get('error')
 
-  // If user already has a valid session, redirect to select-role immediately
-  // This handles duplicate OAuth callbacks gracefully
-  const existingSession = req.cookies.get('db_session')?.value
-  if (existingSession && !error) {
-    console.log('[GOOGLE CALLBACK] User already has session, redirecting to select-role')
-    return NextResponse.redirect(new URL(buildUrl('/select-role', req.url)))
+  // Build the base URL from the Host header for redirects
+  const host = req.headers.get('host') || 'localhost:3000'
+  const protocol = host.includes('localhost') ? 'http' : 'https'
+  const baseUrl = `${protocol}://${host}`
+
+  function buildRedirectUrl(path: string): string {
+    return `${baseUrl}${path}`
   }
 
   // Handle user cancellation
   if (error === 'access_denied') {
-    return clearStateAndRedirect(buildUrl('/login?error=cancelled', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=cancelled'))
   }
 
   // Handle other errors
   if (error) {
     console.error('[GOOGLE CALLBACK] OAuth error:', error)
-    return clearStateAndRedirect(buildUrl('/login?error=oauth_error', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=oauth_error'))
   }
 
   if (!code || !state) {
-    return clearStateAndRedirect(buildUrl('/login?error=invalid_response', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=invalid_response'))
   }
 
   // Verify state and get code verifier and next from cookie
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   
   if (!oauthState) {
     console.error('[GOOGLE CALLBACK] Missing oauth_state cookie')
-    return clearStateAndRedirect(buildUrl('/login?error=missing_state', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=missing_state'))
   }
 
   let stateData: { s: string; v: string; n: string }
@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
     stateData = JSON.parse(oauthState)
   } catch (e) {
     console.error('[GOOGLE CALLBACK] Failed to parse state cookie', e)
-    return clearStateAndRedirect(buildUrl('/login?error=invalid_state', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=invalid_state'))
   }
 
   // Use timingSafeEqual for state comparison
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
   const storedStateBuffer = Buffer.from(stateData.s, 'utf8')
   if (stateBuffer.length !== storedStateBuffer.length || !crypto.timingSafeEqual(new Uint8Array(stateBuffer), new Uint8Array(storedStateBuffer))) {
     console.error('[GOOGLE CALLBACK] State mismatch')
-    return clearStateAndRedirect(buildUrl('/login?error=state_mismatch', req.url))
+    return clearStateAndRedirect(buildRedirectUrl('/login?error=state_mismatch'))
   }
 
   const codeVerifier = stateData.v
@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
       console.error('[GOOGLE CALLBACK] Redirect URI used:', redirectUri)
       console.error('[GOOGLE CALLBACK] Code length:', code?.length)
 
-      const res = NextResponse.redirect(new URL(buildUrl('/login?error=token_exchange_failed', req.url)))
+      const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=token_exchange_failed')))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
     }
@@ -117,19 +117,19 @@ export async function GET(req: NextRequest) {
     const emailVerified = userInfo.data.verified_email === true
 
     if (!googleSub) {
-      const res = NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=no_email')))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
     }
 
     if (!email) {
-      const res = NextResponse.redirect(new URL(buildUrl('/login?error=no_email', req.url)))
+      const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=no_email')))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
     }
 
     if (!emailVerified) {
-      const res = NextResponse.redirect(new URL(buildUrl('/login?error=email_not_verified', req.url)))
+      const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=email_not_verified')))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
     }
@@ -203,7 +203,7 @@ export async function GET(req: NextRequest) {
 
     if (!token) {
       console.error('[GOOGLE CALLBACK] Failed to sign token')
-      const res = NextResponse.redirect(new URL(buildUrl('/login?error=session_creation_failed', req.url)))
+      const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=session_creation_failed')))
       res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
       return res
     }
@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
     // Set session cookie and redirect
     const redirectTarget = next || '/select-role'
     console.log('[GOOGLE CALLBACK] Redirecting to:', redirectTarget)
-    const finalRes = NextResponse.redirect(new URL(redirectTarget, req.url))
+    const finalRes = NextResponse.redirect(new URL(buildRedirectUrl(redirectTarget)))
     finalRes.cookies.set(COOKIE, token, cookieOpts)
     finalRes.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
     console.log('[GOOGLE CALLBACK] Session cookie set')
@@ -219,7 +219,7 @@ export async function GET(req: NextRequest) {
     return finalRes
   } catch (e) {
     console.error('[GOOGLE CALLBACK] Error:', e)
-    const res = NextResponse.redirect(new URL(buildUrl('/login?error=server_error', req.url)))
+    const res = NextResponse.redirect(new URL(buildRedirectUrl('/login?error=server_error')))
     res.cookies.set('oauth_state', '', { maxAge: 0, path: '/' })
     return res
   }

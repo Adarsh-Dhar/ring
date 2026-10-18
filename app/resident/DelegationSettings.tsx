@@ -11,6 +11,7 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
   const [prefs, setPrefs] = useState<Preferences | null>(null)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [localAlternative, setLocalAlternative] = useState('')
 
   useEffect(() => {
     loadPreferences()
@@ -22,10 +23,39 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
       if (res.ok) {
         const data = await res.json()
         setPrefs(data)
+        setLocalAlternative(data.approvedAlternative || '')
       }
     } catch (e) {
       console.error('[DELEGATION] Failed to load preferences:', e)
       setMessage('Failed to load preferences')
+    }
+  }
+
+  const save = async (next: Preferences) => {
+    setSaving(true)
+    setMessage('')
+
+    try {
+      const res = await fetch('/api/resident/delegation', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferences: next }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setPrefs(data)
+        setLocalAlternative(data.approvedAlternative || '')
+        setMessage('Saved successfully')
+        setTimeout(() => setMessage(''), 2000)
+      } else {
+        setMessage('Failed to save preferences')
+      }
+    } catch (e) {
+      console.error('[DELEGATION] Failed to save preferences:', e)
+      setMessage('Failed to save preferences')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -38,32 +68,10 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
         ...prefs.delegation,
         [decision]: value,
       },
+      approvedAlternative: localAlternative || undefined,
     }
 
-    setSaving(true)
-    setMessage('')
-
-    try {
-      const res = await fetch('/api/resident/delegation', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences: updated }),
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        setPrefs(data)
-        setMessage('Saved successfully')
-        setTimeout(() => setMessage(''), 2000)
-      } else {
-        setMessage('Failed to save preferences')
-      }
-    } catch (e) {
-      console.error('[DELEGATION] Failed to save preferences:', e)
-      setMessage('Failed to save preferences')
-    } finally {
-      setSaving(false)
-    }
+    await save(updated)
   }
 
   const handleAlternativeUpdate = async (value: string) => {
@@ -74,30 +82,7 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
       approvedAlternative: value || undefined,
     }
 
-    setSaving(true)
-    setMessage('')
-
-    try {
-      const res = await fetch('/api/resident/delegation', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferences: updated }),
-      })
-
-      if (res.ok) {
-        const data = await res.json()
-        setPrefs(data)
-        setMessage('Saved successfully')
-        setTimeout(() => setMessage(''), 2000)
-      } else {
-        setMessage('Failed to save preferences')
-      }
-    } catch (e) {
-      console.error('[DELEGATION] Failed to save preferences:', e)
-      setMessage('Failed to save preferences')
-    } finally {
-      setSaving(false)
-    }
+    await save(updated)
   }
 
   if (!prefs) {
@@ -159,8 +144,13 @@ export default function DelegationSettings({ householdId }: DelegationSettingsPr
           </p>
           <input
             type="text"
-            value={prefs.approvedAlternative || ''}
-            onChange={(e) => handleAlternativeUpdate(e.target.value)}
+            value={localAlternative}
+            onChange={(e) => setLocalAlternative(e.target.value)}
+            onBlur={() => {
+              if (localAlternative !== (prefs.approvedAlternative ?? '')) {
+                handleAlternativeUpdate(localAlternative)
+              }
+            }}
             disabled={saving}
             placeholder="e.g., Go to the police station"
             className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"

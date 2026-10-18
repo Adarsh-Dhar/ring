@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
         `state=${state}&` +
         `code_challenge=${codeChallenge}&` +
         `code_challenge_method=S256&` +
-        `prompt=select_account&` +
+        `prompt=consent&` +
         `access_type=offline`
     )
   )
