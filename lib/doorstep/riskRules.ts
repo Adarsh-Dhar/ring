@@ -349,7 +349,10 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
     if (o.source === 'transcript') {
       const needQuotes = o.code === 'purpose_contradiction' ? 2 : 1
       if (o.quotes.length < needQuotes) return reject('uncertain', 'needs_two_quotes')
-      if (!o.quotes.every(q => quoteIsGrounded(q, ctx.transcript))) return reject('uncertain', 'quote_not_in_transcript')
+      // Prefer the stored segment over the full transcript. When the store re-scores with transcript:'',
+      // each observation's own segment (saved on the first pass) keeps the quote grounded correctly.
+      const groundingText = o.segment && o.segment.trim().length > 0 ? o.segment : ctx.transcript
+      if (!o.quotes.every(q => quoteIsGrounded(q, groundingText))) return reject('uncertain', 'quote_not_in_transcript')
       // Quality is judged on the segment the words came from. A one-word quote ("pin") must still be able to confirm.
       if (!passesTranscriptionQuality(o.segment ?? ctx.transcript, o.transcriptQuality)) return reject('uncertain', 'transcription_quality')
       if (!o.quotes.every(q => phraseMatches(o.code, q))) return reject('uncertain', 'wording_does_not_match')

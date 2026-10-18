@@ -109,8 +109,10 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
   }
 
   // Re-score the entire observation list.
+  // Transcript-source observations carry their own segment field (saved on first pass), so passing '' here
+  // is safe: scoreObservations prefers o.segment over ctx.transcript for quote grounding.
   const risk = scoreObservations(newStored.observations, {
-    transcript: '', // The transcript is not stored; only observations are.
+    transcript: '',
     interviewState: newStored.interviewState,
   })
 

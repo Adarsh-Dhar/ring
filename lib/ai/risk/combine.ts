@@ -174,7 +174,9 @@ function assemble(a: {
   transcript: string; cats: Set<RiskCategory>; evidence: Evidence[]; rationale: string
   source: Assessment['source']; ruleMatches: RuleMatch[]; interviewState?: InterviewState
 }): Assessment {
-  const fromJudge = observationsFromEvidence(a.evidence)
+  // Pass the full transcript as the segment so that when caseRiskStore re-scores with transcript:'',
+  // each observation's own segment keeps the quote grounded correctly (spec 4.3 re-score safety).
+  const fromJudge = observationsFromEvidence(a.evidence, { segment: a.transcript })
   const judged = new Set(fromJudge.observations.map(o => o.code))
   // A keyword hit and a judge hit on the same behaviour are one observation, not two.
   const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
