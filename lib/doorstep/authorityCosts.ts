@@ -20,7 +20,9 @@ export type GatedTool = keyof typeof AUTHORITY_COST
 
 /** Needs a person whatever the score. */
 export const HELPER_ONLY_TOOLS = ['policy_exception'] as const
-/** Only allowed at S_eff 100 (emergency mode). */
-export const EMERGENCY_ONLY_TOOLS = ['read_log_summarise', 'update_status', 'alert_helper', 'emergency_guidance'] as const
+/** Only allowed at S_eff 100 (emergency mode, spec 6.2 M5: "only pre-approved emergency guidance").
+ * Zero-cost internal tools (read_log_summarise, update_status, alert_helper) are NOT listed: the helper is notified from M1 and
+ * the AI gives factual summaries at M3, so they must stay available at every score (spec 6.2). */
+export const EMERGENCY_ONLY_TOOLS = ['emergency_guidance'] as const
 /** Never allowed for anyone at any score. */
 export const PROHIBITED_TOOLS = ['unlock_door', 'disclose_access_credentials', 'grant_entry', 'compel_resident_to_open'] as const

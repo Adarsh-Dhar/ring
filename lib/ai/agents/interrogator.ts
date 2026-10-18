@@ -17,7 +17,7 @@ import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
 import { getDb } from '@/lib/db/client'
 import { isUnplannedVisit } from '../interrogation/gate'
 import { createInterviewStamp, type InterviewState, modeRank } from '@/lib/doorstep/riskRules'
-import { getEventResponse } from '@/lib/doorstep/eventResponses'
+import { getEventResponse, renderEventResponse } from '@/lib/doorstep/eventResponses'
 import {
   MAX_TURNS,
   type PlanTurn,
@@ -333,7 +333,7 @@ export async function processAnswer(
         if (g.decision === 'allow') {
           // Speak the scripted response instead of the next question
           await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
-          return { question: null, final: true, close: eventResponse.response }
+          return { question: null, final: true, close: renderEventResponse(eventResponse, obs.quotes ?? []) }
         }
       }
     }

@@ -7,8 +7,8 @@ import { type Behaviour } from './riskRules'
 export interface EventResponse {
   /** The behaviour that triggers this response. */
   behaviour: Behaviour
-  /** The scripted response text. */
-  response: string
+  /** The scripted response text. A function when the line must quote what the visitor said (purpose_contradiction). */
+  response: string | ((quotes: string[]) => string)
   /** The tool to use for this response. */
   tool: 'restate_rule_refuse' | 'boundary_statement' | 'end_conversation' | 'safety_script'
 }
@@ -27,7 +27,13 @@ export const EVENT_RESPONSES: EventResponse[] = [
   },
   {
     behaviour: 'purpose_contradiction',
-    response: 'You said you were here for one reason, but now you are saying something different.',
+    // Spec 6.3: state the two quotes factually, without accusing.
+    response: (quotes) => {
+      const [a, b] = quotes.map(q => q.trim()).filter(Boolean)
+      return a && b
+        ? `I heard two different things. You said: "${a}". You also said: "${b}". A helper will look at this.`
+        : 'I heard two different things about why you are here. A helper will look at this.'
+    },
     tool: 'boundary_statement',
   },
   {
@@ -47,7 +53,7 @@ export const EVENT_RESPONSES: EventResponse[] = [
   },
   {
     behaviour: 'lock_manipulation',
-    response: 'Entry is not permitted. Do not touch the door or lock. A helper has been alerted.',
+    response: 'Entry is not permitted. Please do not touch the door or lock.',
     tool: 'boundary_statement',
   },
   {
@@ -67,4 +73,9 @@ export const EVENT_RESPONSES: EventResponse[] = [
  */
 export function getEventResponse(behaviour: Behaviour): EventResponse | undefined {
   return EVENT_RESPONSES.find(r => r.behaviour === behaviour)
+}
+
+/** Resolve the line to speak. Pass the observation's quotes so quote-based lines can use them. */
+export function renderEventResponse(r: EventResponse, quotes: string[] = []): string {
+  return typeof r.response === 'function' ? r.response(quotes) : r.response
 }

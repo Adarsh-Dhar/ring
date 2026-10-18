@@ -505,7 +505,7 @@ describe('ResidentView - Fail-Closed Properties', () => {
 
     expect(view.state).toBe('EMERGENCY')
     expect(view.canOpen).toBe(false)
-    expect(view.message).toContain('Keep the door closed')
+    expect(view.message).toBe('Do not open the door. Your helper has been asked to take over.')
     expect(validateResidentView(view)).toBe(true)
   })
 })

@@ -24,31 +24,34 @@ interface ResidentScreenText {
   accepted: string
 }
 
-/** The six exact resident texts from 6.2. */
+/** The six exact resident texts from spec 6.2.
+ * "asked" = before a helper has accepted. "accepted" = after the helper has actually accepted.
+ * Only the wording that names the helper changes ("has been asked to review" -> "is reviewing").
+ * The screen never claims help is on the way unless that is confirmed, so M0, M1, M4 and M5 carry no helper claim. */
 export const RESIDENT_SCREEN: Record<ControlMode, ResidentScreenText> = {
   ai_leads: {
-    asked: 'A helper has been asked to check who is at the door.',
-    accepted: 'A helper is checking who is at the door.',
+    asked: 'Someone is at the door. Your usual plan is running.',
+    accepted: 'Someone is at the door. Your usual plan is running.',
   },
   ai_assisted: {
-    asked: 'A helper has been asked to watch the conversation.',
-    accepted: 'A helper is watching the conversation.',
+    asked: 'Something needs checking. Please keep the door closed.',
+    accepted: 'Something needs checking. Please keep the door closed.',
   },
   helper_leads: {
-    asked: 'A helper has been asked to take over.',
-    accepted: 'A helper is in charge.',
+    asked: "Something doesn't match. Please keep the door closed. Your helper has been asked to review.",
+    accepted: "Something doesn't match. Please keep the door closed. Your helper is reviewing.",
   },
   helper_only: {
-    asked: 'A helper has been asked to handle this.',
-    accepted: 'A helper is handling this.',
+    asked: 'Do not open the door. Your helper has been asked to take over.',
+    accepted: 'Do not open the door. Your helper is taking over.',
   },
   helper_urgent: {
-    asked: 'A helper has been asked urgently.',
-    accepted: 'A helper is handling this urgently.',
+    asked: 'Move away from the door. Go to your safe place.',
+    accepted: 'Move away from the door. Go to your safe place.',
   },
   emergency: {
-    asked: 'Emergency contacts have been alerted.',
-    accepted: 'Emergency contacts have been alerted.',
+    asked: 'Move to your safe place. Call emergency help now.',
+    accepted: 'Move to your safe place. Call emergency help now.',
   },
 }
 

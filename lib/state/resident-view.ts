@@ -6,7 +6,7 @@
 
 import { Household } from '@prisma/client'
 import { residentScreenFor, type ControlMode } from '@/lib/doorstep/modeCopy'
-import { modeRank } from '@/lib/doorstep/riskRules'
+import { maxMode, modeRank } from '@/lib/doorstep/riskRules'
 
 export type ResidentViewState =
   | 'CLOSED_KEEP_SHUT'      // Connection lost, offline, or night lock - keep door closed
@@ -132,9 +132,15 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     // Confirmed: riskScore===100 or controlMode==='emergency'.
     // Unconfirmed (spec 4.3 camera-description-alone path): unconfirmedAlertedAt is set.
     if (activeCase.riskScore === 100 || activeCase.controlMode === 'emergency' || activeCase.unconfirmedAlertedAt) {
+      // Spec 6.2: confirmed emergency shows the exact M5 text. An unconfirmed (uncertain) alert shows the text of the
+      // current mode, never lower than M3, and never claims help is coming before a helper accepts.
+      const confirmedEmergency = activeCase.riskScore === 100 || activeCase.controlMode === 'emergency'
+      const emergencyMode: ControlMode = confirmedEmergency
+        ? 'emergency'
+        : maxMode((activeCase.effectiveMode as ControlMode) ?? 'ai_leads', 'helper_only')
       return {
         state: 'EMERGENCY',
-        message: '⚠️ Keep the door closed and move away. Do not open. Your helper has been alerted.',
+        message: residentScreenFor(emergencyMode, !!activeCase.ackedAt),
         backgroundColor: '#b71c1c',
         textColor: '#ffffff',
         showVideo: true,
@@ -150,11 +156,15 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     const effectiveMode = (activeCase.effectiveMode as ControlMode) ?? 'ai_leads'
     const modeRankVal = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(effectiveMode)
     const isM1OrHigher = modeRankVal >= 1
+    const helperAcceptedEarly = !!activeCase.ackedAt
 
     if (activeCase.answer === 'safe') {
       return {
         state: 'SAFE_CONFIRM',
-        message: `${activeCase.answeredBy || 'Helper'} confirmed: OK to open`,
+        // Spec 6.2: at M1 or higher the screen shows the mode text, never "OK to open".
+        message: isM1OrHigher
+          ? residentScreenFor(effectiveMode, helperAcceptedEarly)
+          : `${activeCase.answeredBy || 'Helper'} confirmed: OK to open`,
         backgroundColor: '#4caf50',
         textColor: '#ffffff',
         showVideo: true,
@@ -184,7 +194,9 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     if (activeCase.answer === 'call' || activeCase.answer === 'call_me') {
       return {
         state: 'HELPER_CHECKING',
-        message: `${activeCase.answeredBy || 'Helper'} is calling you`,
+        message: isM1OrHigher
+          ? residentScreenFor(effectiveMode, true)
+          : `${activeCase.answeredBy || 'Helper'} is calling you`,
         backgroundColor: '#2196f3',
         textColor: '#ffffff',
         showVideo: true,
@@ -200,7 +212,9 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     if (activeCase.status === 'answered' && !activeCase.answer) {
       return {
         state: 'HELPER_CHECKING',
-        message: `${activeCase.answeredBy || 'Helper'} is checking...`,
+        message: isM1OrHigher
+          ? residentScreenFor(effectiveMode, true) // a helper has actually answered, so the "accepted" wording is true
+          : `${activeCase.answeredBy || 'Helper'} is checking...`,
         backgroundColor: '#ff9800',
         textColor: '#000000',
         showVideo: true,
@@ -234,7 +248,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
                       'Unknown'
 
     // P11: Use residentScreenFor for the screen text based on effective mode and ackedAt
-    const helperAccepted = !!activeCase.ackedAt
+    const helperAccepted = helperAcceptedEarly
     const screenText = residentScreenFor(effectiveMode, helperAccepted)
 
     return {
