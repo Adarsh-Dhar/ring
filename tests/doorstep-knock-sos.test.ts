@@ -152,7 +152,7 @@ describe('entryDeniedAt precondition', () => {
     const obs = makeObs('lock_manipulation', 'sensor', 'Trying the handle')
     const risk = scoreObservations([obs], { transcript: '', interviewState: { entryDeniedAt } })
     expect(risk.score).toBe(30)
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: lock_manipulation → helper_only
   })
 
   it('lock_manipulation sensor event scored > 60 s before entryDeniedAt is rejected', () => {
@@ -168,7 +168,7 @@ describe('entryDeniedAt precondition', () => {
     const obs = makeObs('door_wedge_or_follow_in', 'sensor', 'Wedging door')
     const risk = scoreObservations([obs], { transcript: '' })
     expect(risk.score).toBe(40)
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: door_wedge_or_follow_in → helper_only
   })
 })
 
@@ -284,7 +284,7 @@ describe('sensor mapping', () => {
     const obs = makeObs('door_wedge_or_follow_in', 'sensor', 'Sensor: door wedge detected')
     const risk = scoreObservations([obs], { transcript: '' })
     expect(risk.score).toBe(40)
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: door_wedge_or_follow_in → helper_only
   })
 
   it('door_force → forced_entry_or_assault scores 100', () => {
@@ -320,8 +320,8 @@ describe('scam run (spec 4.5 worked example)', () => {
     const obs = makeObs('credential_request', 'transcript', t1)
     const risk = scoreObservations([obs], { transcript: t1 })
     expect(risk.score).toBe(20)
-    // Note: floor is null for credential_request, so mode comes from score (20 → ai_assisted)
-    expect(risk.minMode).toBe('ai_leads') // no floor set for credential_request
+    // Section 6.3: credential_request has floor ai_assisted (M1)
+    expect(risk.minMode).toBe('ai_assisted')
     // computeControl(20) → ai_assisted via MODE_THRESHOLDS
   })
 
@@ -333,7 +333,7 @@ describe('scam run (spec 4.5 worked example)', () => {
     expect(risk.score).toBe(35) // 20 + 15
   })
 
-  it('step 3: + refuse_to_leave after stamp → score 60, floor helper_leads', () => {
+  it('step 3: + refuse_to_leave after stamp → score 60, floor helper_only', () => {
     const obs1 = makeObs('credential_request', 'transcript', t1)
     const obs2 = makeObs('hide_from_helper', 'transcript', t2)
     const obs3 = makeObs('refuse_to_leave', 'transcript', t3)
@@ -341,7 +341,7 @@ describe('scam run (spec 4.5 worked example)', () => {
     const transcript = `${t1} ${t2} ${t3}`
     const risk = scoreObservations([obs1, obs2, obs3], { transcript, interviewState: is })
     expect(risk.score).toBe(60) // 20 + 15 + 25
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: refuse_to_leave → helper_only
   })
 
   it('riskLedger contains entries for all three events', () => {

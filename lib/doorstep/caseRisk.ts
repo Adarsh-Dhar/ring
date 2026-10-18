@@ -35,7 +35,7 @@ export interface Correction {
   /** Stable observation id. Preferred over idx. */
   obsId?: string
   /** Action taken. */
-  action: 'confirm' | 'reject' | 'restore'
+  action: 'confirm' | 'reject' | 'restore' | 'resolve'
   /** ISO timestamp when the helper acted. */
   at: string
   /** P5: Helper ID who made this correction (for audit trail). */
@@ -108,15 +108,16 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
 }
 
 /**
- * Apply a helper action (confirm, reject, or restore) to the stored observations.
+ * Apply a helper action (confirm, reject, restore, or resolve) to the stored observations.
  * Resolves the target by obsId first, then falls back to idx.
  * Returns { stored, error } — caller checks error before using stored.
  * P5: Reject marks the event as retracted; confirm marks it as confirmed by a helper; restore removes a rejection.
+ * P9: Resolve marks the event as resolved (keeps points, removes floor/minScore).
  */
 export function applyHelperAction(
   stored: StoredRisk,
   idx: number,
-  action: 'confirm' | 'reject' | 'restore',
+  action: 'confirm' | 'reject' | 'restore' | 'resolve',
   who: string,
   reason?: string,
   obsId?: string,
@@ -134,6 +135,12 @@ export function applyHelperAction(
     return { ...stored, _error: `observation index ${resolvedIdx} out of range (${obs.length} observations)` }
   }
 
+  // P10: Block helper reject and resolve on resident-sourced observations
+  const target = obs[resolvedIdx]
+  if (target.source === 'resident' && (action === 'reject' || action === 'resolve')) {
+    return { ...stored, _error: 'Cannot reject or resolve resident-sourced observations' }
+  }
+
   if (action === 'reject') {
     obs[resolvedIdx] = { ...obs[resolvedIdx], retracted: true }
   } else if (action === 'confirm') {
@@ -148,11 +155,19 @@ export function applyHelperAction(
   } else if (action === 'restore') {
     // Restore removes retraction AND reverts a prior confirm back to the saved pre-confirm state.
     const current = obs[resolvedIdx]
-    const { retracted: _r, _before, ...rest } = current as Observation & { retracted?: boolean }
+    const { retracted: _r, _before, resolvedAt: _ra, resolvedBy: _rb, ...rest } = current as Observation & { retracted?: boolean; resolvedAt?: string; resolvedBy?: string }
     if (_before) {
       obs[resolvedIdx] = { ...rest, state: _before.state, source: _before.source }
     } else {
       obs[resolvedIdx] = rest
+    }
+  } else if (action === 'resolve') {
+    // P9: Mark as resolved - keeps points but removes floor/minScore
+    const current = obs[resolvedIdx]
+    obs[resolvedIdx] = {
+      ...current,
+      resolvedAt: new Date().toISOString(),
+      resolvedBy: who,
     }
   }
 

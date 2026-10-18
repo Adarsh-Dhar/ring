@@ -19,8 +19,8 @@ describe('collaboration controller (spec sections 1, 2, 5)', () => {
 
   it('events outrank the score: a floor lifts a low score, and a high score is never lowered by a low floor', () => {
     expect(ctl(5, 'helper_only').mode).toBe('helper_only')
-    // Score 90 maps to helper_only (Option A: emergency only at score 100 or confirmed forced entry/SOS)
-    expect(ctl(90, 'ai_assisted').mode).toBe('helper_only')
+    // Score 90 maps to helper_urgent (P6: M4 mode at 80-99)
+    expect(ctl(90, 'ai_assisted').mode).toBe('helper_urgent')
     // emergency requires score 100 or an event floor of emergency
     expect(ctl(100).mode).toBe('emergency')
     expect(ctl(50, 'emergency').mode).toBe('emergency')
@@ -72,7 +72,7 @@ describe('resident preferences and permitted actions', () => {
   })
 
   it('once a helper leads, the AI stops acting on its own', () => {
-    for (const m of ['helper_leads', 'helper_only', 'emergency'] as ControlMode[]) {
+    for (const m of ['helper_leads', 'helper_only', 'helper_urgent', 'emergency'] as ControlMode[]) {
       const p = permittedActions(P, m)
       expect(p.allowed).not.toContain('greet_visitor'); expect(p.allowed).not.toContain('ask_purpose')
       expect(p.allowed).toContain('notify_helper')

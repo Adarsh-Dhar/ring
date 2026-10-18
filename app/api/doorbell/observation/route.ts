@@ -9,13 +9,15 @@ export const runtime = 'nodejs'
 /**
  * P10: Helper observation confirmation/rejection route.
  * P5: Extended to support restore action with audit trail.
+ * P9: Extended to support resolve action.
  * POST /api/doorbell/observation
- * Body: { caseId, idx, obsId?, action: 'confirm' | 'reject' | 'restore', reason? }
+ * Body: { caseId, idx, obsId?, action: 'confirm' | 'reject' | 'restore' | 'resolve', reason? }
  *       OR { caseId, action: 'reset', reason }
  *
  * - Confirm: changes uncertain observation to confirmed with source 'helper'
  * - Reject: records a correction, marks observation as retracted
  * - Restore: removes a rejection (requires reason)
+ * - Resolve: marks observation as resolved (keeps points, removes floor/minScore; requires reason)
  * - Reset: soft-retracts ALL observations (requires reason; caller must be a household helper)
  * - obsId is preferred over idx; pass both for one-release backward compat
  * - Cross-household requests are rejected
@@ -37,15 +39,16 @@ export async function POST(req: NextRequest) {
     if (action === 'reset') {
       if (!reason) return fail('Reset action requires a reason', 400)
     } else {
-      if (action !== 'confirm' && action !== 'reject' && action !== 'restore') {
-        return fail('Action must be "confirm", "reject", "restore", or "reset"', 400)
+      if (action !== 'confirm' && action !== 'reject' && action !== 'restore' && action !== 'resolve') {
+        return fail('Action must be "confirm", "reject", "restore", "resolve", or "reset"', 400)
       }
       if (idx === undefined && !obsId) {
         return fail('Missing required field: idx or obsId', 400)
       }
       // P5: Restore requires a reason
-      if (action === 'restore' && !reason) {
-        return fail('Restore action requires a reason', 400)
+      // P9: Resolve requires a reason
+      if ((action === 'restore' || action === 'resolve') && !reason) {
+        return fail(`${action} action requires a reason`, 400)
       }
     }
 

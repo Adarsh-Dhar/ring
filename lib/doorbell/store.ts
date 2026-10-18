@@ -502,10 +502,12 @@ export async function alertUnconfirmedEmergency(householdId: string, caseId: str
 
 /**
  * Spec 4.4 rule 5 — confirmed immediate_threat skips the helper-acknowledgement timer.
+ * P8: Also fires when S_eff is 80 to 99 (M4 mode).
  * Alerts every helper at once, exactly once, using an urgentAlertedAt claim.
  * Does NOT trigger the full emergency workflow — that is reserved for forced_entry_or_assault and SOS.
+ * @param cause - 'threat' for confirmed immediate_threat, 'score' for S_eff 80-99
  */
-export async function alertUrgent(householdId: string, caseId: string): Promise<boolean> {
+export async function alertUrgent(householdId: string, caseId: string, cause: 'threat' | 'score' = 'threat'): Promise<boolean> {
   const db = getDb()
   const claim = await db.case.updateMany({
     where: { id: caseId, urgentAlertedAt: null },
@@ -520,9 +522,19 @@ export async function alertUrgent(householdId: string, caseId: string): Promise<
 
   const household = await getHousehold(householdId)
   const name = household?.residentName ?? 'The resident'
-  notifyAll(state, '⚠️ Threat at the door — urgent', 'A credible threat has been made. All helpers alerted. Resident has been told to stay back.', c.id)
-  smsAll(state, `URGENT: threat reported at ${name}'s door. Check the app immediately.`, name, true)
-  addLog(c, 'Urgent: confirmed immediate threat — all helpers alerted at once. Helper-acknowledgement timer bypassed (spec 4.4 rule 5).')
+  const isScoreBased = cause === 'score'
+
+  if (isScoreBased) {
+    // P8: Generic urgent alert for S_eff 80-99 (not a specific threat)
+    notifyAll(state, '⚠️ Urgent situation at the door', 'Risk score is high. All helpers alerted. Please check the case.', c.id)
+    smsAll(state, `URGENT: high risk score at ${name}'s door. Check the app immediately.`, name, true)
+    addLog(c, 'Urgent: S_eff in 80-99 range (M4 mode) — all helpers alerted at once.')
+  } else {
+    // Original threat-based alert
+    notifyAll(state, '⚠️ Threat at the door — urgent', 'A credible threat has been made. All helpers alerted. Resident has been told to stay back.', c.id)
+    smsAll(state, `URGENT: threat reported at ${name}'s door. Check the app immediately.`, name, true)
+    addLog(c, 'Urgent: confirmed immediate threat — all helpers alerted at once. Helper-acknowledgement timer bypassed (spec 4.4 rule 5).')
+  }
   await updateCase(c.id, c)
   return true
 }
@@ -1075,6 +1087,11 @@ export async function answerCase(
     return { ok: true, case: c }
   }
 
+  // P13: Prevent helper from overriding resident's not-safe or keep-closed to safe
+  if (c.status === 'answered' && c.answer === 'not_safe' && answer === 'safe') {
+    return { ok: false, error: 'Cannot override resident not-safe decision', status: 403 }
+  }
+
   if (c.status === 'answered') {
     if (c.answeredBy === membershipId) return { ok: true, case: c }
     return { ok: false, error: 'This case was already answered', status: 409 }
@@ -1100,6 +1117,13 @@ export async function confirmCase(householdId: string, caseId: string, ok: boole
   const state = await getOrCreateState(householdId)
   const c     = state.cases.find(x => x.id === caseId)
   if (!c || c.status !== 'answered' || c.answer !== 'safe') return null
+
+  // P13: If resident already declined (kept closed), cannot confirm to open
+  if (c.declinedAt && ok) {
+    addLog(c, 'Resident declined to open; confirmation blocked.')
+    await updateCase(c.id, c)
+    return c
+  }
 
   if (ok && isQuiet(state, Date.now())) {
     c.declinedAt = Date.now(); c.resolvedAt = Date.now()

@@ -5,6 +5,8 @@
  */
 
 import { Household } from '@prisma/client'
+import { residentScreenFor, type ControlMode } from '@/lib/doorstep/modeCopy'
+import { modeRank } from '@/lib/doorstep/riskRules'
 
 export type ResidentViewState =
   | 'CLOSED_KEEP_SHUT'      // Connection lost, offline, or night lock - keep door closed
@@ -47,6 +49,10 @@ export interface CaseInfo {
   regularId?: string
   riskScore?: number    // P11: For confirmed emergency detection
   controlMode?: string  // P11: For confirmed emergency detection
+  /** P11: When the resident acknowledged the case (ackedAt is set). */
+  ackedAt?: Date | null
+  /** P11: Effective control mode for resident screen text. */
+  effectiveMode?: ControlMode
   /** Spec 4.3: set when an uncertain forced_entry_or_assault has been observed (camera description alone).
    *  The resident must be shown the keep-closed message even before confirmation arrives. */
   unconfirmedAlertedAt?: Date | null
@@ -140,6 +146,11 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     }
 
     // Case-specific states - explicit answer wins
+    // P12: Never set canOpen or show "OK to open" while the mode is M1 or higher
+    const effectiveMode = (activeCase.effectiveMode as ControlMode) ?? 'ai_leads'
+    const modeRankVal = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(effectiveMode)
+    const isM1OrHigher = modeRankVal >= 1
+
     if (activeCase.answer === 'safe') {
       return {
         state: 'SAFE_CONFIRM',
@@ -148,7 +159,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
         textColor: '#ffffff',
         showVideo: true,
         showFaces: true,
-        canOpen: true,
+        canOpen: !isM1OrHigher, // P12: Can't open at M1 or higher
         helperName: activeCase.answeredBy,
         timeSince: formatTimeSince(activeCase.createdAt),
         caseId: activeCase.id,
@@ -222,9 +233,13 @@ export function computeResidentView(state: StateInfo, household: Household): Res
                       activeCase.checkWho ? activeCase.checkWho :
                       'Unknown'
 
+    // P11: Use residentScreenFor for the screen text based on effective mode and ackedAt
+    const helperAccepted = !!activeCase.ackedAt
+    const screenText = residentScreenFor(effectiveMode, helperAccepted)
+
     return {
       state: 'WAITING',
-      message: `Waiting for helper response...`,
+      message: screenText,
       backgroundColor: '#2196f3',
       textColor: '#ffffff',
       showVideo: true,

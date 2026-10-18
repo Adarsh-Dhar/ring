@@ -16,7 +16,8 @@ import { clampWords, hasBannedPhrase, validQuestion, wrapUntrusted } from '@/lib
 import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
 import { getDb } from '@/lib/db/client'
 import { isUnplannedVisit } from '../interrogation/gate'
-import { createInterviewStamp, type InterviewState } from '@/lib/doorstep/riskRules'
+import { createInterviewStamp, type InterviewState, modeRank } from '@/lib/doorstep/riskRules'
+import { getEventResponse } from '@/lib/doorstep/eventResponses'
 import {
   MAX_TURNS,
   type PlanTurn,
@@ -34,6 +35,9 @@ import {
 
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
 
+/** P7: Reason for finishing interrogation - extended for pressure_continues */
+export type FinishReason = 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed' | 'over_budget' | 'pressure_continues'
+
 /** P7: Stamp interview state when specific lines are spoken. */
 async function stampInterviewState(householdId: string, caseId: string, stampType: keyof InterviewState) {
   const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
@@ -48,7 +52,9 @@ interface InterrogationTurn {
   obs?: any             // coverage from this turn (raw model output, cleaned by plan module)
   focus?: Slot | null   // the slot we asked about (next question's focus)
   claimsOrg?: boolean
+  claimsOrganisation?: boolean // New field from InterrogatorTurnOut schema
   personalTie?: boolean
+  claimsPersonalTie?: boolean // New field from InterrogatorTurnOut schema
   echoTarget?: boolean
   riskHint?: 'none' | 'low' | 'medium' | 'high'
   modelFailed?: boolean // the model could not grade this answer (no coverage recorded)
@@ -181,10 +187,11 @@ export async function processAnswer(
       return { question: null, final: true, close: interrogatorLines(null).close }
     }
 
-    const history = turns.map(t => `Q: ${t.question}\nA: ${t.transcript}`).join('\n\n')
+    // P7: M2 - if a confirmed pressure_after_boundary appears, stop questioning, say the boundary line, and hand over.
+    // Defer this check to after the model output is available (below) to avoid duplicate risk assessment
 
     const planTurns: PlanTurn[] = turns.map(t => ({
-      obs: cleanObs(t.obs), focus: t.focus, claimsOrg: t.claimsOrg, personalTie: t.personalTie,
+      obs: cleanObs(t.obs), focus: t.focus, claimsOrg: t.claimsOrganisation ?? t.claimsOrg, personalTie: t.claimsPersonalTie ?? t.personalTie,
       echoTarget: t.echoTarget, riskHint: t.riskHint,
     }))
     const state = foldPlan(planTurns)
@@ -295,11 +302,51 @@ export async function processAnswer(
       interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState,
     })
     const control = await controlFor(householdId, live)
+
+    // P16: M4 - stop greeter conversation if continuing could raise risk. No negotiating or exceptions.
+    // If mode is M4 or higher and we have any confirmed risk events, stop the conversation.
+    const newConfirmedBehaviours = live.observations.filter(o => o.state === 'confirmed' && o.source === 'transcript')
+    if (modeRank(control.mode) >= modeRank('helper_urgent') && newConfirmedBehaviours.length > 0) {
+      const closeLine = interrogatorLines(null).safety
+      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+      return { question: null, final: true, close: closeLine }
+    }
+
+    // P16: M3 uncertain events - pause questions, play safety script, preserve evidence
+    // Evidence is preserved automatically through the observation store (not deleted by cleanup)
+    const hasUncertainPhysicalOrThreat = live.observations.some(o => 
+      o.state === 'uncertain' && 
+      ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault'].includes(o.code)
+    )
+    if (modeRank(control.mode) >= modeRank('helper_only') && hasUncertainPhysicalOrThreat) {
+      const closeLine = interrogatorLines(null).safety
+      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+      return { question: null, final: true, close: closeLine }
+    }
+
+    // P15: Check for event-specific scripted responses
+    // These run in addition to the mode. Each response still goes through the action gate.
+    for (const obs of newConfirmedBehaviours) {
+      const eventResponse = getEventResponse(obs.code)
+      if (eventResponse) {
+        const g = await gateFor(householdId, caseId, eventResponse.tool, { sEff: control.effectiveScore })
+        if (g.decision === 'allow') {
+          // Speak the scripted response instead of the next question
+          await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
+          return { question: null, final: true, close: eventResponse.response }
+        }
+      }
+    }
+
     // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
     const gq = await gateOrAsk(householdId, caseId, 'neutral_verification_question', { sEff: control.effectiveScore, decision: 'ask_purpose' })
     if (gq.decision !== 'allow') {
+      // P7: M3 and above - return the safety line instead of "Thank you. Please wait a moment."
+      const closeLine = modeRank(control.mode) >= modeRank('helper_only')
+        ? interrogatorLines(null).safety
+        : interrogatorLines(null).close
       await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
-      return { question: null, final: true, close: interrogatorLines(null).close }
+      return { question: null, final: true, close: closeLine }
     }
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
@@ -319,7 +366,7 @@ async function finishInterrogation(
   householdId: string,
   caseId: string,
   turns: InterrogationTurn[],
-  reason: 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed' | 'over_budget',
+  reason: FinishReason,
   modelResult?: InterrogatorTurnResult
 ) {
   const finalTurn = turns[turns.length - 1]
@@ -329,8 +376,8 @@ async function finishInterrogation(
   const planTurns: PlanTurn[] = turns.map(t => ({
     obs: cleanObs(t.obs),
     focus: t.focus,
-    claimsOrg: t.claimsOrg,
-    personalTie: t.personalTie,
+    claimsOrg: t.claimsOrganisation ?? t.claimsOrg,
+    personalTie: t.claimsPersonalTie ?? t.personalTie,
     echoTarget: t.echoTarget,
     riskHint: t.riskHint,
   }))

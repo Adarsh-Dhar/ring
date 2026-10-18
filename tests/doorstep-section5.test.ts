@@ -37,9 +37,11 @@ describe('5.3 timers', () => {
     expect(timersFor(0).approvalSec).toBe(120); expect(timersFor(0, null, 45).approvalSec).toBe(45)
     expect(activeTimer(timersFor(0), { needsApproval: true })).toEqual({ kind: 'approval', seconds: 120 })
   })
-  it('takeover timer is min(120 - S_eff, 60) from S_eff 60, or when an event minimum is helper-led', () => {
+  it('takeover timer is min(120 - S_eff, 60) from S_eff 60, or when an event minimum is helper_only or higher (Section 6)', () => {
     expect(timersFor(59).takeoverSec).toBeNull(); expect(timersFor(60).takeoverSec).toBe(60); expect(timersFor(80).takeoverSec).toBe(40); expect(timersFor(99).takeoverSec).toBe(21)
-    expect(timersFor(40, 'helper_leads').takeoverSec).toBe(60)
+    // Section 6: takeover timer applies at M3 (helper_only) and above, not M2 (helper_leads)
+    expect(timersFor(40, 'helper_leads').takeoverSec).toBeNull()
+    expect(timersFor(60, 'helper_only').takeoverSec).toBe(60)
     expect(timersFor(100).takeoverSec).toBeNull()
   })
   it('emergency has no timer', () => { expect(activeTimer(timersFor(100), { emergency: true })).toEqual({ kind: 'emergency', seconds: null }) })

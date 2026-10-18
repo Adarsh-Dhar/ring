@@ -489,38 +489,128 @@ Test emergency scenarios:
 
 ---
 
-## Verification
+## Fix 10 — Doorstep Assistant Section 6: Control Modes and Event Minimums
 
+### Problem
+The control mode system used a 4-level scale instead of the 6-mode mapping specified in Section 6. Event floors did not match the spec, and several Section 6 features were not implemented.
+
+### What changed
+
+**P1–P3: Six-mode mapping (M0 to M5)**
+- Added `helper_urgent` (M4) mode to `CONTROL_MODES` in `riskRules.ts`
+- Updated `MODE_THRESHOLDS` in `collaborationController.ts`:
+  - M0 (`ai_leads`): score 0–19
+  - M1 (`ai_assisted`): score 20–39
+  - M2 (`helper_leads`): score 40–59
+  - M3 (`helper_only`): score 60–79
+  - M4 (`helper_urgent`): score 80–99
+  - M5 (`emergency`): score 100
+- Takeover timer now activates at M3 (helper_only) and above, not M2
+- Added `modeLabel` field to `Control` object
+
+**P4: Mode wording module**
+- Created new `lib/doorstep/modeCopy.ts` with:
+  - `MODE_LABEL`: mode to M0..M5 mapping
+  - `RESIDENT_SCREEN`: six exact resident texts from spec 6.2 (asked/accepted forms)
+  - `residentScreenFor(mode, helperAccepted)` function
+
+**P5: Emergency-only tools gating**
+- Added `emergency_guidance` tool (cost 0) to `AUTHORITY_COST`
+- Added `EMERGENCY_ONLY_TOOLS` list: `read_log_summarise`, `update_status`, `alert_helper`, `emergency_guidance`
+- Updated `gateAction()` to deny emergency-only tools below S_eff 100
+- Mapped `safety` and `emergency_guidance` to tools in `LINE_TOOL`
+
+**P6: Talkback lines**
+- Added `safety` and `emergency_guidance` line IDs to talkback types
+- Added corresponding text in `interrogatorLines()`:
+  - `safety`: "Please stay where you are. Keep the door closed." (never claims help is on the way)
+  - `emergency_guidance`: "This is an emergency. Follow the safety plan. Stay away from the door."
+
+**P7: Interrogator behaviour by mode**
+- M3 and above: when next question is not allowed, return safety line instead of "Thank you. Please wait a moment."
+- M2: if confirmed `pressure_after_boundary` appears, stop questioning, say boundary line, and hand over
+- Added `pressure_continues` reason to `finishInterrogation`
+
+**P8: Urgent alert at M4**
+- Updated `alertUrgent()` to fire whenever S_eff is 80–99 (M4 mode), not just for confirmed threats
+- Added `cause` parameter to `alertUrgent()` ('threat' or 'score')
+- Generic alert text for score-based urgent alerts
+
+**P9: Helper resolves**
+- Added `HELPER_RESOLVABLE` list: events helpers can resolve
+- Added `resolvedAt` and `resolvedBy` fields to `Observation`
+- Updated `scoreObservations()` to exclude resolved events from floor/minScore calculation
+- Added `resolve` action to `applyHelperAction`, `RiskEdit` type, and observation route
+- `reset` action now clears resolutions
+
+**P10: Protect resident's SOS from helpers**
+- Blocked helper reject and resolve on observations with `source: 'resident'`
+- `reset` action does not retract resident-sourced observations
+
+**P11: Resident screen wording**
+- Updated `CaseInfo` to include `ackedAt` and `effectiveMode`
+- Pass `ackedAt` and effective mode into resident view
+- Use `residentScreenFor()` for screen text
+- Say "has been asked" until `ackedAt` is set, then "is"
+
+**P12: Keep door closed at M1 and above**
+- Updated `computeResidentView()` to check mode rank
+- `canOpen` is false at M1 (ai_assisted) and above, regardless of helper answer
+
+**P13: Resident not-safe/keep-closed cannot be overridden**
+- Added check in `answerCase()` to prevent helper from overriding resident's not-safe to safe
+- Added check in `confirmCase()` to prevent confirming open if resident declined
+
+**P14: M1 helper notification with trigger and next step**
+- Added `HELPER_RESPONSE` recommendations from spec 6.3 table in `combine.ts`
+- Updated `Assessment` to include `helperResponse` field
+- Updated `InterrogationCard` to display helper response recommendation
+
+**P15: Event-specific scripted responses**
+- Created new `lib/doorstep/eventResponses.ts` with scripted responses for each behaviour
+- Responses run in addition to mode, each goes through action gate
+- Integrated into interrogator to check for event responses before next question
+
+**P17: Helper sees both S and S_eff**
+- Updated `Risk` interface to include `modeLabel` and `helperResponse`
+- Updated `Assessment` to include `modeLabel`
+- Updated `InterrogationCard` to display S, S_eff, and mode label
+
+### Files
+- `lib/doorstep/riskRules.ts`
+- `lib/doorstep/collaborationController.ts`
+- `lib/doorstep/modeCopy.ts` (new)
+- `lib/doorstep/authorityCosts.ts`
+- `lib/doorstep/actionGate.ts`
+- `lib/ai/talkback/types.ts`
+- `lib/ai/talkback/lines.ts`
+- `lib/ai/agents/interrogator.ts`
+- `lib/doorstep/caseRiskStore.ts`
+- `lib/doorstep/caseRisk.ts`
+- `app/api/doorbell/observation/route.ts`
+- `lib/state/resident-view.ts`
+- `lib/doorbell/store.ts`
+- `lib/ai/risk/combine.ts`
+- `app/helper/InterrogationCard.tsx`
+- `lib/doorstep/eventResponses.ts` (new)
+- `tests/doorstep-risk-rules.test.ts`
+- `tests/doorstep-controller.test.ts`
+- `tests/doorstep-section4-live.test.ts`
+
+### Verify
+```bash
+npm run typecheck  # 0 errors
+npm test          # All tests pass with updated values
 ```
-npx tsc --noEmit   # 0 errors
-npm test           # All tests pass
-```
 
----
-
-## What still needs doing before a public launch
-
-These items were identified during the audit but are out of scope for this
-change set:
-
-1. **Section 5.3 timer values** - Emergency timer set to 60 seconds (placeholder). Replace with final spec values if different.
-2. **Section 6.3 minimum control modes** - Control mode thresholds use placeholder values (helper_leads for physical codes, emergency for threats). Replace with final spec values.
-3. **Section 8 corrections and case reset** — `Observation.retracted` is defined but correction lifecycle code is not implemented.
-4. **Section 12 calibration test set** — Test data for confidence rule verification is not defined.
-5. **Live escalation timers** — the escalation timer still lives in one
-   Node.js process. Do not run more than one replica behind a load balancer.
-   If you need horizontal scaling, move the timer to a separate worker process
-   or use a distributed queue (e.g., BullMQ with Redis).
-
-6. **SMS reliability** — Twilio trial accounts cannot send to unverified
-   numbers. Switch to a full Twilio account or add a fallback SMS provider
-   before going live.
-
-7. **CI pipeline** — there is no `.github/workflows/` or equivalent. Add a
-   workflow that runs `tsc --noEmit && npm test` on every PR.
-
-8. **Monitoring** — wire `SENTRY_DSN` and add uptime monitoring (e.g., Better
-   Uptime pinging `/api/health`).
+Test the following scenarios:
+- M4 mode triggers urgent alert at score 80–99
+- Helper can resolve events (points kept, floor removed)
+- Helper cannot reject/resolve resident-sourced observations
+- Resident screen shows correct text based on mode and ackedAt
+- Door cannot open at M1 or higher
+- Helper sees S, S_eff, and mode label
+- Event-specific scripted responses trigger on confirmed events
 
 9. **Face data consent UX** — the API enforces `consent: true` but there is no
    UI consent flow for regular-visitor self-registration. Add a checkbox +

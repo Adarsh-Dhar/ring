@@ -96,9 +96,9 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(25) // 15 + 10, third instance ignored due to cap
   })
 
-  it('immediate_threat sets minimum score to 80 and floor to helper_only (Option A: emergency reserved for forced entry/SOS)', () => {
+  it('immediate_threat sets minimum score to 80 and floor to helper_urgent (P6: M4 mode)', () => {
     const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
-    expect(r.score).toBe(80); expect(r.minMode).toBe('helper_only')
+    expect(r.score).toBe(80); expect(r.minMode).toBe('helper_urgent')
   })
 
   it('forced_entry_or_assault sets score to exactly 100, the only way to reach 100', () => {
@@ -121,15 +121,16 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     const interviewState: InterviewState = { askedToLeaveAt: new Date().toISOString() }
     const r = scoreWithTranscript([makeObs('refuse_to_leave', 'transcript', 'refuse to leave', 'confirmed', 1.0)], 'refuse to leave', interviewState)
     expect(r.score).toBe(25)
+    // P6: refuse_to_leave now sets helper_only floor (M3)
+    expect(r.minMode).toBe('helper_only')
     // lock_manipulation requires entryDeniedAt — without it, scores 0 and registers as uncertain
     const lockNoStamp = score([makeObs('lock_manipulation', 'sensor', '')])
     expect(lockNoStamp.score).toBe(0) // entry_not_denied_yet
     expect(lockNoStamp.minMode).toBe('ai_leads') // no floor without confirmation
-    // With entryDeniedAt, lock_manipulation scores 30 and sets helper_leads floor
+    // With entryDeniedAt, lock_manipulation scores 30 and sets helper_only floor (P6: M3)
     const lockWithStamp = scoreWithTranscript([makeObs('lock_manipulation', 'sensor', '')], '', { entryDeniedAt: new Date().toISOString() })
     expect(lockWithStamp.score).toBe(30)
-    expect(lockWithStamp.minMode).toBe('helper_leads')
-    expect(r.minMode).toBe('helper_leads')
+    expect(lockWithStamp.minMode).toBe('helper_only')
   })
 
   it('credential_request alone scores 20 points', () => {
@@ -146,7 +147,7 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
       makeObs('lock_manipulation', 'sensor', ''),
     ], 'what is your PIN number', interviewState)
     expect(r.score).toBe(75)
-    expect(r.minMode).toBe('helper_leads')
+    expect(r.minMode).toBe('helper_only') // Score 75 is in M3 range (60-79)
   })
 
   // Spec 4.5 worked example: purpose_contradiction (15) + pressure_after_rule (5) = 20
@@ -170,11 +171,11 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.minMode).toBe('ai_leads')
   })
 
-  it('uncertain physical or threat event scores zero and raises the mode to helper_leads only (spec 4.3)', () => {
+  it('uncertain physical or threat event scores zero and raises the mode to helper_only (P6: M3 uncertain floor)', () => {
     for (const [code, source] of [['lock_manipulation', 'helper'], ['door_wedge_or_follow_in', 'helper'], ['forced_entry_or_assault', 'helper'], ['immediate_threat', 'transcript']] as const) {
       const r = scoreWithTranscript([makeObs(code, source, 'x', 'uncertain')], 'x')
       expect(r.score, code).toBe(0)
-      expect(r.minMode, code).toBe('helper_leads')
+      expect(r.minMode, code).toBe('helper_only')
     }
   })
 
@@ -348,11 +349,11 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.minMode).toBe('emergency')
   })
 
-  it('P11: immediate_threat sets minimum score to 80 and floor to helper_only (Option A)', () => {
+  it('P11: immediate_threat sets minimum score to 80 and floor to helper_urgent (Section 6.3)', () => {
     const r = scoreWithTranscript([makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed', 1.0)], 'I will hurt you')
     expect(r.score).toBe(80)
-    // Option A: immediate_threat → helper_only, NOT emergency. Emergency is for forced_entry/SOS only.
-    expect(r.minMode).toBe('helper_only')
+    // Section 6.3: immediate_threat → helper_urgent (M4), NOT emergency. Emergency is for forced_entry/SOS only.
+    expect(r.minMode).toBe('helper_urgent')
   })
 
   // F7: Additional tests for Round 2 fixes

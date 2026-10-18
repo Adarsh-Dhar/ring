@@ -37,26 +37,26 @@ describe('G4: Camera-only door events and unconfirmed emergency', () => {
     expect(risk.minMode).toBe('ai_leads') // No floor because source is invalid
   })
 
-  it('camera-only immediate_threat sets minScore 80 and floor to helper_only (Option A)', () => {
+  it('camera-only immediate_threat sets minScore 80 and floor to helper_urgent (Section 6.3)', () => {
     const obs = makeObs('immediate_threat', 'transcript', 'I will hurt you', 'confirmed')
     const risk = scoreObservations([obs], { transcript: 'I will hurt you' })
     expect(risk.score).toBe(80) // minScore override
-    // Option A: immediate_threat → helper_only (emergency reserved for forced entry/SOS)
-    expect(risk.minMode).toBe('helper_only')
+    // Section 6.3: immediate_threat → helper_urgent (M4), emergency reserved for forced entry/SOS
+    expect(risk.minMode).toBe('helper_urgent')
   })
 
-  it('uncertain lock_manipulation from valid source sets helper-led floor', () => {
+  it('uncertain lock_manipulation from valid source sets helper_only floor (Section 6.3)', () => {
     const obs = makeObs('lock_manipulation', 'sensor', 'Trying the lock', 'uncertain')
     const risk = scoreObservations([obs], { transcript: '' })
     expect(risk.score).toBe(0)
-    expect(risk.minMode).toBe('helper_leads') // uncertainFloor applies
+    expect(risk.minMode).toBe('helper_only') // uncertainFloor applies (Section 6.3)
   })
 
-  it('uncertain forced_entry_or_assault from valid source sets helper-led floor', () => {
+  it('uncertain forced_entry_or_assault from valid source sets helper_only floor (Section 6.3)', () => {
     const obs = makeObs('forced_entry_or_assault', 'sensor', 'Forcing the door', 'uncertain')
     const risk = scoreObservations([obs], { transcript: '' })
     expect(risk.score).toBe(0)
-    expect(risk.minMode).toBe('helper_leads') // uncertainFloor applies
+    expect(risk.minMode).toBe('helper_only') // uncertainFloor applies (Section 6.3)
   })
 
   it('sensor-sourced lock_manipulation scores 30 when entryDeniedAt is set', () => {
@@ -64,7 +64,7 @@ describe('G4: Camera-only door events and unconfirmed emergency', () => {
     const entryDeniedAt = new Date(Date.now() - 5000).toISOString() // 5 seconds ago
     const risk = scoreObservations([obs], { transcript: '', interviewState: { entryDeniedAt } })
     expect(risk.score).toBe(30)
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: lock_manipulation → helper_only
   })
 
   it('sensor-sourced lock_manipulation scores 0 without entryDeniedAt (spec 4.2 precondition)', () => {

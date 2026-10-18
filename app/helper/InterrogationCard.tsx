@@ -20,6 +20,8 @@ type Risk = {
   score?: number
   ledger?: Array<{ code: string; at: string; quote: string; source: string; state: string; points: number }>
   minMode?: string
+  modeLabel?: string  // P17: Mode label (M0 to M5)
+  helperResponse?: string  // P14: Helper response recommendation
 }
 
 type Ai = {
@@ -257,6 +259,17 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
             <p className="font-semibold">{RISK_HEADLINE[riskLevel]}</p>
             {risk?.source === 'live' && <span className="text-xs opacity-80">still talking…</span>}
           </div>
+          {/* P17: Show S, S_eff, and mode label */}
+          {(risk?.score !== undefined || risk?.minMode) && (
+            <div className="mt-2 flex items-center gap-3 text-xs">
+              {risk?.score !== undefined && (
+                <span className="opacity-80">Score: {risk.score}</span>
+              )}
+              {risk?.minMode && (
+                <span className="opacity-80">Mode: {risk.modeLabel || risk.minMode}</span>
+              )}
+            </div>
+          )}
           {risk?.rationale && <p className="mt-1">{risk.rationale}</p>}
           {Array.isArray(risk?.evidence) && risk!.evidence!.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -271,6 +284,10 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
             <ul className="mt-1 text-xs">{flags.map((f) => <li key={f}>• {f}</li>)}</ul>
           )}
           {risk?.action && <p className="mt-2 font-medium">{risk.action}</p>}
+          {/* P14: Show helper response recommendation */}
+          {risk?.helperResponse && (
+            <p className="mt-2 text-xs font-medium text-blue-300">💡 {risk.helperResponse}</p>
+          )}
           <p className="mt-2 text-xs opacity-70">
             {risk?.source === 'ai+rules' ? 'AI judgement + keyword check' : 'Keyword check only (AI was unavailable)'}. Never open the door because of this alone.
           </p>

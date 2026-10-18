@@ -9,12 +9,14 @@
 import { CONTROL_MODES, maxMode, modeRank, type ControlMode } from './riskRules'
 import { permittedActions, type Permissions, type Preferences } from './residentPreferences'
 import { AUTHORITY_COST } from './authorityCosts'
+import { MODE_LABEL } from './modeCopy'
 
 /** Score at which the control mode rises by itself (before any event floor). Pilot starting values.
  * Step 6 (Option A): emergency is now reserved for score 100 (forced entry / SOS / confirmed assault).
- * Score 80–99 maps to helper_only, matching the immediate_threat floor. */
+ * Score 80–99 maps to helper_urgent, matching the immediate_threat floor. */
 export const MODE_THRESHOLDS: { atLeast: number; mode: ControlMode }[] = [
   { atLeast: 100, mode: 'emergency' },
+  { atLeast: 80,  mode: 'helper_urgent' },
   { atLeast: 60,  mode: 'helper_only' },
   { atLeast: 40,  mode: 'helper_leads' },
   { atLeast: 20,  mode: 'ai_assisted' },
@@ -55,7 +57,7 @@ export interface Timers {
 
 export function timersFor(sEff: number, minMode?: ControlMode | null, approvalSec: number = DEFAULT_APPROVAL_SECONDS): Timers {
   const s = clampScore(sEff)
-  const helperLed = s >= 60 || modeRank(minMode ?? 'ai_leads') >= modeRank('helper_leads')
+  const helperLed = s >= 60 || modeRank(minMode ?? 'ai_leads') >= modeRank('helper_only')
   return {
     approvalSec: Number.isFinite(approvalSec) && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS,
     riskDecisionSec: s >= 1 && s <= 99 ? RISK_TIMER_BASE - s : null,
@@ -104,6 +106,8 @@ export interface Control {
   /** The confirmed behaviour score S before any event floor. */
   rawScore: number
   mode: ControlMode
+  /** Mode label (M0 to M5) for display. */
+  modeLabel: string
   /** Severity of the event-set minimum mode (0 = none). Second key of the dashboard order. */
   eventSeverity: number
   /** 100 minus S_eff: how much room the AI has to act alone. */
@@ -125,6 +129,7 @@ const LEADS: Record<ControlMode, string> = {
   ai_assisted: 'The assistant leads with the helper watching.',
   helper_leads: 'The helper leads. The assistant only helps and reports.',
   helper_only: 'The helper is in charge. The assistant stays quiet unless asked.',
+  helper_urgent: 'Urgent. The helper is in charge. The assistant stays quiet unless asked.',
   emergency: 'Emergency. The helper and emergency contacts are being alerted.',
 }
 
@@ -135,7 +140,7 @@ export function computeControl(input: { score: number; minMode?: ControlMode | n
   const mode = maxMode(modeForScore(sEff), input.minMode ?? 'ai_leads')
   const eventSeverity = modeRank(input.minMode ?? 'ai_leads')
   return {
-    score: sEff, effectiveScore: sEff, rawScore, mode, eventSeverity,
+    score: sEff, effectiveScore: sEff, rawScore, mode, modeLabel: MODE_LABEL[mode] ?? 'M0', eventSeverity,
     aiAutonomyBudget: 100 - sEff,
     humanOversightIndex: sEff,
     helperPriority: sEff * 10 + eventSeverity,

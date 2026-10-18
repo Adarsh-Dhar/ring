@@ -23,7 +23,7 @@ export type RiskEdit =
   | { kind: 'knock'; at: string }
   | { kind: 'append'; observation: Observation }
   | { kind: 'interview'; stampType: keyof InterviewState; at: string }
-  | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore'; who: string; reason?: string }
+  | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore' | 'resolve'; who: string; reason?: string }
   | { kind: 'availability'; device: 'camera' | 'mic'; available: boolean; since: string; reason?: string }
   | { kind: 'reset'; who: string; reason: string }
 
@@ -139,7 +139,16 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     case 'reset': {
       // Soft-retract all observations. Score drops to 0. Audit trail is preserved.
       // emergencyAlertedAt is NOT touched — the helper must explicitly decide what to do.
-      const retractAll = stored.observations.map(o => ({ ...o, retracted: true }))
+      // P9: Reset also clears resolutions.
+      // P10: Reset does NOT retract resident-sourced observations.
+      const retractAll = stored.observations.map(o => {
+        const { resolvedAt, resolvedBy, ...rest } = o
+        // P10: Don't retract resident-sourced observations
+        if (o.source === 'resident') {
+          return { ...rest, resolvedAt: undefined, resolvedBy: undefined }
+        }
+        return { ...rest, retracted: true, resolvedAt: undefined, resolvedBy: undefined }
+      })
       const resetCorrection: Correction = {
         idx: -1, // sentinel: applies to all
         action: 'reject' as const,
@@ -222,14 +231,16 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       await alertUnconfirmedEmergency(c.householdId, caseId)
     }
 
-    // Spec 4.4 rule 5: a confirmed immediate_threat bypasses the helper-acknowledgement timer.
-    // This is NOT a full emergency — the alert is urgent, not the emergency workflow.
+    // P8: Fire urgent alert whenever S_eff is 80 to 99 (M4 mode), once per case.
+    // Previously this only fired for confirmed immediate_threat.
+    // Keep alertEmergency for M5 (S_eff 100).
     const hasConfirmedThreat = risk.ledger.some(
       e => e.code === 'immediate_threat' && e.state === 'confirmed'
     )
-    if (hasConfirmedThreat && !c.urgentAlertedAt) {
+    const isUrgentRange = eff >= 80 && eff < 100
+    if ((isUrgentRange || hasConfirmedThreat) && !c.urgentAlertedAt) {
       const { alertUrgent } = await import('@/lib/doorbell/store')
-      await alertUrgent(c.householdId, caseId)
+      await alertUrgent(c.householdId, caseId, isUrgentRange && !hasConfirmedThreat ? 'score' : 'threat')
     }
   }
 

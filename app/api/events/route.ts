@@ -81,6 +81,8 @@ export async function GET(req: NextRequest) {
               regularId: currentCase.regularId,
               riskScore: currentCase.riskScore,
               controlMode: currentCase.controlMode,
+              ackedAt: currentCase.ackedAt != null ? new Date(currentCase.ackedAt) : null,
+              effectiveMode: currentCase.controlMode as any, // P11: Use controlMode as effective mode
               unconfirmedAlertedAt: currentCase.unconfirmedAlertedAt != null ? new Date(currentCase.unconfirmedAlertedAt) : null,
             }] : [],
             deviceOnline: !state.offline,

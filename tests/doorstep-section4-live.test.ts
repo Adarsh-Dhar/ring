@@ -48,11 +48,11 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     expect(risk.score).toBe(20) // Quality check passed on segment
   })
 
-  it('#6: uncertain physical/threat events raise mode to helper_leads only', () => {
+  it('#6: uncertain physical/threat events raise mode to helper_only (Section 6.3)', () => {
     const obs = makeObs('lock_manipulation', 'helper', 'x', 'uncertain')
     const risk = scoreObservations([obs], { transcript: 'x' })
     expect(risk.score).toBe(0)
-    expect(risk.minMode).toBe('helper_leads')
+    expect(risk.minMode).toBe('helper_only') // Section 6.3: uncertain physical/threat → helper_only
   })
 
   it('#6: uncertain speech events raise no mode', () => {
@@ -309,7 +309,8 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     expect(modeRank('ai_assisted')).toBe(1)
     expect(modeRank('helper_leads')).toBe(2)
     expect(modeRank('helper_only')).toBe(3)
-    expect(modeRank('emergency')).toBe(4)
+    expect(modeRank('helper_urgent')).toBe(4)
+    expect(modeRank('emergency')).toBe(5)
   })
 
   it('F7: modeRank correctly compares modes', () => {

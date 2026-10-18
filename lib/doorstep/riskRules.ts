@@ -18,7 +18,7 @@
  * ALL NUMBERS ARE PILOT STARTING VALUES. They are operational priorities, not probabilities of danger.
  */
 
-export const CONTROL_MODES = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'emergency'] as const
+export const CONTROL_MODES = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'] as const
 export type ControlMode = (typeof CONTROL_MODES)[number]
 export const modeRank = (m: ControlMode) => CONTROL_MODES.indexOf(m)
 export const maxMode = (...ms: ControlMode[]): ControlMode => ms.reduce((a, b) => (modeRank(b) > modeRank(a) ? b : a), 'ai_leads' as ControlMode)
@@ -102,6 +102,17 @@ export const BEHAVIOURS = [
 ] as const
 export type Behaviour = (typeof BEHAVIOURS)[number]
 
+/** P9: Events that helpers can resolve. A resolved event keeps its points but no longer sets a floor or minimum score. */
+export const HELPER_RESOLVABLE: Behaviour[] = [
+  'hide_from_helper',
+  'credential_request',
+  'refuse_to_leave',
+  'lock_manipulation',
+  'door_wedge_or_follow_in',
+  'immediate_threat',
+  'forced_entry_or_assault',
+]
+
 export interface BehaviourRule {
   label: string
   /** Points for each confirmed observation. Use tiers for variable scoring. */
@@ -144,7 +155,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     label: 'Pressure after a clear boundary was stated',
     points: 1,
     cap: 10,
-    floor: null,
+    floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
     sources: SPEECH_OR_HELPER,
   },
   purpose_contradiction: {
@@ -152,53 +163,53 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     points: 15,
     tiers: [15, 10],
     cap: 25,
-    floor: null,
+    floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
     sources: SPEECH_OR_HELPER,
   },
   hide_from_helper: {
     label: 'Tried to hide from the helper',
     points: 15,
     cap: 15,
-    floor: null,
+    floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
     sources: SPEECH_OR_HELPER,
   },
   credential_request: {
     label: 'Asked for PIN, OTP, password or access code',
     points: 20,
     cap: 20,
-    floor: null,
+    floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
     sources: SPEECH_OR_HELPER,
   },
   refuse_to_leave: {
     label: 'Refused to leave when asked',
     points: 25,
     cap: 25,
-    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
+    floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
     sources: SPEECH_OR_HELPER,
   },
   lock_manipulation: {
     label: 'Handled the lock or door',
     points: 30,
     cap: 30,
-    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
+    floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
+    uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
   },
   door_wedge_or_follow_in: {
     label: 'Wedged the door or tried to follow in',
     points: 40,
     cap: 40,
-    floor: 'helper_leads', // P6: Section 6.3 - confirmed forces helper-led handling
+    floor: 'helper_only', // P6: Section 6.3 - confirmed forces helper-only
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
+    uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
   },
   immediate_threat: {
     label: 'Made an immediate threat',
     points: 0,
     cap: null,
-    floor: 'helper_only', // Spec 6.3 Option A: threat → urgent human-led, not full emergency. Emergency is reserved for forced entry/assault/SOS.
+    floor: 'helper_urgent', // P6: Section 6.3 - confirmed forces helper-urgent (M4)
     sources: SPEECH_OR_HELPER,
-    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led
+    uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only
     minScore: 80,
   },
   forced_entry_or_assault: {
@@ -207,7 +218,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     cap: null,
     floor: 'emergency', // P6: Section 6.3 - confirmed triggers emergency
     sources: HUMAN_OR_SENSOR,
-    uncertainFloor: 'helper_leads', // P6: Section 6.3 - uncertain raises to helper-led with unconfirmed alert
+    uncertainFloor: 'helper_only', // P6: Section 6.3 - uncertain raises to helper-only with unconfirmed alert
     minScore: 100,
   },
 }
@@ -242,6 +253,10 @@ export interface Observation {
    * Never used in scoring; stripped when the observation is serialised without it.
    */
   _before?: { state: EvidenceState; source: Source }
+  /** P9: Helper resolved this event. It keeps its points but no longer sets a floor or minimum score. */
+  resolvedAt?: string
+  /** P9: Helper ID who resolved this event. */
+  resolvedBy?: string
 }
 
 /** P11: Interview state stamp - a separate type from Observation, no longer a workaround. */
@@ -348,6 +363,9 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
     if (o.retracted) return reject('uncertain', 'retracted_by_helper')
     if (o.state === 'unavailable') return reject('unavailable', 'evidence_unavailable')
 
+    // P9: Resolved events keep their points but don't set floors/minScore
+    const isResolved = !!o.resolvedAt
+
     if (o.state === 'uncertain') {
       if (rule.uncertainFloor) uncertainCodes.add(o.code)
       return reject('uncertain', 'marked_uncertain')
@@ -394,7 +412,8 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
 
     confirmed.add(o.code)
 
-    if (rule.minScore !== undefined) {
+    // P9: Resolved events don't set minScore
+    if (rule.minScore !== undefined && !isResolved) {
       minScore = Math.max(minScore, rule.minScore)
       ledger.push(entry('confirmed', 0))
       return
@@ -411,7 +430,19 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   })
 
   let minMode: ControlMode = 'ai_leads'
-  for (const b of confirmed) { const f = RISK_RULES[b].floor; if (f) minMode = maxMode(minMode, f) }
+  // P9: Resolved events keep their points but no longer set floors or minimum scores
+  const resolvedCodes = new Set<Behaviour>()
+  for (const o of observations) {
+    if (o.resolvedAt && o.state === 'confirmed') {
+      resolvedCodes.add(o.code)
+    }
+  }
+  for (const b of confirmed) {
+    // Skip resolved events for floor calculation
+    if (resolvedCodes.has(b)) continue
+    const f = RISK_RULES[b].floor
+    if (f) minMode = maxMode(minMode, f)
+  }
   // An event that is not yet confirmed still raises the mode when it is physical or a threat. It never lowers one.
   for (const b of uncertainCodes) { const f = RISK_RULES[b].uncertainFloor; if (f) minMode = maxMode(minMode, f) }
   for (const c of COMBO_FLOORS) if (c.all.every(b => confirmed.has(b))) minMode = maxMode(minMode, c.floor)

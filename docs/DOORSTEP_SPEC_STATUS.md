@@ -92,11 +92,40 @@ Timer placeholders remain until Section 5.3 values are confirmed.
 
 ## Section 6.3: minimum control modes
 
-Current floors (Option A, spec-literal interpretation):
-- `refuse_to_leave`, `lock_manipulation`, `door_wedge_or_follow_in`: `helper_leads`
-- `immediate_threat` (confirmed): `helper_only` floor + `alertUrgent`
-- `forced_entry_or_assault`: `emergency`
-- `COMBO_FLOORS` is empty
+**Implemented (P6): Six-mode mapping (M0 to M5)**
+
+Mapping:
+- M0 (`ai_leads`): score 0–19
+- M1 (`ai_assisted`): score 20–39
+- M2 (`helper_leads`): score 40–59
+- M3 (`helper_only`): score 60–79
+- M4 (`helper_urgent`): score 80–99
+- M5 (`emergency`): score 100
+
+Event floors (spec 6.3 table):
+- `pressure_after_boundary`, `purpose_contradiction`, `hide_from_helper`, `credential_request`: floor `ai_assisted` (M1)
+- `refuse_to_leave`, `lock_manipulation`, `door_wedge_or_follow_in`: floor `helper_only` (M3)
+- `immediate_threat`: floor `helper_urgent` (M4)
+- `forced_entry_or_assault`: floor `emergency` (M5)
+
+Uncertain floors:
+- `lock_manipulation`, `door_wedge_or_follow_in`, `immediate_threat`, `forced_entry_or_assault`: uncertain → `helper_only` (M3)
+
+Additional Section 6 features implemented:
+- P1–P3: M4 mode added, controller thresholds updated, takeover timer at M3+
+- P4: `modeCopy.ts` with MODE_LABEL and RESIDENT_SCREEN texts
+- P5: Emergency-only tools gating (including `emergency_guidance`)
+- P6: Safety and emergency_guidance talkback lines
+- P7: Interrogator behaviour by mode (M2 pressure_continues, M3+ safety line)
+- P8: Urgent alert at S_eff 80–99 (M4), not just for confirmed threats
+- P9: Helper resolve functionality (HELPER_RESOLVABLE, resolvedAt/resolvedBy fields)
+- P10: Resident-sourced observations protected from helper reject/resolve
+- P11: Resident screen wording using residentScreenFor
+- P12: Door cannot open at M1 or higher
+- P13: Resident not-safe/keep-closed cannot be overridden by helpers
+- P14: Helper notification with trigger and next step (HELPER_RESPONSE recommendations)
+- P15: Event-specific scripted responses (`eventResponses.ts`)
+- P17: Helper sees both S and S_eff with mode label
 
 ## Section 11: emergency path
 

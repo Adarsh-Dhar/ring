@@ -12,8 +12,9 @@
  */
 import {
   legacyLevel, observationsFromEvidence, scoreObservations, NOTE_ONLY_CATEGORIES, type InterviewState,
-  type Behaviour, type ControlMode, type LedgerEntry, type Observation,
+  type Behaviour, type ControlMode, type LedgerEntry, type Observation, BEHAVIOURS,
 } from '@/lib/doorstep/riskRules'
+import { MODE_LABEL } from '@/lib/doorstep/modeCopy'
 
 export const LEVELS = ['none', 'low', 'medium', 'high'] as const
 export type RiskLevel = (typeof LEVELS)[number]
@@ -85,6 +86,21 @@ export const ACTION_TEXT: Record<RiskLevel, string | null> = {
   high:   'Suggested: do not open the door yet. Contact the resident or a guardian and check who this is first.',
 }
 
+/** P14: Helper response recommendations from spec 6.3 table. */
+export const HELPER_RESPONSE: Record<string, string> = {
+  extra_knock: 'Knocking repeatedly. Ask visitor to wait or check on them.',
+  pressure_after_rule: 'Pressure after rules explained. Re-state the boundary and offer a safe alternative.',
+  pressure_after_boundary: 'Pressure after boundary stated. Reduce negotiation and move toward helper review.',
+  purpose_contradiction: 'Contradicted stated purpose. State the two quotes factually, without accusing.',
+  hide_from_helper: 'Tried to hide from helper. Refuse and request helper review.',
+  credential_request: 'Asked for credentials. Refuse and disclose nothing.',
+  refuse_to_leave: 'Refused to leave. Stop persuading, boundary message, follow resident safety plan.',
+  lock_manipulation: 'Handled lock or door. Stop routine processing, boundary message.',
+  door_wedge_or_follow_in: 'Wedged door or tried to follow in. Stop routine processing, safety script.',
+  immediate_threat: 'Made immediate threat. Boundary statement and safety scripts only.',
+  forced_entry_or_assault: 'Forced entry or assault. Emergency protocol.',
+}
+
 export interface Evidence { category: RiskCategory; quote: string }
 /** `level` is accepted for old model output but IGNORED. Only the evidence counts. */
 export interface JudgeResult { level?: RiskLevel; evidence: Evidence[]; rationale: string }
@@ -106,6 +122,10 @@ export interface Assessment {
   ledger: LedgerEntry[]
   /** Minimum control mode set by serious events. The score alone can never lower it. */
   minMode: ControlMode
+  /** P17: Mode label (M0 to M5) for display. */
+  modeLabel?: string
+  /** P14: Helper response recommendation (trigger and next step). */
+  helperResponse?: string
   /** Categories shown to the helper as information only. They add no points. */
   notes: string[]
 }
@@ -184,10 +204,20 @@ function assemble(a: {
   const risk = scoreObservations(allObs, { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
   const all = [...a.cats]
+
+  // P14: Get helper response from the highest-priority confirmed observation
+  const confirmedBehaviours = allObs.filter(o => o.state === 'confirmed').map(o => o.code)
+  let helperResponse: string | undefined
+  if (confirmedBehaviours.length > 0) {
+    // Use the first confirmed behaviour's response (could prioritize by severity if needed)
+    const highestCode = confirmedBehaviours[0]
+    helperResponse = HELPER_RESPONSE[highestCode]
+  }
+
   return {
     level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), observations: allObs, evidence: a.evidence, rationale: a.rationale,
     action: ACTION_TEXT[level], source: a.source, assessedAt: new Date().toISOString(),
-    score: risk.score, ledger: risk.ledger, minMode: risk.minMode,
+    score: risk.score, ledger: risk.ledger, minMode: risk.minMode, modeLabel: MODE_LABEL[risk.minMode], helperResponse,
     notes: all.filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)),
   }
 }
