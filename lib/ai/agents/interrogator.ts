@@ -90,6 +90,8 @@ async function gateOrAsk(householdId: string, caseId: string, tool: string, o: {
   return g
 }
 
+export { gateOrAsk }
+
 /** Which fixed talkback lines the AI may speak alone right now. Safety lines (close, holding script) are always true. */
 export async function allowedLines(householdId: string, caseId: string): Promise<Record<LineId, boolean>> {
   const out = {} as Record<LineId, boolean>

@@ -23,6 +23,3 @@ export function backupTimeoutSec(
   const t = activeTimer(timersFor(eff, minMode), { riskDecisionNeeded: riskDecisionNeeded(eff) })
   return t && t.seconds !== null ? Math.min(t.seconds, householdSec) : householdSec
 }
-
-/** Re-export for backward compatibility (deprecated: use backupTimeoutSec instead). */
-export const escalationConfigFor = backupTimeoutSec
