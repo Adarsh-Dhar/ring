@@ -8,7 +8,7 @@
  * The knock window (30 s from the AI starting to respond) and the cap of 5 live here.
  */
 import { getDb } from '@/lib/db/client'
-import { scoreObservations, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
+import { scoreObservations, modeRank, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
 
@@ -111,43 +111,32 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<voi
     interviewState: newStored.interviewState,
   })
 
-  // P9: Shorten deadline when control mode rises (compare-and-set to avoid race conditions)
-  const prevMode = (c as any).controlMode as ControlMode | null
-  const newMode = risk.minMode
-  let newDeadline: number | undefined
-  if (prevMode && newMode !== prevMode && isHigherMode(newMode, prevMode)) {
-    // Mode rose: shorten the deadline proportionally
-    const current = await getDb().case.findUnique({
-      where: { id: caseId },
-      select: { deadlineAt: true },
-    })
-    if (current) {
-      const remainingMs = current.deadlineAt.getTime() - Date.now()
-      // Emergency gets the full 30-minute window, otherwise reduce by 50%
-      const reductionFactor = newMode === 'emergency' ? 1 : 0.5
-      newDeadline = Date.now() + Math.floor(remainingMs * reductionFactor)
-    }
-  }
-
-  // Save everything in one update.
-  const updateData: any = {
-    riskScore: risk.score,
-    riskLedger: risk.ledger as any,
-    controlMode: risk.minMode,
-    riskLevel: risk.score >= 80 ? 'high' : risk.score >= 50 ? 'medium' : risk.score >= 20 ? 'low' : 'none',
-    riskObservations: newStored as any,
-  }
-  if (newDeadline) {
-    updateData.deadlineAt = new Date(newDeadline)
-  }
   await getDb().case.update({
     where: { id: caseId },
-    data: updateData,
+    data: {
+      riskScore: risk.score,
+      riskLedger: risk.ledger as any,
+      controlMode: risk.minMode,
+      riskLevel: risk.score >= 80 ? 'high' : risk.score >= 50 ? 'medium' : risk.score >= 20 ? 'low' : 'none',
+      riskObservations: newStored as any,
+    },
   })
-}
 
-/** Helper to check if new mode is higher (more urgent) than previous mode */
-function isHigherMode(newMode: ControlMode, prevMode: ControlMode): boolean {
-  const modeOrder: Record<ControlMode, number> = { ai_leads: 0, helper_leads: 1, emergency: 2 }
-  return modeOrder[newMode] > modeOrder[prevMode]
+  // P9: Shorten deadline when control mode rises (compare-and-set to avoid race conditions)
+  const prevMode = (c.controlMode as ControlMode | null) ?? null
+  const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
+
+  if (rose) {
+    const now = Date.now()
+    const remaining = Math.max(0, c.deadlineAt.getTime() - now)
+    // PLACEHOLDER until Section 5.3: emergency is due now, other rises halve what is left.
+    const target = risk.minMode === 'emergency' ? now : now + Math.floor(remaining * 0.5)
+    if (target < c.deadlineAt.getTime()) {
+      // Compare-and-set: only write if nobody changed the deadline since we read it.
+      await getDb().case.updateMany({
+        where: { id: caseId, deadlineAt: c.deadlineAt },
+        data: { deadlineAt: new Date(target) },
+      })
+    }
+  }
 }

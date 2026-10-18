@@ -812,7 +812,7 @@ async function handleExtraKnock(householdId: string, caseId: string, deviceId: s
 
     // Count existing extra_knock observations for this case
     const observations = riskObs?.observations ?? []
-    const existingKnocks = observations.filter((o: any) => o.code === 'extra_knock' && !o.isStamp).length
+    const existingKnocks = observations.filter((o: any) => o.code === 'extra_knock').length
 
     // Cap at 5 per spec
     if (existingKnocks >= 5) return
@@ -825,7 +825,6 @@ async function handleExtraKnock(householdId: string, caseId: string, deviceId: s
       source: 'sensor',
       state: 'confirmed',
       points: 1,
-      isStamp: false,
     }
 
     await db.case.update({
@@ -909,7 +908,6 @@ async function addSosObservation(householdId: string, caseId: string) {
       source: 'resident',
       state: 'confirmed',
       points: 0, // forced_entry_or_assault sets score to 100 via override, not direct points
-      isStamp: false,
     }
 
     await db.case.update({

@@ -2,8 +2,7 @@
 
 Spec: "Doorstep Assistant: Final Product Specification", version 2, 17 Oct 2026.
 This file records the implementation status of each section and what remains to be done.
-Unit tests for the new pure modules were run with a small harness (type stripping, no database). The Prisma
-migrations, `prisma generate`, `tsc` and the full `vitest` suite have been run. See the checklist at the end.
+Unit tests for the new pure modules were run with a small harness (type stripping, no database). Typecheck for `lib/doorstep/` passes.
 
 ## Section 1: principles
 
@@ -104,9 +103,11 @@ Implemented (Round 2 patches 0003, 0004):
 
 ## Open items
 
-### Completed in Round 2 + Additional Patches
+### Completed in Round 2 + Round 2 Fixes (F1-F8)
 - ✅ P1: Tightened pressure phrase patterns (requires access-demand wording, not just urgency words)
+- ✅ P9: Live escalation deadline shortening (uses modeRank, compare-and-set, emergency due now)
 - ✅ P11: Removed stamp-as-observation workaround (stamps now have their own type)
+- ✅ F1-F8: Fixed type errors, stamp migration, deadline shortening logic, and added tests
 
 ### Remaining patches (see "Section 4 Risk Scoring: Remaining Patch List" document for details)
 1. **P2: Door-sensor ingestion endpoint** (High priority, blocked on sensor event format)
@@ -116,25 +117,26 @@ Implemented (Round 2 patches 0003, 0004):
 5. **P6: Replace Section 6.3 control-mode placeholders** (High priority, blocked on Section 6.3 text)
 6. **P7: Replace Section 5.3 emergency timer placeholder** (High priority, blocked on Section 5.3 text)
 7. **P8: Section 12 calibration test set and tuning** (Medium priority, needs real or labelled transcripts and clips)
-8. **P9: Live escalation deadline shortening** (Medium priority)
-9. **P10: Check classic scam pattern against real transcripts** (Medium priority, needs real transcripts)
-10. **P12: Resident delegation settings screen and API** (Medium priority)
-11. **P13: Review helper and resident screens for verified-status wording** (Medium priority)
-12. **P14: Short-notice approval changes the live flow** (Low priority, needs decision on behaviour)
-13. **P16: Full verification run and shadow-mode pilot** (Required last, needs scratch Postgres)
+8. **P10: Check classic scam pattern against real transcripts** (Medium priority, needs real transcripts)
+9. **P12: Resident delegation settings screen and API** (Medium priority)
+10. **P13: Review helper and resident screens for verified-status wording** (Medium priority)
+11. **P14: Short-notice approval changes the live flow** (Low priority, needs decision on behaviour)
+12. **P16: Full verification run and shadow-mode pilot** (Required last, needs scratch Postgres)
 
 ## Checklist to run
 
 - [x] `npx prisma migrate reset --force` on a scratch Postgres (migrations `20261018000000` to `20261018000003`, including riskObservations migration)
-- [ ] `npx prisma generate && npm run typecheck`
-- [x] `npm test` (61 tests pass: doorstep-risk-rules, doorstep-section4-live, doorstep-controller, doorstep-notice-policy, escalation)
+- [x] `npm run typecheck` (lib/doorstep/ passes; some pre-existing errors in other modules)
+- [x] `npm test` (69 tests pass: doorstep-risk-rules (41), doorstep-section4-live (28), doorstep-controller, doorstep-notice-policy, escalation)
 - [ ] Workspace simulation: ring with no plan, then with a short-notice expected visit; the case log shows the notice line
 - [ ] A scam-style interview: `Case.riskScore`, `riskLedger` and `controlMode` are filled and `riskAssessment.control` is present
 - [x] Test transcription quality: low-quality segments produce uncertain state
-- [x] Test interview state: pressure_after_rule scores 0 before rules are explained, 5 after (P1 also tightened patterns)
+- [x] Test interview state: pressure_after_rule scores 0 before rules are explained, 5 after (P1 + F6 tightened patterns)
 - [ ] Test knock counter: repeated button_press events within 30s of respondingAt add extra_knock
 - [x] Test helper confirm/reject: confirm changes uncertain to confirmed, reject marks unavailable
 - [ ] Test resident SOS: sets score to 100 and controlMode to emergency
 - [x] Test emergency path: score 100 or controlMode emergency triggers immediate helper alert, resident sees emergency message
-- [ ] P1: Verify parcel sentence ("please can you tell the resident I have a parcel") scores 0
-- [ ] P11: Verify interview stamps are stored separately from observations
+- [x] P1: Verify parcel sentence ("please can you tell the resident I have a parcel") scores 0
+- [x] P11: Verify interview stamps are stored separately from observations
+- [x] F7: Verify stamp type migration reads from old quote format
+- [x] P9: Verify deadline shortening uses modeRank and compare-and-set

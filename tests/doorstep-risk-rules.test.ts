@@ -325,4 +325,39 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(80)
     expect(r.minMode).toBe('emergency')
   })
+
+  // F7: Additional tests for Round 2 fixes
+  it('F7: pressure_after_boundary scores 0 before boundary is stated', () => {
+    const interviewState: InterviewState = {}
+    const r = scoreWithTranscript([makeObs('pressure_after_boundary', 'transcript', 'let me in')], 'let me in', interviewState)
+    expect(r.score).toBe(0)
+  })
+
+  it('F7: pressure_after_boundary scores +1 each after boundary, capped at 10', () => {
+    const interviewState: InterviewState = { boundaryStatedAt: new Date().toISOString() }
+    const obs = [
+      makeObs('pressure_after_boundary', 'transcript', 'let me in'),
+      makeObs('pressure_after_boundary', 'transcript', 'open up'),
+      makeObs('pressure_after_boundary', 'transcript', 'let me inside'),
+      makeObs('pressure_after_boundary', 'transcript', 'open the door'),
+      makeObs('pressure_after_boundary', 'transcript', 'let me through'),
+      makeObs('pressure_after_boundary', 'transcript', "i'm not going to wait"),
+      makeObs('pressure_after_boundary', 'transcript', "i won't wait"),
+      makeObs('pressure_after_boundary', 'transcript', 'let me in'),
+      makeObs('pressure_after_boundary', 'transcript', 'open up'),
+      makeObs('pressure_after_boundary', 'transcript', 'let me inside'),
+      makeObs('pressure_after_boundary', 'transcript', 'open the door'),
+    ]
+    // Use unique timestamps to avoid deduplication
+    obs.forEach((o, i) => o.at = new Date(Date.now() + i * 1000).toISOString())
+    const r = scoreWithTranscript(obs, 'let me in open up let me inside open the door let me through i\'m not going to wait i won\'t wait let me in open up let me inside open the door', interviewState)
+    expect(r.score).toBeGreaterThanOrEqual(7) // At least 7 match the pattern
+    expect(r.score).toBeLessThanOrEqual(10) // Capped at 10
+  })
+
+  it('F7: "can you open it for me" scores 0 (no access demand)', () => {
+    const interviewState: InterviewState = { rulesExplainedAt: new Date().toISOString() }
+    const r = scoreWithTranscript([makeObs('pressure_after_rule', 'transcript', 'can you open it for me')], 'can you open it for me', interviewState)
+    expect(r.score).toBe(0)
+  })
 })

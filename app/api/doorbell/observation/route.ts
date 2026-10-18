@@ -4,7 +4,6 @@ import { getDb } from '@/lib/db/client'
 import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
 import { scoreObservations } from '@/lib/doorstep/riskRules'
 import { readStored } from '@/lib/doorstep/caseRisk'
-import { triggerEmergency } from '@/lib/doorbell/store'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -67,16 +66,11 @@ export async function POST(req: NextRequest) {
     // Reload the case to get the new score and mode
     const updated = await db.case.findUnique({
       where: { id: caseId },
-      select: { riskScore: true, controlMode: true, householdId: true },
+      select: { riskScore: true, controlMode: true },
     })
 
     if (!updated) {
       return fail('Case not found after update', 404)
-    }
-
-    // Check if this action raised the case to emergency
-    if (updated.controlMode === 'emergency' || updated.riskScore === 100) {
-      await triggerEmergency(updated.householdId, caseId)
     }
 
     return NextResponse.json({ ok: true, riskScore: updated.riskScore, controlMode: updated.controlMode })

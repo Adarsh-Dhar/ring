@@ -5,7 +5,7 @@
  * Round 2 patches: #2 (model events never scored), #13 (reject uses wrong index)
  * P11: stamps are now their own type, not observations
  */
-import type { Observation, ControlMode, RiskScore, LedgerEntry, InterviewStamp } from './riskRules'
+import type { Observation, ControlMode, RiskScore, LedgerEntry, InterviewStamp, InterviewState } from './riskRules'
 
 /**
  * The structure stored in Case.riskObservations (JSON column).
@@ -42,14 +42,20 @@ export function readStored(raw: unknown): StoredRisk {
   if (Array.isArray(r)) return { observations: [], stamps: [], interviewState: {}, corrections: [] } // Old ledger format
   const obs = Array.isArray(r.observations) ? r.observations as Observation[] : []
   // P11: Handle old format where stamps were stored as observations with isStamp
+  const OLD_STAMP_QUOTE = /^Interview state:\s*(\w+)$/
+  const STAMP_TYPES = new Set(['respondingAt', 'rulesExplainedAt', 'boundaryStatedAt', 'askedToLeaveAt'])
   const stamps: InterviewStamp[] = []
   const filteredObs: Observation[] = []
   for (const o of obs) {
     if ((o as any).isStamp === true) {
-      stamps.push({ type: (o as any).type || 'respondingAt', at: o.at, isStamp: true })
-    } else {
-      filteredObs.push(o)
+      const parsed = OLD_STAMP_QUOTE.exec(o.quotes?.[0] ?? '')?.[1]
+      const type = (o as any).type ?? parsed
+      if (type && STAMP_TYPES.has(type)) {
+        stamps.push({ type: type as 'respondingAt' | 'rulesExplainedAt' | 'boundaryStatedAt' | 'askedToLeaveAt', at: o.at, isStamp: true })
+      }
+      continue
     }
+    filteredObs.push(o)
   }
   const interviewState = typeof r.interviewState === 'object' && r.interviewState !== null ? r.interviewState as Record<string, string> : {}
   const corrections = Array.isArray(r.corrections) ? r.corrections as Correction[] : []
@@ -99,6 +105,7 @@ export function applyHelperAction(stored: StoredRisk, idx: number, action: 'conf
 
   return {
     observations: obs,
+    stamps: stored.stamps,
     interviewState: stored.interviewState,
     corrections: [...stored.corrections, { idx, action, at: new Date().toISOString() }],
   }

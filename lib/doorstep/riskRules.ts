@@ -287,10 +287,10 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   refuse_to_leave: /\b(not|won'?t|never|refuse[sd]?)\b[^.!?]{0,20}\b(leave|leaving|go|going|move|moving)\b|\brefuse[sd]?\b/i,
   immediate_threat: /\b(hurt|kill|stab|shoot|beat|smash|burn|harm|break (in|down|the|your)|(you'?ll|you will) (regret|pay))\b/i,
   hide_from_helper: /\b(don'?t|do not|no need to|without|never)\b[^.!?]{0,30}\b(tell|call|ask|involve|phone|helper|carer|family|son|daughter)\b|\b(secret|between us|just us)\b/i,
-  // P1: Tightened pattern - requires access-demand wording, not just urgency words
-  pressure_after_rule: /\b(let me (in|inside|through)|open (it|up|the door))\b/i,
-  // P1: Tightened pattern - requires access-demand wording, not just urgency words
-  pressure_after_boundary: /\b(let me (in|inside|through)|open (it|up|the door)|i'?m not going to wait)\b/i,
+  // F6: Tightened pattern - requires access-demand wording, not just urgency words
+  pressure_after_rule: /\b(let me (in|inside|through)|open up|open the door)\b/i,
+  // F6: Tightened pattern - requires access-demand wording, not just urgency words
+  pressure_after_boundary: /\b(let me (in|inside|through)|open up|open the door|i'?m not (going )?to wait|i won'?t wait)\b/i,
 }
 
 export function phraseMatches(code: Behaviour, quote: string): boolean {
@@ -315,9 +315,6 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   const interviewState = ctx.interviewState ?? {}
 
   observations.forEach((o, idx) => {
-    // Interview stamps are bookkeeping, not evidence. They never appear in the ledger.
-    if (o.isStamp) return
-
     const quote = o.quotes.join(' | ')
     const entry = (state: EvidenceState, points: number, debug?: Record<string, unknown>): LedgerEntry => ({
       idx, code: o.code, at: o.at, quote, source: o.source, state, points, debug: { ...o.debug, ...debug },

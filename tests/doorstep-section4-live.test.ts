@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { scoreObservations, observationsFromEvidence, phraseMatches, type Observation, type InterviewState, type InterviewStamp } from '@/lib/doorstep/riskRules'
+import { scoreObservations, observationsFromEvidence, phraseMatches, modeRank, type Observation, type InterviewState, type InterviewStamp } from '@/lib/doorstep/riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk } from '@/lib/doorstep/caseRisk'
 
 describe('Round 2 patch tests (Section 4 live flow)', () => {
@@ -135,6 +135,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
   it('#3: mergeFresh drops non-touched model events', () => {
     const stored: StoredRisk = {
       observations: [makeObs('credential_request', 'transcript', 'PIN')],
+      stamps: [],
       interviewState: {},
       corrections: [],
     }
@@ -241,7 +242,7 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     const oldFormat = {
       observations: [
         makeObs('credential_request', 'transcript', 'PIN'),
-        { ...makeObs('extra_knock', 'transcript', ''), isStamp: true },
+        { ...makeObs('extra_knock', 'transcript', 'Interview state: respondingAt'), isStamp: true },
       ],
       interviewState: {},
       corrections: [],
@@ -250,5 +251,70 @@ describe('Round 2 patch tests (Section 4 live flow)', () => {
     expect(stored.observations.length).toBe(1) // Only real observation
     expect(stored.stamps.length).toBe(1) // Stamp migrated
     expect(stored.stamps[0].isStamp).toBe(true)
+    expect(stored.stamps[0].type).toBe('respondingAt')
+  })
+
+  // F7: Additional tests for Round 2 fixes
+  it('F7: readStored migrates two old stamps of different types to correct types', () => {
+    const oldFormat = {
+      observations: [
+        makeObs('credential_request', 'transcript', 'PIN'),
+        { ...makeObs('extra_knock', 'transcript', 'Interview state: respondingAt'), isStamp: true },
+        { ...makeObs('extra_knock', 'transcript', 'Interview state: rulesExplainedAt'), isStamp: true },
+      ],
+      interviewState: {},
+      corrections: [],
+    }
+    const stored = readStored(oldFormat)
+    expect(stored.observations.length).toBe(1)
+    expect(stored.stamps.length).toBe(2)
+    expect(stored.stamps[0].type).toBe('respondingAt')
+    expect(stored.stamps[1].type).toBe('rulesExplainedAt')
+  })
+
+  it('F7: old stamp with unreadable quote is dropped', () => {
+    const oldFormat = {
+      observations: [
+        makeObs('credential_request', 'transcript', 'PIN'),
+        { ...makeObs('extra_knock', 'transcript', 'not a stamp'), isStamp: true },
+      ],
+      interviewState: {},
+      corrections: [],
+    }
+    const stored = readStored(oldFormat)
+    expect(stored.observations.length).toBe(1)
+    expect(stored.stamps.length).toBe(0) // Unreadable stamp dropped
+  })
+
+  it('F7: score is the same before and after migrating old-format data', () => {
+    const oldFormat = {
+      observations: [
+        makeObs('credential_request', 'transcript', 'PIN'),
+        { ...makeObs('extra_knock', 'transcript', 'Interview state: respondingAt'), isStamp: true },
+      ],
+      interviewState: {},
+      corrections: [],
+    }
+    const stored = readStored(oldFormat)
+    const riskBefore = scoreObservations([
+      makeObs('credential_request', 'transcript', 'PIN'),
+    ], { transcript: 'PIN' })
+    const riskAfter = scoreObservations(stored.observations, { transcript: 'PIN' })
+    expect(riskAfter.score).toBe(riskBefore.score)
+  })
+
+  // F7: P9 deadline shortening tests (placeholder - needs database mocking)
+  it('F7: modeRank handles all control modes', () => {
+    expect(modeRank('ai_leads')).toBe(0)
+    expect(modeRank('ai_assisted')).toBe(1)
+    expect(modeRank('helper_leads')).toBe(2)
+    expect(modeRank('helper_only')).toBe(3)
+    expect(modeRank('emergency')).toBe(4)
+  })
+
+  it('F7: modeRank correctly compares modes', () => {
+    expect(modeRank('helper_only') > modeRank('ai_leads')).toBe(true)
+    expect(modeRank('emergency') > modeRank('helper_leads')).toBe(true)
+    expect(modeRank('ai_assisted') > modeRank('ai_leads')).toBe(true)
   })
 })
