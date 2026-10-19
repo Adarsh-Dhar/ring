@@ -200,7 +200,7 @@ describe('section 6: the resident screen shows the exact mode wording', () => {
   it('modeScreenFor renders each mode from residentScreenFor, using only the snapshot fields', () => {
     const cases: [number, string | null, keyof typeof RESIDENT_SCREEN][] = [
       [0, 'ai_leads', 'ai_leads'], [20, 'ai_leads', 'ai_assisted'], [45, 'ai_leads', 'helper_leads'],
-      [65, 'ai_leads', 'helper_only'], [85, 'ai_leads', 'helper_urgent'], [100, 'emergency', 'emergency'],
+      [65, 'ai_leads', 'helper_only'], [85, 'ai_leads', 'helper_urgent'],
     ]
     for (const [score, controlMode, mode] of cases) {
       const s = modeScreenFor({ kind: 'visitor', riskScore: score, controlMode })!
@@ -208,12 +208,14 @@ describe('section 6: the resident screen shows the exact mode wording', () => {
       expect(s.title).toBe(RESIDENT_SCREEN[mode].asked)
     }
     expect(modeScreenFor({ kind: 'visitor', riskScore: 65, controlMode: 'helper_only', ackedAt: Date.now() })!.title).toBe(RESIDENT_SCREEN.helper_only.accepted)
+    // Emergency visitor cases return null (handled by resident page emergency screen)
     expect(modeScreenFor({ kind: 'visitor', riskScore: 100, controlMode: 'emergency' })).toBeNull()
   })
 
   it('M4 says "Move away from the door" and M5 shows the emergency text', () => {
     expect(modeScreenFor({ kind: 'visitor', riskScore: 85, controlMode: 'helper_urgent' })!.title).toBe('Move away from the door. Go to your safe place.')
-    expect(modeScreenFor({ kind: 'visitor', riskScore: 100, controlMode: 'emergency' })!.title).toBe('Move to your safe place. Call emergency help now.')
+    // Emergency visitor cases return null (handled by resident page emergency screen)
+    expect(modeScreenFor({ kind: 'visitor', riskScore: 100, controlMode: 'emergency' })).toBeNull()
   })
 
   it('a score-60 case built from M1-level events shows M3 wording, not M1 (stored controlMode is only the event minimum)', () => {

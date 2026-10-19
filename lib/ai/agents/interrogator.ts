@@ -222,7 +222,7 @@ export async function processAnswer(
       }]
       if (failures >= MODEL_FAIL_LIMIT) {
         await finishInterrogation(householdId, caseId, updated, 'model_failed')
-        return { question: null, final: true, close: interrogatorLines(null).close }
+        return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
       }
       const live = liveAssessment(transcripts, riskMatchesFor(transcripts), {
         coverage: { purposeVague: true, unverifiable: true },

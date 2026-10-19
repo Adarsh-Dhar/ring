@@ -17,17 +17,17 @@ export const DEADLINE_POLICY = 'earliest_wins' as const
 export async function shortenDeadline(householdId: string, caseId: string, targetMs: number, kind: string, reason: string): Promise<boolean> {
   const db = getDb()
   for (let attempt = 0; attempt < 3; attempt++) {
-    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true } })
+    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true, timerDeadlines: true } })
     if (!row || row.status !== 'waiting') return false
     const current = row.deadlineAt.getTime()
     if (!(targetMs < current)) return false
-    const r = await db.case.updateMany({ where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt }, data: { deadlineAt: new Date(targetMs), deadlineKind: kind } })
+    const r = await db.case.updateMany({ where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt }, data: { deadlineAt: new Date(targetMs), deadlineKind: kind, timerDeadlines: { ...(row.timerDeadlines ?? {}), [kind]: targetMs } } })
     if (r.count === 1) {
       try {
         const { syncCaseDeadline } = await import('@/lib/doorbell/store')
         if (typeof syncCaseDeadline === 'function') syncCaseDeadline(householdId, caseId, targetMs)
       } catch { /* cache sync is best effort; the database value is authoritative */ }
-      await writeAudit(caseId, createAuditEvent('system', 'deadline_shortened', { from: current, to: targetMs, reason, policy: DEADLINE_POLICY })).catch(() => {})
+      await writeAudit(caseId, createAuditEvent('system', 'deadline_shortened', { from: current, to: targetMs, reason, policy: DEADLINE_POLICY, kind })).catch(() => {})
       return true
     }
   }

@@ -41,6 +41,8 @@ const STYLE: Record<ControlMode, { icon: string; bg: string; alarm: boolean; cal
 export function modeScreenFor(c: ModeScreenCase | null | undefined): ModeScreen | null {
   const mode = visitorModeOf(c)
   if (!mode) return null
+  // Emergency visitor cases (S_eff 100) are handled by the resident page's emergency screen, not modeScreenFor
+  if (mode === 'emergency') return null
   return { mode, title: residentScreenFor(mode, !!c!.ackedAt), ...STYLE[mode] }
 }
 

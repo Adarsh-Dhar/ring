@@ -141,6 +141,7 @@ async function audit(caseId: string, detail: Record<string, unknown>) {
 
 export async function dispatchAiAction(i: DispatchInput): Promise<DispatchResult> {
   const tool = i.line ? LINE_TOOL[i.line] : i.tool
+  const line = i.line ?? null
   if (!tool) {
     const r: DispatchResult = { allowed: false, decision: 'deny', reason: 'unknown_tool', tool: String(i.tool ?? ''), line: null, text: null }
     await audit(i.caseId, { tool: r.tool, decision: 'blocked', reason: r.reason })
@@ -148,7 +149,6 @@ export async function dispatchAiAction(i: DispatchInput): Promise<DispatchResult
   }
 
   const g = await gateOrAsk(i.householdId, i.caseId, tool, { sEff: i.sEff, decision: i.decision, text: i.text ?? (line ? interrogatorLines(i.residentName)[line] : undefined) })
-  const line = i.line ?? null
   // Hand a reserved approval back when the action does not go out, so a failure never burns it.
   const giveBack = async () => {
     if (!g.approvalId) return

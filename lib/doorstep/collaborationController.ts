@@ -59,16 +59,33 @@ export interface Timers {
   takeoverSec: number | null
   /** Emergency has no timer: primary and backup are alerted together. */
   emergency: null
+  /** Which timer is governing the deadline (if known) */
+  kind?: 'household' | 'approval' | 'risk_decision' | 'takeover'
 }
 
 export function timersFor(sEff: number, minMode?: ControlMode | null, approvalSec?: number): Timers {
   const s = clampScore(sEff)
   const helperLed = s >= 60 || modeRank(minMode ?? 'ai_leads') >= modeRank('helper_only')
+  const riskDecisionSec = s >= 1 && s <= 99 ? RISK_TIMER_BASE - s : null
+  const takeoverSec = helperLed && s < 100 ? Math.min(RISK_TIMER_BASE - s, TAKEOVER_CAP_SECONDS) : null
+  const approvalSecVal = Number.isFinite(approvalSec) && approvalSec && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS
+  
+  // Determine which timer kind is governing (shortest non-null wins)
+  let kind: 'household' | 'approval' | 'risk_decision' | 'takeover' | undefined
+  const seconds = [approvalSecVal, riskDecisionSec, takeoverSec].filter((x): x is number => x !== null)
+  if (seconds.length > 0) {
+    const min = Math.min(...seconds)
+    if (min === approvalSecVal) kind = 'approval'
+    else if (min === riskDecisionSec) kind = 'risk_decision'
+    else if (min === takeoverSec) kind = 'takeover'
+  }
+  
   return {
-    approvalSec: Number.isFinite(approvalSec) && approvalSec && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS,
-    riskDecisionSec: s >= 1 && s <= 99 ? RISK_TIMER_BASE - s : null,
-    takeoverSec: helperLed && s < 100 ? Math.min(RISK_TIMER_BASE - s, TAKEOVER_CAP_SECONDS) : null,
+    approvalSec: approvalSecVal,
+    riskDecisionSec,
+    takeoverSec,
     emergency: null,
+    kind,
   }
 }
 
@@ -84,7 +101,8 @@ export function activeTimer(
   if (ctx.needsApproval) c.push({ kind: 'approval', seconds: t.approvalSec })
   if (t.takeoverSec !== null) c.push({ kind: 'takeover', seconds: t.takeoverSec })
   if (ctx.riskDecisionNeeded && t.riskDecisionSec !== null) c.push({ kind: 'risk_decision', seconds: t.riskDecisionSec })
-  return c.length ? c.reduce((a, b) => (b.seconds < a.seconds ? b : a)) : null
+  if (c.length === 0) return null
+  return c.reduce((a, b) => (b.seconds < a.seconds ? b : a))
 }
 
 /** Spec 5.3: a helper decision is needed because of the score once the cheapest routine action no longer fits the budget.

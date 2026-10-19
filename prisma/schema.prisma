@@ -187,6 +187,8 @@ model Case {
   createdAt            DateTime  @default(now())
   helperIndex          Int       @default(0)
   deadlineAt           DateTime
+  deadlineKind         String?                   // household | approval | risk_decision | takeover
+  timerDeadlines       Json?                     // { approval?: ms, risk_decision?: ms, takeover?: ms }
   status               String    @default("waiting")
   answer               String?
   answeredBy           String?
