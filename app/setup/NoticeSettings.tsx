@@ -57,6 +57,9 @@ export default function NoticeSettings() {
       <label className="block text-sm">Approval timer (seconds, 15 to 900)
         <input className={`${input} ml-2 w-24`} inputMode="numeric" value={s.approvalTimerSec} onChange={e => setS({ ...s, approvalTimerSec: Number(e.target.value) })} />
       </label>
+      <label className="block text-sm">Retry an unanswered approval every (seconds, 30 to 3600)
+        <input className={`${input} ml-2 w-24`} inputMode="numeric" value={s.approvalRetrySec} onChange={e => setS({ ...s, approvalRetrySec: Number(e.target.value) })} />
+      </label>
       <button className={btn} disabled={busy} onClick={save}>Save</button>
       {msg && <p className="text-sm text-slate-300">{msg}</p>}
     </div>

@@ -8,7 +8,7 @@ import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, up
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
-import { evaluateNotice, parseNoticeSettings, type NoticeStatus } from '../doorstep/noticePolicy'
+import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus } from '../doorstep/noticePolicy'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
 import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
@@ -110,6 +110,10 @@ export interface DoorCase {
   /** Spec 4.3: set when an uncertain forced_entry_or_assault was observed (camera description alone).
    *  Used by the resident view to show the keep-closed message before confirmation arrives. */
   unconfirmedAlertedAt?: number | null
+  /** Section 7: Helper requests for this case (sent, delivered, acked, accepted, declined, timed_out) */
+  helperRequests?: { id: string; kind: string; state: string; membershipId: string; createdAt: number }[]
+  /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed) */
+  pendingActions?: { id: string; tool: string; state: string; approvedBy?: string; createdAt: number }[]
 }
 
 /** Match result from matchPlanned() */
@@ -358,6 +362,22 @@ async function refreshCasesFromDB(
     riskScore: row.riskScore, // P11: Include for emergency detection
     controlMode: row.controlMode, // P11: Include for emergency detection
     unconfirmedAlertedAt: (row as any).unconfirmedAlertedAt ? new Date((row as any).unconfirmedAlertedAt).getTime() : null,
+    // Section 7: Include helper requests
+    helperRequests: (row as any).helperRequests?.map((hr: any) => ({
+      id: hr.id,
+      kind: hr.kind,
+      state: hr.state,
+      membershipId: hr.membershipId,
+      createdAt: hr.createdAt.getTime(),
+    })) || [],
+    // Section 7: Include pending actions from DB
+    pendingActions: ((row as any).pendingActions as any)?.map((pa: any) => ({
+      id: pa.id,
+      tool: pa.tool,
+      state: pa.state,
+      approvedBy: pa.approvedBy,
+      createdAt: pa.createdAt.getTime(),
+    })) || [],
   }));
 }
 
@@ -662,6 +682,9 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
         base.checkCodeEndsAt = w.endsAt
       }
     }
+    // Section 7: Don't expose helper requests/pending actions to resident view
+    delete base.helperRequests
+    delete base.pendingActions
     return base
   })() : null
 
@@ -798,7 +821,7 @@ async function openCase(
   }
 
   // Section 7: Store approval retry interval for later use
-  ;(c as any).approvalRetrySec = household.approvalRetrySec || 300
+  ;(c as any).approvalRetrySec = parseNoticeSettings(household).approvalRetrySec
 
   addLog(c, note)
   if (notice.status === 'short_notice') addLog(c, notice.reason)
@@ -1446,8 +1469,20 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         }
         return
       }
+      if (step.kind === 'emergency') {
+        // Spec 7.2 emergency: every contact is alerted in parallel, exactly once (database claim inside alertEmergency).
+        await alertEmergency(householdId, c.id)
+        return
+      }
       if (step.kind === 'exhausted') {
-        smsAll({ householdId }, `Doorbell: nobody answered for ${residentName}. Please call them now.`, residentName, true, c.id)
+        // Spec 7.2 step 4: nobody accepted. Alert every configured contact together (push and SMS in parallel) and
+        // wait for the sends so a failure lands in the case log instead of disappearing.
+        const exhaustedMode = ((c as any).effectiveMode || (c as any).controlMode) as string | undefined
+        const helperLed = ['helper_only', 'helper_urgent', 'emergency'].includes(exhaustedMode || '')
+        const body = helperLed
+          ? `URGENT: nobody has answered for ${residentName}'s door and the case needs a helper. Do not open the door. Check the app or call them now.`
+          : `Doorbell: nobody answered for ${residentName}. The door stays closed. Please call them now.`
+        await smsAll({ householdId }, body, residentName, true, c.id)
         return
       }
       const to = step.toId ? await getMembership(step.toId) : null
@@ -1507,11 +1542,12 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
       // Section 7: Approval retry for no_response cases
       const noticeStatus = (row as any).noticeStatus as string | undefined
       if (c.status === 'no_response' && noticeStatus === 'short_notice') {
-        const approvalRetrySec = household.approvalRetrySec || 300
+        // Spec 7.2 step 4: retry at the resident's chosen interval. No fixed retry count: the visit stays closed and
+        // the request keeps going round the chain until someone answers or the retry window (24 h) ends.
+        const approvalRetrySec = parseNoticeSettings(household).approvalRetrySec
         const timeSinceDeadline = Date.now() - c.deadlineAt
-        // Retry if we're at a retry interval boundary
         const retryInterval = Math.floor(timeSinceDeadline / (approvalRetrySec * 1000))
-        if (retryInterval > 0 && retryInterval <= 5) { // Limit to 5 retries
+        if (retryInterval > 0 && timeSinceDeadline <= APPROVAL_RETRY_WINDOW_MS) {
           const { createHelperRequest, getLatestRequest } = await import('@/lib/doorstep/helperRequests')
           const { buildHelperRequest, formatPushNotification, formatSms } = await import('@/lib/doorstep/requestContent')
           const { contactHelper } = await import('@/lib/doorstep/contactLog')

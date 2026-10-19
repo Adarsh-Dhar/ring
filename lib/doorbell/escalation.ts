@@ -30,7 +30,7 @@
 
 import type { DoorCase } from './store'
 
-export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted'
+export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted' | 'emergency'
 
 export interface StepExpect {
   helperIndex: number
@@ -80,53 +80,48 @@ export function isEmergencyCase(c: DoorCase): boolean {
   return riskScore === 100 || controlMode === 'emergency'
 }
 
-/** P11: Emergency escalation - skip timer, alert all helpers immediately */
+/** Log line that marks an emergency escalation as already done for a case. */
+export const EMERGENCY_LOG_MARK = '⚠️ EMERGENCY: immediate threat or forced entry detected. All helpers alerted immediately.'
+
+/**
+ * P11 / spec 7.2 emergency: no acknowledgement timer, every contact alerted in parallel, exactly once.
+ * The step is CLAIMED first, and only the caller that wins the claim alerts anyone, so two servers or a
+ * restarted server can never alert the same people twice. A case whose log already holds the emergency mark
+ * is left alone, so the 30-minute case window cannot trigger a second round of alerts.
+ */
 export async function escalateEmergencyCase(
   c: DoorCase,
   now: number,
   deps: EscalationDeps,
 ): Promise<number> {
   if (c.status !== 'waiting') return 0
+  if (c.log.some(l => l.msg === EMERGENCY_LOG_MARK)) return 0
 
   // Emergency: alert primary and backup helpers immediately, skip timer
   const fromId = c.chain[0]
   const fromName = (await deps.nameOf(fromId)) ?? 'primary helper'
-  
-  // Alert all helpers in the chain
-  for (let i = 0; i < c.chain.length; i++) {
-    const toId = c.chain[i]
-    const toName = (await deps.nameOf(toId)) ?? `helper ${i + 1}`
-    
-    await deps.onStep(c, {
-      kind: 'next_helper',
-      fromId,
-      toId,
-      fromName,
-      toName,
-    })
-  }
 
-  // Log the emergency escalation
-  const log = [...c.log, { t: now, msg: '⚠️ EMERGENCY: immediate threat or forced entry detected. All helpers alerted immediately.' }]
+  const log = [...c.log, { t: now, msg: EMERGENCY_LOG_MARK }]
   log.push({ t: now, msg: 'Resident told to keep door closed and move away. Never show "safe to open".' })
 
-  // Emergency: move deadline to end of 30-minute case window, no acknowledgement timer
+  // Emergency: move the deadline to the end of the 30-minute case window, no acknowledgement timer.
   const change: StepChange = {
     helperIndex: c.helperIndex,
-    deadlineAt: now + 30 * 60 * 1000, // 30-minute case window
+    deadlineAt: now + 30 * 60 * 1000,
     status: 'waiting',
     lane: c.lane,
   }
 
   const expect: StepExpect = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt, lane: c.lane ?? null }
+
+  // Claim first, alert second.
   const owned = await deps.claim(c.id, expect, change, log)
+  if (!owned) return 0
+  mergeSaved(c, { ...change, log })
 
-  if (owned) {
-    mergeSaved(c, { ...change, log })
-    return 1
-  }
-
-  return 0
+  // One 'emergency' step: the alert itself reaches every contact in parallel and has its own exactly-once claim.
+  await deps.onStep(c, { kind: 'emergency', fromId, fromName })
+  return 1
 }
 
 /** Copy the saved escalation fields onto the in-memory case (the database wins). */

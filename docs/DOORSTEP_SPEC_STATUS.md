@@ -161,3 +161,12 @@ Additional Section 6 features implemented:
 - [ ] Sensor sim buttons: lock tamper without entryDeniedAt stamp → score 0; add stamp → score 30
 - [ ] `RISK_SHADOW=1` runtime check: run a scam, confirm score stored but no SMS/push sent to helpers
 - [ ] Supply real labelled transcripts for section 12 calibration before calling weights "calibrated"
+
+## Section 7: helper and AI together (19 Oct 2026 completion pass)
+
+Fixed in `docs/patches/0001` to `0005` (see `docs/SECTION7_COMPLETION_PATCHES.md`):
+- Holding script now stays on after `no_response` for short-notice visits (`isHoldingCase`).
+- Approval retry interval is a resident setting (`approvalRetrySec`, 30 to 3600 s, default 300); no 5-retry cap; sweep keeps unanswered short-notice cases for 24 h.
+- Emergency escalation claims the step before alerting, sends one parallel emergency alert, and never re-alerts the same case.
+- "Nobody answered" alert is awaited and uses urgent wording at M3 and above.
+Not verified: full test run (needs `npm install` and Postgres), resident SOS visibility on the no-response screen, and the 7.1 helper panels.

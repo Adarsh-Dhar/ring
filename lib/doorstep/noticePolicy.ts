@@ -23,14 +23,20 @@ export interface NoticeSettings {
   unknownVisitorPolicy: UnknownVisitorPolicy
   /** Section 5.3 approval timer, set by the resident. Pilot default 120 s. */
   approvalTimerSec: number
+  /** Spec 7.2 step 4: how often an unanswered approval request is sent again. Pilot default 300 s. */
+  approvalRetrySec: number
 }
 
 export const DEFAULT_APPROVAL_TIMER_SEC = 120
+export const DEFAULT_APPROVAL_RETRY_SEC = 300
+/** How long an unanswered short-notice approval keeps being retried before the case is left closed (24 h). */
+export const APPROVAL_RETRY_WINDOW_MS = 24 * 3_600_000
 export const DEFAULT_NOTICE_SETTINGS: NoticeSettings = {
   minNoticeHours: null,
   shortNoticePolicy: 'helper_approval',
   unknownVisitorPolicy: 'ai_first_contact',
   approvalTimerSec: DEFAULT_APPROVAL_TIMER_SEC,
+  approvalRetrySec: DEFAULT_APPROVAL_RETRY_SEC,
 }
 
 export interface NoticeInput {
@@ -92,9 +98,13 @@ export function evaluateNotice(input: NoticeInput, settings: NoticeSettings = DE
   }
 }
 
-/** Is this case a planned visit that is waiting on a short-notice approval? Then the AI may say only the holding line (spec 5.3). */
+/**
+ * Is this case a short-notice visit that nobody has approved yet? Then the AI may say only the holding line
+ * (spec 5.3 and 7.2 step 4). That includes `no_response`: when nobody answers, the safe default is that the door
+ * stays closed and the AI keeps to its holding script while the request is retried. Silence never lifts the gate.
+ */
 export function isHoldingCase(c: { noticeStatus?: string | null; status?: string | null } | null | undefined): boolean {
-  return !!c && c.noticeStatus === 'short_notice' && c.status === 'waiting'
+  return !!c && c.noticeStatus === 'short_notice' && (c.status === 'waiting' || c.status === 'no_response')
 }
 
 /** Does the resident's unknown-visitor policy say a helper, not the AI, makes first contact? Single source of truth: evaluateNotice. */
@@ -107,6 +117,7 @@ export type NoticeSettingsPatch = {
   shortNoticePolicy: ShortNoticePolicy
   unknownVisitorPolicy: UnknownVisitorPolicy
   approvalTimerSec: number
+  approvalRetrySec: number
 }
 
 /** Strict validation for the settings API. parseNoticeSettings is tolerant (it falls back); this one rejects bad input. */
@@ -126,7 +137,14 @@ export function validateNoticeSettingsInput(raw: unknown): { ok: true; value: No
   if (uv !== 'ai_first_contact' && uv !== 'helper_first') return { ok: false, error: 'Invalid unknownVisitorPolicy' }
   const t = o.approvalTimerSec
   if (!Number.isInteger(t) || (t as number) < 15 || (t as number) > 900) return { ok: false, error: 'approvalTimerSec must be a whole number from 15 to 900' }
-  return { ok: true, value: { minNoticeHours, shortNoticePolicy: sn, unknownVisitorPolicy: uv, approvalTimerSec: t as number } }
+  // Optional so older clients keep working; a missing value means the pilot default.
+  let approvalRetrySec = DEFAULT_APPROVAL_RETRY_SEC
+  if (o.approvalRetrySec !== undefined && o.approvalRetrySec !== null) {
+    const r = o.approvalRetrySec
+    if (!Number.isInteger(r) || (r as number) < 30 || (r as number) > 3600) return { ok: false, error: 'approvalRetrySec must be a whole number from 30 to 3600' }
+    approvalRetrySec = r as number
+  }
+  return { ok: true, value: { minNoticeHours, shortNoticePolicy: sn, unknownVisitorPolicy: uv, approvalTimerSec: t as number, approvalRetrySec } }
 }
 
 /** Read the three notice settings off a household row (or anything shaped like one). Bad values fall back to defaults. */
@@ -140,5 +158,6 @@ export function parseNoticeSettings(h: unknown): NoticeSettings {
     shortNoticePolicy: sn === 'resident_approval' || sn === 'ai_handles' || sn === 'helper_approval' ? sn : DEFAULT_NOTICE_SETTINGS.shortNoticePolicy,
     unknownVisitorPolicy: uv === 'helper_first' || uv === 'ai_first_contact' ? uv : DEFAULT_NOTICE_SETTINGS.unknownVisitorPolicy,
     approvalTimerSec: isNum(o.approvalTimerSec) && o.approvalTimerSec >= 15 && o.approvalTimerSec <= 900 ? Math.round(o.approvalTimerSec) : DEFAULT_APPROVAL_TIMER_SEC,
+    approvalRetrySec: isNum(o.approvalRetrySec) && o.approvalRetrySec >= 30 && o.approvalRetrySec <= 3600 ? Math.round(o.approvalRetrySec) : DEFAULT_APPROVAL_RETRY_SEC,
   }
 }

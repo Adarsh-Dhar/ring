@@ -55,7 +55,19 @@ export async function getCasesForHousehold(householdId: string, limit = 10) {
   return getDb().case.findMany({
     where: { householdId },
     orderBy: { createdAt: 'desc' },
-    take: limit
+    take: limit,
+    include: {
+      helperRequests: {
+        select: {
+          id: true,
+          kind: true,
+          state: true,
+          membershipId: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
   })
 }
 
@@ -156,10 +168,14 @@ export async function claimEscalationStep(
 export async function getOverdueCases(graceMs: number, limit = 100) {
   const now = Date.now()
   const NO_RESPONSE_TTL_MS = 30 * 60_000 // 30 minutes
+  // Spec 7.2 step 4: an unanswered short-notice approval keeps being retried at the resident's interval,
+  // so those cases stay in the sweep for the full retry window instead of the short TTL.
+  const APPROVAL_RETRY_WINDOW_MS = 24 * 3_600_000
   return getDb().case.findMany({
     where: {
       OR: [
         { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) } },
+        { status: 'no_response', noticeStatus: 'short_notice', resolvedAt: { gte: new Date(now - APPROVAL_RETRY_WINDOW_MS) } },
         { status: 'no_response', resolvedAt: { gte: new Date(now - NO_RESPONSE_TTL_MS) } },
       ],
     },

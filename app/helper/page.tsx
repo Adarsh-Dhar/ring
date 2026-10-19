@@ -55,6 +55,45 @@ export default function HelperPage() {
     refresh()
   }
 
+  // Section 7: Accept/decline helper request
+  const acceptRequest = async (accept: boolean) => {
+    if (!c) return
+    setErr('')
+    const r = await fetch('/api/doorbell/accept', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId: c.id, membershipId: me, accept }),
+    })
+    if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not send your response. Try again.')
+    refresh()
+  }
+
+  // Section 7: Approve/reject pending action
+  const decideAction = async (actionId: string, decision: 'approve' | 'reject', reason?: string) => {
+    if (!c) return
+    setErr('')
+    const r = await fetch('/api/doorbell/action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId: c.id, actionId: actionId, decision: decision, reason: reason }),
+    })
+    if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not record your decision. Try again.')
+    refresh()
+  }
+
+  // Section 7: Escalate to next helper
+  const escalate = async () => {
+    if (!c) return
+    setErr('')
+    const r = await fetch('/api/doorbell/escalate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId: c.id }),
+    })
+    if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not escalate. Try again.')
+    refresh()
+  }
+
   const canSafe = visitor === 'known' || visitor === 'delivery'
   const Buttons = (
     <div className="mt-4">
@@ -149,6 +188,78 @@ export default function HelperPage() {
             <button onClick={ack} className="mt-3 w-full rounded-2xl bg-white py-4 text-lg font-bold text-rose-900">👀 I have seen this. I am on it.</button>
           )}
           {c.ackedAt && <p className="mt-3 text-sm text-emerald-300">Seen by {snap.helpers.find((h) => h.id === c.ackedBy)?.name}.</p>}
+
+          {/* Section 7: Helper request display */}
+          {(c as any).helperRequests && (c as any).helperRequests.length > 0 && (
+            <div className="mt-4 rounded-xl bg-slate-700 p-3">
+              <h3 className="text-sm font-semibold mb-2">📬 Helper Requests</h3>
+              {(c as any).helperRequests.map((req: any) => (
+                <div key={req.id} className="mb-2 text-sm border-b border-slate-600 pb-2 last:border-0">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium capitalize">{req.kind.replace('_', ' ')}</span>
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      req.state === 'sent' ? 'bg-amber-600' :
+                      req.state === 'delivered' ? 'bg-blue-600' :
+                      req.state === 'acked' ? 'bg-purple-600' :
+                      req.state === 'accepted' ? 'bg-emerald-600' :
+                      req.state === 'declined' ? 'bg-red-600' :
+                      req.state === 'timed_out' ? 'bg-slate-600' : 'bg-slate-500'
+                    }`}>{req.state}</span>
+                  </div>
+                  {req.kind === 'approval' && req.state === 'acked' && (
+                    <div className="mt-2">
+                      <p className="text-xs text-slate-300 mb-1">The AI needs your approval for an action.</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => acceptRequest(true)} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold">Approve</button>
+                        <button onClick={() => acceptRequest(false)} className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold">Decline</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Section 7: Pending actions display */}
+          {(c as any).pendingActions && (c as any).pendingActions.length > 0 && (
+            <div className="mt-4 rounded-xl bg-slate-700 p-3">
+              <h3 className="text-sm font-semibold mb-2">⚡ Pending Actions</h3>
+              {(c as any).pendingActions.map((action: any) => (
+                <div key={action.id} className="mb-2 text-sm border-b border-slate-600 pb-2 last:border-0">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">{action.tool}</span>
+                    <span className={`px-2 py-0.5 rounded text-xs ${
+                      action.state === 'pending' ? 'bg-amber-600' :
+                      action.state === 'approved' ? 'bg-emerald-600' :
+                      action.state === 'rejected' ? 'bg-red-600' :
+                      action.state === 'consumed' ? 'bg-slate-600' : 'bg-slate-500'
+                    }`}>{action.state}</span>
+                  </div>
+                  {action.state === 'pending' && action.approvedBy === me && (
+                    <div className="mt-2">
+                      <p className="text-xs text-slate-300 mb-1">You approved this. Waiting for AI to use it.</p>
+                    </div>
+                  )}
+                  {action.state === 'pending' && !action.approvedBy && (
+                    <div className="mt-2">
+                      <p className="text-xs text-slate-300 mb-1">The AI needs helper approval for this action.</p>
+                      <div className="flex gap-2">
+                        <button onClick={() => decideAction(action.id, 'approve')} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold">Approve</button>
+                        <button onClick={() => decideAction(action.id, 'reject')} className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold">Reject</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Section 7: Escalate button */}
+          {c.status === 'waiting' && myTurn && idx < c.chain.length - 1 && (
+            <button onClick={escalate} className="mt-3 w-full rounded-xl bg-amber-600 py-2 text-sm font-semibold">
+              ⬆️ Escalate to next helper
+            </button>
+          )}
 
           {c.regularId && c.lane !== 'expected' && (
             <p className="mb-3 rounded-xl bg-emerald-900 p-3 text-sm">

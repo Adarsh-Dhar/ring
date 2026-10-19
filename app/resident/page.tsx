@@ -152,7 +152,11 @@ export default function ResidentPage() {
   } else if (c.lane === 'expected' && c.status === 'waiting') {
     screen = { icon: c.visitIcon ?? '👤', title: `${c.visitLabel ?? 'A visitor'} may be here`, sub: `Wait. ${currentHelper?.name ?? 'Your helper'} is checking.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'waiting') {
-    screen = { icon: '🚪', title: 'Someone is here', sub: `Keep the door closed. ${currentHelper?.name ?? 'A helper'} is checking.`, bg: 'bg-sky-800', calm: true }
+    // Section 7: Show more detail about helper request state
+    const helperStatus = c.helperIndex > 0
+      ? `Asking ${helpers.find(h => h.id === c.chain[c.helperIndex])?.name ?? 'next helper'}`
+      : `Asking ${currentHelper?.name ?? 'a helper'}`
+    screen = { icon: '🚪', title: 'Someone is here', sub: `Keep the door closed. ${helperStatus}.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'no_response') {
     screen = { icon: '⚠️', title: "Don't open the door", sub: 'Nobody answered. Call your emergency contact.', bg: 'bg-amber-700', alarm: true }
   } else if (c.answer === 'safe' && (c as any).selfVerifiedAt && !c.declinedAt) {

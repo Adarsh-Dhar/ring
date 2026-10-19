@@ -6,7 +6,7 @@ import { parseNoticeSettings, validateNoticeSettingsInput } from '@/lib/doorstep
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-const select = { minNoticeHours: true, shortNoticePolicy: true, unknownVisitorPolicy: true, approvalTimerSec: true } as const
+const select = { minNoticeHours: true, shortNoticePolicy: true, unknownVisitorPolicy: true, approvalTimerSec: true, approvalRetrySec: true } as const
 
 /** GET /api/household/notice: the minimum-notice settings (spec section 3). */
 export async function GET(req: NextRequest) {

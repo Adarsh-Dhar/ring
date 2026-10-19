@@ -46,6 +46,6 @@ describe('notice policy (spec section 3)', () => {
     expect(parseNoticeSettings(null)).toEqual(DEFAULT_NOTICE_SETTINGS)
     expect(parseNoticeSettings({ minNoticeHours: -5, shortNoticePolicy: 'nope', unknownVisitorPolicy: 7 })).toEqual(DEFAULT_NOTICE_SETTINGS)
     expect(parseNoticeSettings({ minNoticeHours: 24, shortNoticePolicy: 'ai_handles', unknownVisitorPolicy: 'helper_first' }))
-      .toEqual({ minNoticeHours: 24, shortNoticePolicy: 'ai_handles', unknownVisitorPolicy: 'helper_first', approvalTimerSec: 120 })
+      .toEqual({ minNoticeHours: 24, shortNoticePolicy: 'ai_handles', unknownVisitorPolicy: 'helper_first', approvalTimerSec: 120, approvalRetrySec: 300 })
   })
 })
