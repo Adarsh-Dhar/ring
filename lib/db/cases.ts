@@ -17,6 +17,8 @@ export async function createCase(data: DoorCase & { householdId: string }) {
       createdAt: new Date(data.createdAt),
       helperIndex: data.helperIndex,
       deadlineAt: new Date(data.deadlineAt),
+      deadlineKind: data.deadlineKind ?? null,
+      timerDeadlines: data.timerDeadlines ?? {},
       status: data.status,
       answer: data.answer,
       answeredBy: data.answeredBy,
@@ -112,6 +114,8 @@ export async function updateCase(caseId: string, data: Partial<DoorCase>) {
   if (data.lane !== undefined) updateData.lane = data.lane
   if (data.helperIndex !== undefined) updateData.helperIndex = data.helperIndex
   if (data.deadlineAt !== undefined) updateData.deadlineAt = new Date(data.deadlineAt)
+  if (data.deadlineKind !== undefined) updateData.deadlineKind = data.deadlineKind ?? null
+  if (data.timerDeadlines !== undefined) updateData.timerDeadlines = data.timerDeadlines as Prisma.JsonValue
   if (data.selfVerifiedAt !== undefined) updateData.selfVerifiedAt = data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null
   if ('checkWord'      in data) updateData.checkWord      = data.checkWord      ?? null
   if ('checkMode'      in data) updateData.checkMode      = data.checkMode      ?? null
@@ -154,7 +158,7 @@ export async function deleteAllCasesForHousehold(householdId: string) {
 export async function claimEscalationStep(
   caseId: string,
   expect: { helperIndex: number; deadlineAt: number; lane?: string | null },
-  change: { helperIndex: number; deadlineAt: number; status: 'waiting' | 'no_response'; lane?: string | null; resolvedAt?: number },
+  change: { helperIndex: number; deadlineAt: number; deadlineKind?: string; timerDeadlines?: { [kind: string]: number }; status: 'waiting' | 'no_response'; lane?: string | null; resolvedAt?: number },
   log: { t: number; msg: string }[],
 ): Promise<boolean> {
   const r = await getDb().case.updateMany({
@@ -169,6 +173,8 @@ export async function claimEscalationStep(
     data: {
       helperIndex: change.helperIndex,
       deadlineAt:  new Date(change.deadlineAt),
+      deadlineKind: change.deadlineKind ?? null,
+      timerDeadlines: change.timerDeadlines ?? undefined,
       status:      change.status,
       lane:        change.lane ?? null,
       resolvedAt:  change.resolvedAt !== undefined ? new Date(change.resolvedAt) : undefined,

@@ -115,11 +115,11 @@ describe('patches 3 and 4', () => {
     expect(riskDecisionNeeded(20)).toBe(true)
   })
   it('backup helper timeout is the spec 5.3 timer (not capped by household value)', () => {
-    expect(backupTimeoutSec(null, null, 60)).toBe(60)    // no risk data: household value
-    expect(backupTimeoutSec(10, null, 60)).toBe(60)      // S_eff 10: no risk timer
-    expect(backupTimeoutSec(50, null, 60)).toBe(70)      // 120 - 50 = 70, NOT capped by household 60
-    expect(backupTimeoutSec(90, null, 60)).toBe(30)      // takeover min(30, 60) = 30
-    expect(backupTimeoutSec(5, 'helper_only', 60)).toBe(60)  // event floor 60 -> takeover 60
+    expect(backupTimeoutSec(null, null, 60)).toEqual({ seconds: 60, kind: 'household' })    // no risk data: household value
+    expect(backupTimeoutSec(10, null, 60)).toEqual({ seconds: 60, kind: 'household' })      // S_eff 10: no risk timer
+    expect(backupTimeoutSec(50, null, 60)).toEqual({ seconds: 70, kind: 'risk_decision' })      // 120 - 50 = 70, NOT capped by household 60
+    expect(backupTimeoutSec(90, null, 60)).toEqual({ seconds: 30, kind: 'takeover' })      // score 90 is helper-led, takeover wins tie-break
+    expect(backupTimeoutSec(5, 'helper_only', 60)).toEqual({ seconds: 60, kind: 'takeover' })  // event floor 60 -> takeover 60
   })
 })
 

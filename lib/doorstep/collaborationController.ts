@@ -71,13 +71,17 @@ export function timersFor(sEff: number, minMode?: ControlMode | null, approvalSe
   const approvalSecVal = Number.isFinite(approvalSec) && approvalSec && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS
   
   // Determine which timer kind is governing (shortest non-null wins)
+  // Tie-breaking: takeover > risk_decision > approval when equal (more urgent takes precedence)
   let kind: 'household' | 'approval' | 'risk_decision' | 'takeover' | undefined
   const seconds = [approvalSecVal, riskDecisionSec, takeoverSec].filter((x): x is number => x !== null)
   if (seconds.length > 0) {
     const min = Math.min(...seconds)
-    if (min === approvalSecVal) kind = 'approval'
-    else if (min === riskDecisionSec) kind = 'risk_decision'
-    else if (min === takeoverSec) kind = 'takeover'
+    // Check takeover first (most urgent)
+    if (takeoverSec !== null && takeoverSec === min) kind = 'takeover'
+    // Then risk-decision
+    else if (riskDecisionSec !== null && riskDecisionSec === min) kind = 'risk_decision'
+    // Finally approval
+    else if (approvalSecVal === min) kind = 'approval'
   }
   
   return {

@@ -93,6 +93,8 @@ export interface DoorCase {
   createdAt:     number
   helperIndex:   number
   deadlineAt:    number
+  deadlineKind?: string   // household | approval | risk_decision | takeover
+  timerDeadlines?: { [kind: string]: number }  // { approval?: ms, risk_decision?: ms, takeover?: ms }
   status:        CaseStatus
   answer?:       Answer
   answeredBy?:   string
@@ -212,6 +214,8 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       createdAt:     c.createdAt.getTime(),
       helperIndex:   c.helperIndex,
       deadlineAt:    c.deadlineAt.getTime(),
+      deadlineKind:  (c as any).deadlineKind || undefined,
+      timerDeadlines: (c as any).timerDeadlines || undefined,
       status:        c.status as CaseStatus,
       answer:        c.answer as Answer | undefined,
       answeredBy:    c.answeredBy || undefined,
@@ -383,6 +387,8 @@ async function refreshCasesFromDB(
     createdAt: row.createdAt.getTime(),
     helperIndex: row.helperIndex,
     deadlineAt: row.deadlineAt.getTime(),
+    deadlineKind: (row as any).deadlineKind || undefined,
+    timerDeadlines: (row as any).timerDeadlines || undefined,
     status: row.status as CaseStatus,
     answer: row.answer as Answer | undefined,
     answeredBy: row.answeredBy || undefined,
@@ -884,6 +890,8 @@ async function openCase(
     createdAt:   now,
     helperIndex: 0,
     deadlineAt:  now + secs * 1000,
+    deadlineKind: m ? 'household' : 'household', // Section 5.3: initial deadline is household timeout
+    timerDeadlines: {},
     status:      'waiting',
     log:         [],
     chain:       approved.map(m => m.id), // Will be re-sorted by tier below
@@ -913,6 +921,8 @@ async function openCase(
   if (notice.requiresApproval && notice.status === 'short_notice') {
     secs = parseNoticeSettings(household).approvalTimerSec
     c.deadlineAt = now + secs * 1000
+    c.deadlineKind = 'approval'
+    c.timerDeadlines = { approval: c.deadlineAt }
   }
 
   // Section 7: Store approval retry interval for later use
@@ -1206,6 +1216,8 @@ export async function selfVerify(
     c.checkWord  = undefined
     c.checkMode  = undefined
     c.deadlineAt = now + state.timeoutSec * 1000
+    c.deadlineKind = 'household'
+    c.timerDeadlines = {}
     addLog(c, 'Resident said the visitor did NOT pass the check. Treated as an unknown visitor: full alert and SMS.')
     const first = approved.find(m => m.id === c.chain[c.helperIndex])
     if (first) {
@@ -1554,12 +1566,12 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 // ── Escalation wiring ─────────────────────────────────────────────────────────
 
 /** Seconds the next helper gets (spec 5.3). `notice` provides the resident's short-notice policy and approval timer. */
-async function caseTimeoutSec(caseId: string, householdSec: number, notice: NoticeSettings): Promise<number> {
+async function caseTimeoutSec(caseId: string, householdSec: number, notice: NoticeSettings): Promise<{ seconds: number; kind: string }> {
   try {
     const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true } })
     const needsApproval = row?.noticeStatus === 'short_notice' && notice.shortNoticePolicy !== 'ai_handles'
     return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval, notice.approvalTimerSec)
-  } catch { return householdSec }   // never block escalation on a read failure
+  } catch { return { seconds: householdSec, kind: 'household' } }   // never block escalation on a read failure
 }
 
 /** Spec 6.1: the mode that governs a case is the more human-led of the stored event minimum and the band of its score.
@@ -1655,7 +1667,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
     try {
       const household = await getHousehold(row.householdId)
       if (!household) continue
-      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household))
+      const { seconds: timeoutSec, kind: timeoutKind } = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household))
       const chain = ((row.chain as any) as string[]) || []
       const c: DoorCase = {
         id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
@@ -1668,7 +1680,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
         riskScore: (row as any).riskScore ?? undefined,
         controlMode: (row as any).controlMode ?? undefined,
       }
-      steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
+      steps += await escalateDueCase(c, Date.now(), { timeoutSec, timeoutKind, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
 
       // Section 7: Approval retry for no_response cases
       const noticeStatus = (row as any).noticeStatus as string | undefined
@@ -1761,9 +1773,9 @@ export async function tick(householdId?: string) {
     for (const c of state.cases) {
       if (c.status !== 'waiting' || c.lifecycle === 'closed' || now < c.deadlineAt) continue
       try {
-        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household))
+        const { seconds: timeoutSec, kind: timeoutKind } = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household))
         const deps = escalationDeps(householdId, household.residentName, timeoutSec)
-        await escalateDueCase(c, now, { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
+        await escalateDueCase(c, now, { timeoutSec, timeoutKind, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {
         reportError(e, { householdId, fn: 'tick/escalate', caseId: c.id })
       }

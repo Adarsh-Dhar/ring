@@ -12,7 +12,7 @@ export type { EscalationDeps, EscalationConfig, EscalationKind, StepChange, Step
 import { activeTimer, effectiveScore, riskDecisionNeeded, timersFor } from './collaborationController'
 import type { ControlMode } from './riskRules'
 
-/** Seconds the NEXT helper gets (spec 5.3): the risk/takeover timer for S_eff. */
+/** Seconds the NEXT helper gets (spec 5.3): the risk/takeover timer for S_eff. Returns both seconds and the timer kind. */
 export function backupTimeoutSec(
   score: number | null | undefined,
   minMode: ControlMode | null | undefined,
@@ -20,9 +20,10 @@ export function backupTimeoutSec(
   needsApproval: boolean = false,
   /** The resident's approval timer. Without it the backup would always get the 120 s default. */
   approvalSec?: number,
-): number {
-  if (score == null && !minMode) return householdSec
+): { seconds: number; kind: string } {
+  if (score == null && !minMode) return { seconds: householdSec, kind: 'household' }
   const eff = effectiveScore(score ?? 0, minMode)
   const t = activeTimer(timersFor(eff, minMode, approvalSec), { needsApproval, riskDecisionNeeded: riskDecisionNeeded(eff) })
-  return t && t.seconds !== null ? t.seconds : householdSec
+  if (t && t.seconds !== null) return { seconds: t.seconds, kind: t.kind }
+  return { seconds: householdSec, kind: 'household' }
 }

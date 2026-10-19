@@ -41,6 +41,8 @@ export interface StepExpect {
 export interface StepChange {
   helperIndex: number
   deadlineAt:  number
+  deadlineKind?: string  // household | approval | risk_decision | takeover
+  timerDeadlines?: { [kind: string]: number }
   status:      'waiting' | 'no_response'
   lane?:       'normal' | 'expected'
   resolvedAt?: number
@@ -63,6 +65,8 @@ export interface EscalationConfig {
   /** Seconds the next helper gets before the case moves on. Callers compute it from the case's S_eff and mode
    *  (spec 5.3: approval, risk-decision 120 - S_eff, or takeover min(120 - S_eff, 60)), not from a fixed number. */
   timeoutSec: number
+  /** Which timer set this timeout (for deadlineKind metadata) */
+  timeoutKind?: string
   /** Seconds a helper has to decide after acknowledging. Fixed default. */
   decisionSec: number
   /** Not read by the step engine today: nobody-answered ends in `no_response` and the retry path in the worker. Kept so
@@ -130,6 +134,8 @@ export async function escalateEmergencyCase(
 export function mergeSaved(c: DoorCase, saved: Partial<DoorCase>) {
   if (saved.helperIndex !== undefined) c.helperIndex = saved.helperIndex
   if (saved.deadlineAt  !== undefined) c.deadlineAt  = saved.deadlineAt
+  if (saved.deadlineKind !== undefined) c.deadlineKind = saved.deadlineKind
+  if (saved.timerDeadlines !== undefined) c.timerDeadlines = saved.timerDeadlines
   if (saved.status      !== undefined) c.status      = saved.status
   if ('lane'       in saved) c.lane       = saved.lane
   if ('resolvedAt' in saved) c.resolvedAt = saved.resolvedAt
@@ -171,7 +177,7 @@ export async function escalateDueCase(
 
     if (c.lane === 'expected') {
       kind   = 'expected_to_normal'
-      change = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, status: 'waiting', lane: 'normal' }
+      change = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, deadlineKind: cfg.timeoutKind ?? 'household', status: 'waiting', lane: 'normal' }
       msg    = `Nobody confirmed the expected visit in ${cfg.expectedTimeoutSec}s. Treated as an unknown visitor: normal alert and SMS.`
       toId   = fromId
     } else if (c.helperIndex + 1 >= c.chain.length) {
@@ -182,7 +188,7 @@ export async function escalateDueCase(
       kind   = 'next_helper'
       toId   = c.chain[c.helperIndex + 1]
       toName = (await deps.nameOf(toId)) ?? 'next helper'
-      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, status: 'waiting', lane: c.lane }
+      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, deadlineKind: cfg.timeoutKind ?? 'household', status: 'waiting', lane: c.lane }
       msg    = `${fromName} did not answer in ${cfg.timeoutSec}s. Escalated to ${toName}.`
     }
 

@@ -261,12 +261,12 @@ describe('section 6: the resident screen shows the exact mode wording', () => {
 describe('section 5: timers use the resident approval timer and the effective mode', () => {
   it('the backup helper gets the resident approval timer, not the 120 s default', () => {
     // short-notice approval at score 0: the first helper got the resident's 45 s, so the backup must too
-    expect(backupTimeoutSec(0, 'ai_leads', 60, true, 45)).toBe(45)
-    expect(backupTimeoutSec(0, 'ai_leads', 60, true)).toBe(120)       // default only when the resident set nothing
+    expect(backupTimeoutSec(0, 'ai_leads', 60, true, 45)).toEqual({ seconds: 45, kind: 'approval' })
+    expect(backupTimeoutSec(0, 'ai_leads', 60, true)).toEqual({ seconds: 120, kind: 'approval' })       // default only when the resident set nothing
   })
 
   it('the shortest timer still wins: a risk timer beats a longer approval timer', () => {
-    expect(backupTimeoutSec(70, 'helper_only', 60, true, 300)).toBe(50)   // min(120-70, 60)
+    expect(backupTimeoutSec(70, 'helper_only', 60, true, 300)).toEqual({ seconds: 50, kind: 'takeover' })   // min(120-70, 60)
   })
 
   it('a risk edit shrinks the running deadline and never extends it', async () => {

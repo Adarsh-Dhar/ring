@@ -103,8 +103,8 @@ describe('resident preferences and permitted actions', () => {
 describe('helper escalation wrapper', () => {
   it('re-exports the tested step engine', () => { expect(typeof escalateDueCase).toBe('function') })
   it('backup timeout is the spec 5.3 timer (not capped by household value)', () => {
-    expect(backupTimeoutSec(null, null, 60)).toBe(60)
-    expect(backupTimeoutSec(50, null, 60)).toBe(70)  // 120 - 50 = 70, NOT capped by household 60
-    expect(backupTimeoutSec(90, null, 60)).toBe(30)
+    expect(backupTimeoutSec(null, null, 60)).toEqual({ seconds: 60, kind: 'household' })
+    expect(backupTimeoutSec(50, null, 60)).toEqual({ seconds: 70, kind: 'risk_decision' })  // 120 - 50 = 70, NOT capped by household 60
+    expect(backupTimeoutSec(90, null, 60)).toEqual({ seconds: 30, kind: 'takeover' })  // 120 - 90 = 30, takeover wins tie-break (score >= 60)
   })
 })
