@@ -57,11 +57,13 @@ export async function contactHelper(
     await writeAudit(caseId, audit.contactAttempt('push', membershipId, 'failed', 'no subscription'))
   } else {
     try {
-      await pushToMembership(membershipId, payload.push)
-      pushSent = 1
-      await writeAudit(caseId, audit.contactAttempt('push', membershipId, 'sent'))
+      const r = await pushToMembership(membershipId, payload.push)
+      pushSent = r.sent
+      pushFailed = r.failed
+      await writeAudit(caseId, audit.contactAttempt('push', membershipId, r.sent > 0 ? 'sent' : 'failed',
+        r.sent > 0 ? `${r.sent} accepted, ${r.failed} failed` : `all ${r.failed} attempts failed`))
     } catch (e) {
-      pushFailed = 1
+      pushFailed = subs.length
       await writeAudit(caseId, audit.contactAttempt('push', membershipId, 'failed', (e as Error).message))
     }
   }

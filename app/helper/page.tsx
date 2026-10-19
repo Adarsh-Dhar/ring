@@ -12,6 +12,7 @@ import RegularVisitors from './RegularVisitors'
 import InterrogationCard from './InterrogationCard'
 import LifecyclePanel from './LifecyclePanel'
 import NoteComposer from './NoteComposer'
+import { auditRows } from '@/lib/doorstep/auditView'
 
 export default function HelperPage() {
   const { snap, stale, unauthorized, refresh, secondsLeft } = useDoorbell()
@@ -57,15 +58,28 @@ export default function HelperPage() {
   }
 
   // Section 7: Accept/decline helper request
-  const acceptRequest = async (accept: boolean) => {
+  const acceptRequest = async (accept: boolean, requestId?: string) => {
     if (!c) return
     setErr('')
     const r = await fetch('/api/doorbell/accept', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ caseId: c.id, membershipId: me, accept }),
+      body: JSON.stringify({ caseId: c.id, membershipId: me, accept, requestId }),
     })
     if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not send your response. Try again.')
+    refresh()
+  }
+
+  // Section 7.4: take over or release the conversation. While a helper owns it, the AI stays silent.
+  const takeover = async (action: 'takeover' | 'release') => {
+    if (!c) return
+    setErr('')
+    const r = await fetch('/api/doorbell/takeover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ caseId: c.id, action }),
+    })
+    if (r.ok === false) setErr((await r.json().catch(() => ({}))).error || 'Could not change who owns the conversation.')
     refresh()
   }
 
@@ -171,21 +185,35 @@ export default function HelperPage() {
             )}
           </div>
 
-          {c.kind === 'sos' || c.deviceId?.startsWith('sim-') ? (
-            c.deviceId ? (
-              <LiveView caseId={c.id} deviceId={c.deviceId} />
-            ) : (
-              <div className="rounded-xl bg-black aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
-                No Ring device connected for this case.
-              </div>
-            )
+          {/* Section 7.9: show live view whenever a doorbell device exists, and be honest when none is available. */}
+          {c.deviceId ? (
+            <LiveView caseId={c.id} deviceId={c.deviceId} />
           ) : (
-            <div className="rounded-xl bg-slate-700 aspect-video flex items-center justify-center text-slate-400 text-sm text-center px-6">
-              Video is only shown when resident needs help (SOS)
+            <div className="rounded-xl bg-slate-700 aspect-video flex items-center justify-center text-slate-300 text-sm text-center px-6">
+              No doorbell camera is linked to this case, so there is no live video or audio to show. Do not assume the door is clear.
             </div>
           )}
 
-          {c.kind === 'sos' && c.status === 'waiting' && !c.ackedAt && (
+          {/* Section 7.4: who owns the conversation, with Take over / Release */}
+          {c.status === 'waiting' && (
+            <div className="mt-3 rounded-xl bg-slate-700 p-3 text-sm">
+              {(c as any).conversationOwner ? (
+                <div className="flex items-center justify-between gap-2">
+                  <span>🎙️ {(c as any).conversationOwner === me ? 'You' : (snap.helpers.find((h) => h.id === (c as any).conversationOwner)?.name ?? 'A helper')} {(c as any).conversationOwner === me ? 'are' : 'is'} speaking. The AI is silent.</span>
+                  {(c as any).conversationOwner === me && (
+                    <button onClick={() => takeover('release')} className="rounded-lg bg-slate-500 px-3 py-1.5 font-semibold">Release</button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <span>The AI is handling the conversation.</span>
+                  <button onClick={() => takeover('takeover')} className="rounded-lg bg-amber-600 px-3 py-1.5 font-semibold">Take over</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {c.status === 'waiting' && !c.ackedAt && (c.kind === 'sos' || snap.helpers.some(h => h.id === me)) && (
             <button onClick={ack} className="mt-3 w-full rounded-2xl bg-white py-4 text-lg font-bold text-rose-900">👀 I have seen this. I am on it.</button>
           )}
           {c.ackedAt && <p className="mt-3 text-sm text-emerald-300">Seen by {snap.helpers.find((h) => h.id === c.ackedBy)?.name}.</p>}
@@ -207,12 +235,16 @@ export default function HelperPage() {
                       req.state === 'timed_out' ? 'bg-slate-600' : 'bg-slate-500'
                     }`}>{req.state}</span>
                   </div>
-                  {req.kind === 'approval' && req.state === 'acked' && (
+                  {req.membershipId === me && ['sent', 'delivered', 'acked'].includes(req.state) && req.kind !== 'emergency' && (
                     <div className="mt-2">
-                      <p className="text-xs text-slate-300 mb-1">The AI needs your approval for an action.</p>
+                      <p className="text-xs text-slate-300 mb-1">
+                        {req.kind === 'approval' ? 'The AI needs your approval. Review the exact action below.'
+                          : req.kind === 'takeover' ? 'The risk is high. Please take responsibility for this case.'
+                          : 'A helper decision is needed on this case.'}
+                      </p>
                       <div className="flex gap-2">
-                        <button onClick={() => acceptRequest(true)} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold">Approve</button>
-                        <button onClick={() => acceptRequest(false)} className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold">Decline</button>
+                        <button onClick={() => acceptRequest(true, req.id)} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold">{req.kind === 'approval' ? 'Accept' : 'I will handle this'}</button>
+                        <button onClick={() => acceptRequest(false, req.id)} className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold">Decline</button>
                       </div>
                     </div>
                   )}
@@ -228,7 +260,7 @@ export default function HelperPage() {
               {(c as any).pendingActions.map((action: any) => (
                 <div key={action.id} className="mb-2 text-sm border-b border-slate-600 pb-2 last:border-0">
                   <div className="flex justify-between items-center">
-                    <span className="font-medium">{action.tool}</span>
+                    <span className="font-medium">{action.kind === 'visit_approval' ? 'Short-notice visit' : action.tool}</span>
                     <span className={`px-2 py-0.5 rounded text-xs ${
                       action.state === 'pending' ? 'bg-amber-600' :
                       action.state === 'approved' ? 'bg-emerald-600' :
@@ -236,14 +268,19 @@ export default function HelperPage() {
                       action.state === 'consumed' ? 'bg-slate-600' : 'bg-slate-500'
                     }`}>{action.state}</span>
                   </div>
-                  {action.state === 'pending' && action.approvedBy === me && (
-                    <div className="mt-2">
-                      <p className="text-xs text-slate-300 mb-1">You approved this. Waiting for AI to use it.</p>
-                    </div>
+                  {action.text && action.text !== action.tool && (
+                    <p className="mt-1 rounded bg-slate-800 p-2 text-sm">"{action.text}"</p>
                   )}
-                  {action.state === 'pending' && !action.approvedBy && (
+                  {action.reason && <p className="mt-1 text-xs text-slate-400">Why it needs approval: {action.reason.replace(/_/g, ' ')}</p>}
+                  {action.state === 'approved' && (
+                    <p className="mt-1 text-xs text-slate-300">Approved{action.decidedBy === me ? ' by you' : ''}. {action.kind === 'visit_approval' ? 'The visit may proceed.' : 'The AI will use it once.'}</p>
+                  )}
+                  {action.state === 'pending' && action.approver === 'resident' && (
+                    <p className="mt-2 text-xs text-slate-300">Waiting for the resident to decide.</p>
+                  )}
+                  {action.state === 'pending' && action.approver !== 'resident' && (
                     <div className="mt-2">
-                      <p className="text-xs text-slate-300 mb-1">The AI needs helper approval for this action.</p>
+                      <p className="text-xs text-slate-300 mb-1">Approving lets this happen once. Silence is never approval.</p>
                       <div className="flex gap-2">
                         <button onClick={() => decideAction(action.id, 'approve')} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-semibold">Approve</button>
                         <button onClick={() => decideAction(action.id, 'reject')} className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold">Reject</button>
@@ -298,11 +335,18 @@ export default function HelperPage() {
       <ExpectedForm items={snap.expected} onChange={refresh} />
 
       <section className="mt-6">
-        <h3 className="text-sm uppercase tracking-wide text-slate-400 mb-2">Latest case timeline</h3>
+        <h3 className="text-sm uppercase tracking-wide text-slate-400 mb-2">Latest case timeline and audit</h3>
         <ul className="text-sm space-y-1 text-slate-300">
-          {(snap.history[0]?.log ?? []).map((l, i) => (
+          {(snap.history[0]?.log ?? []).map((l: any, i) => (
             <li key={i}>
               <span className="text-slate-500">{new Date(l.t).toLocaleTimeString()}</span> {l.msg}
+              {l.audit && (
+                <span className="block ml-4 text-xs text-slate-400">
+                  {l.audit.actor}{l.audit.actorId ? ` (${String(l.audit.actorId).slice(0, 8)})` : ''} · {l.audit.kind}
+                  {l.audit.ref ? ` · ref ${l.audit.ref}` : ''}
+                  {l.audit.detail ? ` · ${JSON.stringify(l.audit.detail)}` : ''}
+                </span>
+              )}
             </li>
           ))}
           {snap.history.length === 0 && <li className="text-slate-500">No events yet.</li>}

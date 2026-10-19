@@ -14,14 +14,14 @@ import { createAuditEvent, writeAudit } from './audit'
 export const DEADLINE_POLICY = 'earliest_wins' as const
 
 /** Move the deadline earlier to `targetMs`. Compare-and-set with retry. Returns true when it changed. */
-export async function shortenDeadline(householdId: string, caseId: string, targetMs: number, reason: string): Promise<boolean> {
+export async function shortenDeadline(householdId: string, caseId: string, targetMs: number, kind: string, reason: string): Promise<boolean> {
   const db = getDb()
   for (let attempt = 0; attempt < 3; attempt++) {
     const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true } })
     if (!row || row.status !== 'waiting') return false
     const current = row.deadlineAt.getTime()
     if (!(targetMs < current)) return false
-    const r = await db.case.updateMany({ where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt }, data: { deadlineAt: new Date(targetMs) } })
+    const r = await db.case.updateMany({ where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt }, data: { deadlineAt: new Date(targetMs), deadlineKind: kind } })
     if (r.count === 1) {
       try {
         const { syncCaseDeadline } = await import('@/lib/doorbell/store')

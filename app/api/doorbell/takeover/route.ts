@@ -9,6 +9,8 @@ import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { writeAudit, audit } from '@/lib/doorstep/audit'
 import { authorize, fail, parse } from '@/lib/guard'
+import { claimConversation, releaseConversation } from '@/lib/doorstep/conversationOwner'
+import { getRequestsForCase, markAcked, markAccepted, OPEN_REQUEST_STATES } from '@/lib/doorstep/helperRequests'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -45,22 +47,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'takeover') {
-    if (c.conversationOwner) {
-      return fail('Conversation already owned', 400)
-    }
-    await db.case.update({
-      where: { id: caseId },
-      data: { conversationOwner: membershipId },
-    })
-    await writeAudit(caseId, audit.takeover(membershipId, c.conversationOwner || undefined))
+    const r = await claimConversation(caseId, householdId, membershipId)
+    if (!r.ok) return fail('Conversation already owned', 409)
+    await writeAudit(caseId, audit.takeover(membershipId))
+    // Taking over is the helper accepting responsibility: record it on their open request (never inferred from a visitor answer).
+    const open = (await getRequestsForCase(caseId)).filter((q) => q.membershipId === membershipId && (q.kind === 'takeover' || q.kind === 'risk_decision') && OPEN_REQUEST_STATES.includes(q.state))
+    for (const q of open) { await markAcked(q.id); await markAccepted(q.id) }
   } else {
-    if (c.conversationOwner !== membershipId) {
-      return fail('Not the conversation owner', 400)
+    if (!(await releaseConversation(caseId, householdId, membershipId))) {
+      return fail('Not the conversation owner', 403)
     }
-    await db.case.update({
-      where: { id: caseId },
-      data: { conversationOwner: null },
-    })
     await writeAudit(caseId, audit.release(membershipId))
   }
 

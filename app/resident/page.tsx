@@ -168,10 +168,17 @@ export default function ResidentPage() {
   } else if (c.lane === 'expected' && c.status === 'waiting') {
     screen = { icon: c.visitIcon ?? '👤', title: `${c.visitLabel ?? 'A visitor'} may be here`, sub: `Wait. ${currentHelper?.name ?? 'Your helper'} is checking.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'waiting') {
-    // Section 7: Show more detail about helper request state
-    const helperStatus = c.helperIndex > 0
-      ? `Asking ${helpers.find(h => h.id === c.chain[c.helperIndex])?.name ?? 'next helper'}`
-      : `Asking ${currentHelper?.name ?? 'a helper'}`
+    // Section 7.2: say only what the system has recorded. A helper is never described as having accepted or taken over
+    // until that state exists.
+    const rs = (c as any).residentStatus as { requests: { label: string; state: string }[]; ownerName: string | null } | undefined
+    const lastReq = rs?.requests?.length ? rs.requests[0] : undefined
+    const helperStatus = rs?.ownerName
+      ? `${rs.ownerName} is speaking to the visitor`
+      : lastReq
+        ? lastReq.label
+        : c.helperIndex > 0
+          ? `Asking ${helpers.find(h => h.id === c.chain[c.helperIndex])?.name ?? 'next helper'}`
+          : `Asking ${currentHelper?.name ?? 'a helper'}`
     screen = { icon: '🚪', title: modeScreen?.title ?? 'Someone is here', sub: `Keep the door closed. ${helperStatus}.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'no_response') {
     screen = { icon: '⚠️', title: "Don't open the door", sub: 'Nobody answered. Call your emergency contact.', bg: 'bg-amber-700', alarm: true }
@@ -320,7 +327,17 @@ export default function ResidentPage() {
             👍 I'm OK today
           </button>
         )}
-        {(sosNeedsEmergency || c?.kind === 'sos' && c.status === 'no_response') && (
+        {/* Section 7.8: a resident-approval request is the resident's to decide. */}
+        {((c as any)?.residentStatus?.residentApprovals ?? []).map((a: { id: string; text: string }) => (
+          <div key={a.id} className="rounded-3xl bg-black/40 border-4 border-white p-4 text-center">
+            <p className="text-xl font-bold mb-3">{a.text}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => post('/api/doorbell/resident-approval', { caseId: c!.id, actionId: a.id, decision: 'approve' })} className="rounded-2xl bg-emerald-600 py-4 text-xl font-bold">✅ Yes</button>
+              <button onClick={() => post('/api/doorbell/resident-approval', { caseId: c!.id, actionId: a.id, decision: 'reject' })} className="rounded-2xl bg-red-700 py-4 text-xl font-bold">✋ No</button>
+            </div>
+          </div>
+        ))}
+        {(sosNeedsEmergency || c?.status === 'no_response') && (
           <a href={`tel:${emergency}`} className="w-full text-center text-3xl font-bold py-6 rounded-3xl bg-white text-red-800 shadow-lg">
             🚨 Call {emergency}
           </a>

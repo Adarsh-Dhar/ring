@@ -32,6 +32,7 @@ import { buildHelperRequest, formatPushNotification, formatSms } from './request
 import { contactHelper } from './contactLog'
 import { getPreferences } from '@/lib/db/preferences'
 import { reportError } from '@/lib/errors'
+import { shortenDeadline } from './deadline'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -67,8 +68,8 @@ interface RiseCtx {
 export async function notifyModeRise({ caseId, householdId, prevMode, prevEff, eff, minMode, observations }: RiseCtx): Promise<void> {
   const newModeRank = modeRank(minMode)
   const oldModeRank = modeRank(prevMode ?? 'ai_leads')
-  // Trigger on any mode rise, or when reaching M2/M3 from below
-  if (newModeRank > oldModeRank || (newModeRank >= 2 && oldModeRank < 2) || (newModeRank >= 3 && oldModeRank < 3)) {
+  // Trigger on any mode rise
+  if (newModeRank > oldModeRank) {
     const kind: HelperRequestKind = newModeRank >= 3 ? 'takeover' : 'risk_decision'
     const memberships = await getApprovedMemberships(householdId)
     const prefs = await getPreferences(householdId)
@@ -293,7 +294,11 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   // G1c: Fire emergency alert if case newly became emergency
   const prevMode = (c.controlMode as ControlMode | null) ?? null
   const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
-  const rose = prevMode !== null && modeRank(risk.minMode) > modeRank(prevMode)
+  // Spec 7.4: a mode rise is judged on the EFFECTIVE mode (score band and event minimum together). Comparing only the
+  // event minimum missed score-only rises, e.g. S_eff 65 (helper-led) with an event minimum of M1.
+  const prevEffMode = effectiveModeFor(c.riskScore ?? 0, prevMode)
+  const newEffMode = effectiveModeFor(risk.score, risk.minMode)
+  const rose = modeRank(newEffMode) > modeRank(prevEffMode)
 
   // Spec 5: everything keys on the effective score S_eff = max(S, floor of the event minimum mode).
   const eff = effectiveScore(risk.score, risk.minMode)
@@ -336,24 +341,16 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     } else if (eff > prevEff) {
       // Spec 5.3: when S_eff rises, the governing timer shrinks. Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60)
       // once helper-led. Compare-and-set below, and a deadline is never extended.
-      const now = Date.now()
-      const timer = activeTimer(timersFor(eff, risk.minMode), { riskDecisionNeeded: riskDecisionNeeded(eff) })
-      const newTimerSec = timer?.seconds ?? null
-      // Set deadline to now + new timer, but never extend it
-      const target = newTimerSec === null ? Infinity : now + newTimerSec * 1000
-      if (target < c.deadlineAt.getTime()) {
-        // Compare-and-set: only write if nobody changed the deadline since we read it.
-        await getDb().case.updateMany({
-          where: { id: caseId, deadlineAt: c.deadlineAt },
-          data: { deadlineAt: new Date(target) },
-        })
+      const timer = activeTimer(timersFor(eff, risk.minMode, undefined), { riskDecisionNeeded: riskDecisionNeeded(eff) })
+      if (timer?.seconds != null) {
+        await shortenDeadline(c.householdId, caseId, Date.now() + timer.seconds * 1000, timer.kind, `S_eff ${prevEff}->${eff}`)
       }
 
       // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)
       // Create risk-decision or takeover requests, deduplicated per (caseId, modeRank)
       if (rose) {
         // Best-effort: the score is already saved, so a failed notification must never fail the edit.
-        await notifyModeRise({ caseId, householdId: c.householdId, prevMode, prevEff, eff, minMode: risk.minMode, observations: newStored.observations })
+        await notifyModeRise({ caseId, householdId: c.householdId, prevMode: prevEffMode, prevEff, eff, minMode: newEffMode, observations: newStored.observations })
           .catch(e => reportError(e, { fn: 'notifyModeRise', caseId }))
       }
     }
@@ -390,14 +387,11 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
  *  risk-decision timer, never extends it. Compare-and-set, same as applyRiskEdit. */
 export async function requestHelperDecision(caseId: string): Promise<void> {
   const db = getDb()
-  const c = await db.case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, deadlineAt: true, status: true } })
+  const c = await db.case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, deadlineAt: true, status: true, householdId: true } })
   if (!c || c.status !== 'waiting') return
   const minMode = (c.controlMode as ControlMode | null) ?? null
   const eff = effectiveScore(c.riskScore ?? 0, minMode)
   const t = activeTimer(timersFor(eff, minMode), { riskDecisionNeeded: true })
   if (!t || t.seconds === null) return          // S_eff 0 or 100: no risk-decision timer
-  const target = Date.now() + t.seconds * 1000
-  if (target < c.deadlineAt.getTime()) {
-    await db.case.updateMany({ where: { id: caseId, deadlineAt: c.deadlineAt }, data: { deadlineAt: new Date(target) } })
-  }
+  await shortenDeadline(c.householdId, caseId, Date.now() + t.seconds * 1000, 'risk_decision', 'ai_budget_exceeded')
 }

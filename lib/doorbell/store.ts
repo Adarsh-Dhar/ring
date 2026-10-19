@@ -8,6 +8,7 @@ import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, ge
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
+import { residentRequestSummary } from '@/lib/doorstep/residentStatus'
 import { maxMode, modeRank as controlModeRank } from '@/lib/doorstep/riskRules'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
 import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus } from '../doorstep/noticePolicy'
@@ -131,9 +132,17 @@ export interface DoorCase {
   possibleNewVisitorAt?: number
   splitFromId?:  string
   /** Section 7: Helper requests for this case (sent, delivered, acked, accepted, declined, timed_out) */
-  helperRequests?: { id: string; kind: string; state: string; membershipId: string; sentAt: number }[]
-  /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed) */
-  pendingActions?: { id: string; tool: string; state: string; approvedBy?: string; createdAt: number }[]
+  helperRequests?: { id: string; kind: string; state: string; membershipId: string; sentAt: number; deliveredAt?: number; ackedAt?: number; acceptedAt?: number; declinedAt?: number; timedOutAt?: number; channels?: any }[]
+  /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed). `text` is the exact proposed words. */
+  pendingActions?: { id: string; tool: string; state: string; text?: string; reason?: string; approver?: string; kind?: string; decidedBy?: string; createdAt: number }[]
+  /** Section 7: membership that currently owns the conversation (the AI stays silent while set). Helper view only. */
+  conversationOwner?: string | null
+  /** Section 7.2: sanitized, recorded-only status for the resident screen. */
+  residentStatus?: {
+    requests: { id: string; kind: string; state: string; helperName?: string; label: string }[]
+    ownerName: string | null
+    residentApprovals: { id: string; text: string; kind: string }[]
+  }
 }
 
 /** Match result from matchPlanned() */
@@ -418,13 +427,18 @@ async function refreshCasesFromDB(
       sentAt: hr.sentAt.getTime(),
     })) || [],
     // Section 7: Include pending actions from DB
-    pendingActions: ((row as any).pendingActions as any)?.map((pa: any) => ({
+    pendingActions: (Array.isArray((row as any).pendingActions) ? (row as any).pendingActions : []).map((pa: any) => ({
       id: pa.id,
       tool: pa.tool,
+      text: pa.text,
+      reason: pa.reason,
+      approver: pa.approver ?? 'helper',
+      kind: pa.kind ?? 'ai_action',
       state: pa.state,
-      approvedBy: pa.approvedBy,
-      createdAt: pa.createdAt.getTime(),
-    })) || [],
+      decidedBy: pa.decidedBy,
+      createdAt: typeof pa.createdAt === 'number' ? pa.createdAt : new Date(pa.createdAt).getTime(),
+    })),
+    conversationOwner: (row as any).conversationOwner ?? null,
   }));
 }
 
@@ -729,9 +743,18 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
         base.checkCodeEndsAt = w.endsAt
       }
     }
-    // Section 7: Don't expose helper requests/pending actions to resident view
+    // Section 7.2: the resident sees only what has really been recorded, never channels, tools or other helpers' details.
+    const names = new Map<string, string | undefined>(memberships.map((m: any) => [m.id as string, (m.user?.name ?? undefined) as string | undefined]))
+    base.residentStatus = {
+      requests: residentRequestSummary(cur.helperRequests ?? [], (id) => names.get(id)),
+      ownerName: cur.conversationOwner ? (names.get(cur.conversationOwner) ?? 'A helper') : null,
+      residentApprovals: (cur.pendingActions ?? [])
+        .filter((a) => a.state === 'pending' && a.approver === 'resident')
+        .map((a) => ({ id: a.id, text: a.text ?? a.tool, kind: a.kind ?? 'ai_action' })),
+    }
     delete base.helperRequests
     delete base.pendingActions
+    delete base.conversationOwner
     return base
   })() : null
 
@@ -930,6 +953,20 @@ async function openCase(
   state.cases.unshift(c)
   if (state.cases.length > 200) state.cases.pop()
   await createCase({ ...c, householdId: state.householdId })
+
+  // Spec 7.2 step 4: a short-notice visit that needs approval gets a recorded approval request, so the helper (or the
+  // resident) has a real item to approve and the hold lifts only when it is approved. Silence never approves.
+  if (notice.status === 'short_notice' && notice.requiresApproval) {
+    try {
+      const { createPendingAction } = await import('../doorstep/pendingActions')
+      const label = c.visitLabel ? `${c.visitLabel}` : 'a visitor'
+      const created = await createPendingAction(c.id, 'visit_approval', `Let ${label} in? This visit was arranged on short notice.`, 'short_notice', { approver: notice.approver === 'resident' ? 'resident' : 'helper', kind: 'visit_approval' })
+      if (created) {
+        const { notifyPendingAction } = await import('../doorstep/approvalNotify')
+        await notifyPendingAction({ householdId: state.householdId, caseId: c.id, action: created }).catch((e) => console.error('[STORE] approval notify failed', e))
+      }
+    } catch (e) { console.error('[STORE] visit approval record failed', e) }
+  }
 
   // Spec 4.3: if the camera is already offline when the case opens, mark it unavailable immediately.
   if (anyDeviceOffline(state)) {
@@ -1516,13 +1553,12 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
 // ── Escalation wiring ─────────────────────────────────────────────────────────
 
-/** Seconds the next helper gets (spec 5.3). `approvalSec` is the resident's own approval timer, so the backup gets the
- *  same window the first helper got, not the 120 s default. */
-async function caseTimeoutSec(caseId: string, householdSec: number, approvalSec?: number): Promise<number> {
+/** Seconds the next helper gets (spec 5.3). `notice` provides the resident's short-notice policy and approval timer. */
+async function caseTimeoutSec(caseId: string, householdSec: number, notice: NoticeSettings): Promise<number> {
   try {
     const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true } })
-    const needsApproval = row?.noticeStatus === 'short_notice'
-    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval, approvalSec)
+    const needsApproval = row?.noticeStatus === 'short_notice' && notice.shortNoticePolicy !== 'ai_handles'
+    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval, notice.approvalTimerSec)
   } catch { return householdSec }   // never block escalation on a read failure
 }
 
@@ -1619,7 +1655,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
     try {
       const household = await getHousehold(row.householdId)
       if (!household) continue
-      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household).approvalTimerSec)
+      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household))
       const chain = ((row.chain as any) as string[]) || []
       const c: DoorCase = {
         id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
@@ -1636,10 +1672,11 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
 
       // Section 7: Approval retry for no_response cases
       const noticeStatus = (row as any).noticeStatus as string | undefined
-      if (c.status === 'no_response' && noticeStatus === 'short_notice') {
+      const noticeSettings = parseNoticeSettings(household)
+      if (c.status === 'no_response' && noticeStatus === 'short_notice' && noticeSettings.shortNoticePolicy !== 'ai_handles') {
         // Spec 7.2 step 4: retry at the resident's chosen interval. No fixed retry count: the visit stays closed and
         // the request keeps going round the chain until someone answers or the retry window (24 h) ends.
-        const approvalRetrySec = parseNoticeSettings(household).approvalRetrySec
+        const approvalRetrySec = noticeSettings.approvalRetrySec
         const timeSinceDeadline = Date.now() - c.deadlineAt
         const retryInterval = Math.floor(timeSinceDeadline / (approvalRetrySec * 1000))
         if (retryInterval > 0 && timeSinceDeadline <= APPROVAL_RETRY_WINDOW_MS) {
@@ -1724,7 +1761,7 @@ export async function tick(householdId?: string) {
     for (const c of state.cases) {
       if (c.status !== 'waiting' || c.lifecycle === 'closed' || now < c.deadlineAt) continue
       try {
-        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household).approvalTimerSec)
+        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household))
         const deps = escalationDeps(householdId, household.residentName, timeoutSec)
         await escalateDueCase(c, now, { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {
