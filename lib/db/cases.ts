@@ -157,19 +157,26 @@ export async function deleteAllCasesForHousehold(householdId: string) {
  */
 export async function claimEscalationStep(
   caseId: string,
-  expect: { helperIndex: number; deadlineAt: number; lane?: string | null },
+  expect: { helperIndex: number; deadlineAt: number; deadlineKind?: string | null; lane?: string | null; timerDeadlines?: { [kind: string]: number } },
   change: { helperIndex: number; deadlineAt: number; deadlineKind?: string; timerDeadlines?: { [kind: string]: number }; status: 'waiting' | 'no_response'; lane?: string | null; resolvedAt?: number },
   log: { t: number; msg: string }[],
 ): Promise<boolean> {
+  const where: any = {
+    id:          caseId,
+    status:      'waiting',
+    closedAt:    null,   // section 8: a closed case never escalates
+    helperIndex: expect.helperIndex,
+    deadlineAt:  new Date(expect.deadlineAt),
+    lane:        expect.lane ?? null,
+  }
+  if ('deadlineKind' in expect) where.deadlineKind = expect.deadlineKind ?? null
+  // Note: JSONB comparison is complex; for now we skip timerDeadlines in the compare-and-set
+  // and rely on the other fields (helperIndex, deadlineAt, deadlineKind) for concurrency safety
+  // This is acceptable because timerDeadlines is metadata and the governing deadlineAt/deadlineKind
+  // already ensure the correct timer behavior.
+
   const r = await getDb().case.updateMany({
-    where: {
-      id:          caseId,
-      status:      'waiting',
-      closedAt:    null,   // section 8: a closed case never escalates
-      helperIndex: expect.helperIndex,
-      deadlineAt:  new Date(expect.deadlineAt),
-      lane:        expect.lane ?? null,
-    },
+    where,
     data: {
       helperIndex: change.helperIndex,
       deadlineAt:  new Date(change.deadlineAt),

@@ -21,6 +21,8 @@ export const NO_ACTIVE_TIMER_SENTINEL_MS = 365 * 24 * 60 * 60 * 1000 // 1 year (
 
 export type TimerKind = 'household' | 'approval' | 'risk_decision' | 'takeover' | 'emergency' | 'none'
 
+export type ExpiryBehavior = 'notify_backup' | 'notify_backup_keep_primary' | 'emergency'
+
 export type TimerDeadlineMap = {
   household?: number
   approval?: number
