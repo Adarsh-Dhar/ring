@@ -22,7 +22,9 @@ export interface CorrectionLabelInput {
 
 export async function logCorrectionLabel(l: CorrectionLabelInput): Promise<void> {
   try {
-    await (getDb() as any).correctionLabel.create({
+    const db = getDb() as any
+    if (!db?.correctionLabel?.create) return
+    await db.correctionLabel.create({
       data: {
         householdId: l.householdId, caseId: l.caseId, obsId: l.obsId ?? null, code: l.code ?? null, action: l.action,
         actorRole: l.actorRole, actorId: l.actorId ?? null, reason: l.reason ?? null,

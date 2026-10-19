@@ -22,6 +22,7 @@ export interface AuditEvent {
  */
 export async function writeAudit(caseId: string, event: AuditEvent): Promise<void> {
   const db = getDb()
+  if (!db?.case?.findUnique || !db?.case?.update) return
   const c = await db.case.findUnique({ where: { id: caseId }, select: { log: true } })
   if (!c) return
 

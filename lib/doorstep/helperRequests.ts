@@ -3,8 +3,11 @@
  *
  * Tracks the lifecycle of a request sent to a helper: sent -> delivered -> acked -> accepted/declined/timed_out.
  * Uses compare-and-set transitions to ensure exactly-once semantics, similar to the escalation claim system.
+ *
+ * Section 8: each state transition refreshes the case lifecycle, so the UI stays in sync with request status.
  */
 import { getDb } from '@/lib/db/client'
+import { refreshLifecycle } from './caseLifecycle'
 
 export type HelperRequestKind = 'approval' | 'risk_decision' | 'takeover' | 'emergency'
 export type HelperRequestState = 'sent' | 'delivered' | 'acked' | 'accepted' | 'declined' | 'timed_out'
@@ -81,6 +84,10 @@ export async function markDelivered(requestId: string): Promise<boolean> {
     where: { id: requestId, state: 'sent' },
     data: { deliveredAt: new Date(), state: 'delivered' },
   })
+  if (result.count === 1) {
+    const request = await db.helperRequest.findUnique({ where: { id: requestId }, select: { caseId: true } })
+    if (request) await refreshLifecycle(request.caseId)
+  }
   return result.count === 1
 }
 
@@ -93,6 +100,10 @@ export async function markAcked(requestId: string): Promise<boolean> {
     where: { id: requestId, state: { in: ['sent', 'delivered'] } },
     data: { ackedAt: new Date(), state: 'acked' },
   })
+  if (result.count === 1) {
+    const request = await db.helperRequest.findUnique({ where: { id: requestId }, select: { caseId: true } })
+    if (request) await refreshLifecycle(request.caseId)
+  }
   return result.count === 1
 }
 
@@ -105,6 +116,10 @@ export async function markAccepted(requestId: string): Promise<boolean> {
     where: { id: requestId, state: 'acked' },
     data: { acceptedAt: new Date(), state: 'accepted' },
   })
+  if (result.count === 1) {
+    const request = await db.helperRequest.findUnique({ where: { id: requestId }, select: { caseId: true } })
+    if (request) await refreshLifecycle(request.caseId)
+  }
   return result.count === 1
 }
 
@@ -117,6 +132,10 @@ export async function markDeclined(requestId: string): Promise<boolean> {
     where: { id: requestId, state: 'acked' },
     data: { declinedAt: new Date(), state: 'declined' },
   })
+  if (result.count === 1) {
+    const request = await db.helperRequest.findUnique({ where: { id: requestId }, select: { caseId: true } })
+    if (request) await refreshLifecycle(request.caseId)
+  }
   return result.count === 1
 }
 
@@ -129,6 +148,10 @@ export async function markTimedOut(requestId: string): Promise<boolean> {
     where: { id: requestId, state: { in: ['sent', 'delivered', 'acked'] } },
     data: { timedOutAt: new Date(), state: 'timed_out' },
   })
+  if (result.count === 1) {
+    const request = await db.helperRequest.findUnique({ where: { id: requestId }, select: { caseId: true } })
+    if (request) await refreshLifecycle(request.caseId)
+  }
   return result.count === 1
 }
 

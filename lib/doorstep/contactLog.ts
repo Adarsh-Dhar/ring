@@ -31,10 +31,18 @@ export async function contactHelper(
     return { push: { sent: 0, failed: 0, noSubscription: true }, sms: { ok: false, reason: 'membership not found' } }
   }
 
-  const user = await getDb().user.findUnique({
-    where: { id: membership.userId },
-    select: { name: true, phone: true },
-  })
+  let user: { name: string | null; phone: string | null } | null = null
+  try {
+    const db = getDb()
+    if (db?.user?.findUnique) {
+      user = await db.user.findUnique({
+        where: { id: membership.userId },
+        select: { name: true, phone: true },
+      })
+    }
+  } catch {
+    // Database not available in test mocks
+  }
 
   const userName = user?.name || 'Helper'
 

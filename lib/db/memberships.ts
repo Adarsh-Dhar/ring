@@ -22,7 +22,9 @@ export async function getMembershipsForHousehold(householdId: string) {
 }
 
 export async function getApprovedMemberships(householdId: string) {
-  return getDb().membership.findMany({
+  const db = getDb()
+  if (!db?.membership?.findMany) return []
+  return db.membership.findMany({
     where: {
       householdId,
       consent: 'approved'

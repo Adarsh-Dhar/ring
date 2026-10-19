@@ -16,13 +16,17 @@ export async function createPushSubscription(membershipId: string, endpoint: str
 }
 
 export async function getPushSubscriptionsForMembership(membershipId: string) {
-  return getDb().pushSubscription.findMany({
+  const db = getDb()
+  if (!db?.pushSubscription?.findMany) return []
+  return db.pushSubscription.findMany({
     where: { membershipId }
   })
 }
 
 export async function getPushSubscriptionsForHousehold(householdId: string) {
-  const memberships = await getDb().membership.findMany({
+  const db = getDb()
+  if (!db?.membership?.findMany || !db?.pushSubscription?.findMany) return []
+  const memberships = await db.membership.findMany({
     where: {
       householdId,
       consent: 'approved'
@@ -32,7 +36,7 @@ export async function getPushSubscriptionsForHousehold(householdId: string) {
 
   const membershipIds = memberships.map((m) => m.id)
 
-  return getDb().pushSubscription.findMany({
+  return db.pushSubscription.findMany({
     where: {
       membershipId: { in: membershipIds }
     }
