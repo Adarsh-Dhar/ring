@@ -1,0 +1,17 @@
+@@ -157,7 +157,7 @@
+  */
+ export async function claimEscalationStep(
+   caseId: string,
+-  expect: { helperIndex: number; deadlineAt: number; lane?: string | null; timerDeadlines?: { [kind: string]: number } },
++  expect: { helperIndex: number; deadlineAt: number; deadlineKind?: string | null; lane?: string | null; timerDeadlines?: { [kind: string]: number } },
+   change: { helperIndex: number; deadlineAt: number; deadlineKind?: string; timerDeadlines?: { [kind: string]: number }; status: 'waiting' | 'no_response'; lane?: string | null; resolvedAt?: number },
+   log: { t: number; msg: string }[],
+ ): Promise<boolean> {
+@@ -169,6 +169,7 @@
+     deadlineAt:  new Date(expect.deadlineAt),
+     lane:        expect.lane ?? null,
+   }
++  if ('deadlineKind' in expect) where.deadlineKind = expect.deadlineKind ?? null
+   // If the caller saw the timer map, require it to still match. Otherwise an independent
+   // timer added by another request could be overwritten by this escalation's stale snapshot.
+   if (expect.timerDeadlines !== undefined) {

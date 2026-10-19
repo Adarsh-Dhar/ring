@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { timersFor, activeTimer, DEFAULT_APPROVAL_SECONDS, RISK_TIMER_BASE, TAKEOVER_CAP_SECONDS } from '@/lib/doorstep/collaborationController'
 import { shortenDeadline, recordTimerDeadline, checkExpiredTimers, expiryBehavior, type TimerKind } from '@/lib/doorstep/deadline'
+import { timerDurationsFor } from '@/lib/doorstep/helperEscalation'
 
 const row: any = {}
 const syncCaseDeadline = vi.fn()
@@ -27,6 +28,14 @@ vi.mock('@/lib/doorbell/store', () => ({
 }))
 
 describe('Section 5.3: Timer formulas', () => {
+  it('matches the specified risk and takeover formula for every integer score 0–100', () => {
+    for (let score = 0; score <= 100; score++) {
+      const timers = timersFor(score, score >= 60 && score < 100 ? 'helper_only' : 'ai_leads')
+      expect(timers.riskDecisionSec).toBe(score >= 1 && score <= 99 ? 120 - score : null)
+      expect(timers.takeoverSec).toBe(score >= 60 && score <= 99 ? Math.min(120 - score, 60) : null)
+    }
+  })
+
   it('risk_decision = 120 - S_eff for 1 <= S_eff <= 99', () => {
     expect(timersFor(1).riskDecisionSec).toBe(119)
     expect(timersFor(20).riskDecisionSec).toBe(100)
@@ -96,6 +105,16 @@ describe('Section 5.3: activeTimer selection', () => {
   it('takeover timer is always active when helper-led and non-null', () => {
     const timers = timersFor(70, 'helper_only')
     expect(activeTimer(timers)?.kind).toBe('takeover')
+  })
+
+
+  it('risk-decision and takeover retain distinct identities when durations tie', () => {
+    const timers = timersFor(70, 'helper_only')
+    expect(timers.riskDecisionSec).toBe(50)
+    expect(timers.takeoverSec).toBe(50)
+    // activeTimer is for choosing a governing wake-up only; an AI-budget request must explicitly
+    // persist risk_decision rather than reusing this tie-break result.
+    expect(activeTimer(timers, { riskDecisionNeeded: true })?.kind).toBe('takeover')
   })
 })
 

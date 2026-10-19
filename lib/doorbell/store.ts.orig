@@ -4,9 +4,12 @@ import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfigure
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
-import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
+import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
+import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
+import { residentRequestSummary } from '@/lib/doorstep/residentStatus'
+import { maxMode, modeRank as controlModeRank } from '@/lib/doorstep/riskRules'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
 import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus } from '../doorstep/noticePolicy'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
@@ -17,6 +20,9 @@ import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
+import { attachEvent, sweepQuietCases, sweepStaleCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
+import { readStored } from '../doorstep/caseRisk'
+import { RISK_RULES, type LifecycleState } from '../doorstep/riskRules'
 import { contactHelper } from '../doorstep/contactLog'
 import { createHelperRequest, markAcked, type HelperRequestKind } from '../doorstep/helperRequests'
 import { chainFrom } from '../doorstep/chainOrder'
@@ -72,6 +78,14 @@ export interface RecurringVisit {
 /** What a screen needs; the resident never gets the full schedule. */
 export interface RecurringNow { id: string; icon: string; label: string; endsAt: number }
 
+/** Section 8: extra case information for the screens (see getState). */
+export interface LifecycleInfo {
+  statements: { id: string; kind: 'expected' | 'known'; at: string; who: string; note?: string }[]
+  disputed: { obsId: string; note?: string; at: string }[]
+  prior: import('../doorstep/riskRules').PriorSeriousEvent[]
+  notes: { id: string; label: string; disputed: boolean }[]
+}
+
 export interface DoorCase {
   id:            string
   kind:          CaseKind
@@ -79,6 +93,8 @@ export interface DoorCase {
   createdAt:     number
   helperIndex:   number
   deadlineAt:    number
+  deadlineKind?: string   // household | approval | risk_decision | takeover
+  timerDeadlines?: { [kind: string]: number }  // { approval?: ms, risk_decision?: ms, takeover?: ms }
   status:        CaseStatus
   answer?:       Answer
   answeredBy?:   string
@@ -110,10 +126,25 @@ export interface DoorCase {
   /** Spec 4.3: set when an uncertain forced_entry_or_assault was observed (camera description alone).
    *  Used by the resident view to show the keep-closed message before confirmation arrives. */
   unconfirmedAlertedAt?: number | null
+  /** Section 8.1 lifecycle (open, helper_review, visitor_left, closed). `status` above is the doorbell answer flow. */
+  lifecycle?:    LifecycleState
+  visitorLeftAt?: number
+  closedAt?:     number
+  outcome?:      string
+  possibleNewVisitorAt?: number
+  splitFromId?:  string
   /** Section 7: Helper requests for this case (sent, delivered, acked, accepted, declined, timed_out) */
-  helperRequests?: { id: string; kind: string; state: string; membershipId: string; createdAt: number }[]
-  /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed) */
-  pendingActions?: { id: string; tool: string; state: string; approvedBy?: string; createdAt: number }[]
+  helperRequests?: { id: string; kind: string; state: string; membershipId: string; sentAt: number; deliveredAt?: number; ackedAt?: number; acceptedAt?: number; declinedAt?: number; timedOutAt?: number; channels?: any }[]
+  /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed). `text` is the exact proposed words. */
+  pendingActions?: { id: string; tool: string; state: string; text?: string; reason?: string; approver?: string; kind?: string; decidedBy?: string; createdAt: number }[]
+  /** Section 7: membership that currently owns the conversation (the AI stays silent while set). Helper view only. */
+  conversationOwner?: string | null
+  /** Section 7.2: sanitized, recorded-only status for the resident screen. */
+  residentStatus?: {
+    requests: { id: string; kind: string; state: string; helperName?: string; label: string }[]
+    ownerName: string | null
+    residentApprovals: { id: string; text: string; kind: string }[]
+  }
 }
 
 /** Match result from matchPlanned() */
@@ -183,6 +214,8 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       createdAt:     c.createdAt.getTime(),
       helperIndex:   c.helperIndex,
       deadlineAt:    c.deadlineAt.getTime(),
+      deadlineKind:  (c as any).deadlineKind || undefined,
+      timerDeadlines: (c as any).timerDeadlines || undefined,
       status:        c.status as CaseStatus,
       answer:        c.answer as Answer | undefined,
       answeredBy:    c.answeredBy || undefined,
@@ -208,8 +241,22 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       regularId:     (c as any).regularId     || undefined,
       noticeStatus:  ((c as any).noticeStatus as NoticeStatus) || undefined,
       riskScore:     (c as any).riskScore ?? undefined,
+      lifecycle: ((c as any).lifecycle as LifecycleState) || 'open',
+      visitorLeftAt: (c as any).visitorLeftAt ? new Date((c as any).visitorLeftAt).getTime() : undefined,
+      closedAt: (c as any).closedAt ? new Date((c as any).closedAt).getTime() : undefined,
+      outcome: (c as any).outcome || undefined,
+      possibleNewVisitorAt: (c as any).possibleNewVisitorAt ? new Date((c as any).possibleNewVisitorAt).getTime() : undefined,
+      splitFromId: (c as any).splitFromId || undefined,
       controlMode:   (c as any).controlMode || undefined,
       unconfirmedAlertedAt: (c as any).unconfirmedAlertedAt ? new Date((c as any).unconfirmedAlertedAt).getTime() : null,
+      // Section 7: Include helper requests
+      helperRequests: (c as any).helperRequests?.map((hr: any) => ({
+        id: hr.id,
+        kind: hr.kind,
+        state: hr.state,
+        membershipId: hr.membershipId,
+        sentAt: hr.sentAt.getTime(),
+      })) || [],
     }))
 
     const approved = await getApprovedMemberships(householdId)
@@ -320,6 +367,13 @@ async function loadStateFromDB(householdId: string): Promise<void> {
 // Reusable function to reload cases from PostgreSQL and sync with in-memory state.
 // This ensures that events created by webhooks or other server instances are visible.
 
+/** Spec 5.3: another module shortened the database deadline, so move the cached copy earlier too (never later). */
+export function syncCaseDeadline(householdId: string, caseId: string, deadlineMs: number): void {
+  const state = householdStates.get(householdId)
+  const c = state?.cases.find((x) => x.id === caseId)
+  if (c && deadlineMs < c.deadlineAt) c.deadlineAt = deadlineMs
+}
+
 async function refreshCasesFromDB(
   householdId: string,
   state: HouseholdState
@@ -333,6 +387,8 @@ async function refreshCasesFromDB(
     createdAt: row.createdAt.getTime(),
     helperIndex: row.helperIndex,
     deadlineAt: row.deadlineAt.getTime(),
+    deadlineKind: (row as any).deadlineKind || undefined,
+    timerDeadlines: (row as any).timerDeadlines || undefined,
     status: row.status as CaseStatus,
     answer: row.answer as Answer | undefined,
     answeredBy: row.answeredBy || undefined,
@@ -360,6 +416,12 @@ async function refreshCasesFromDB(
     regularId: (row as any).regularId || undefined,
     noticeStatus: ((row as any).noticeStatus as NoticeStatus) || undefined,
     riskScore: row.riskScore, // P11: Include for emergency detection
+    lifecycle: ((row as any).lifecycle as LifecycleState) || 'open',
+    visitorLeftAt: (row as any).visitorLeftAt ? new Date((row as any).visitorLeftAt).getTime() : undefined,
+    closedAt: (row as any).closedAt ? new Date((row as any).closedAt).getTime() : undefined,
+    outcome: (row as any).outcome || undefined,
+    possibleNewVisitorAt: (row as any).possibleNewVisitorAt ? new Date((row as any).possibleNewVisitorAt).getTime() : undefined,
+    splitFromId: (row as any).splitFromId || undefined,
     controlMode: row.controlMode, // P11: Include for emergency detection
     unconfirmedAlertedAt: (row as any).unconfirmedAlertedAt ? new Date((row as any).unconfirmedAlertedAt).getTime() : null,
     // Section 7: Include helper requests
@@ -368,16 +430,21 @@ async function refreshCasesFromDB(
       kind: hr.kind,
       state: hr.state,
       membershipId: hr.membershipId,
-      createdAt: hr.createdAt.getTime(),
+      sentAt: hr.sentAt.getTime(),
     })) || [],
     // Section 7: Include pending actions from DB
-    pendingActions: ((row as any).pendingActions as any)?.map((pa: any) => ({
+    pendingActions: (Array.isArray((row as any).pendingActions) ? (row as any).pendingActions : []).map((pa: any) => ({
       id: pa.id,
       tool: pa.tool,
+      text: pa.text,
+      reason: pa.reason,
+      approver: pa.approver ?? 'helper',
+      kind: pa.kind ?? 'ai_action',
       state: pa.state,
-      approvedBy: pa.approvedBy,
-      createdAt: pa.createdAt.getTime(),
-    })) || [],
+      decidedBy: pa.decidedBy,
+      createdAt: typeof pa.createdAt === 'number' ? pa.createdAt : new Date(pa.createdAt).getTime(),
+    })),
+    conversationOwner: (row as any).conversationOwner ?? null,
   }));
 }
 
@@ -682,14 +749,48 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
         base.checkCodeEndsAt = w.endsAt
       }
     }
-    // Section 7: Don't expose helper requests/pending actions to resident view
+    // Section 7.2: the resident sees only what has really been recorded, never channels, tools or other helpers' details.
+    const names = new Map<string, string | undefined>(memberships.map((m: any) => [m.id as string, (m.user?.name ?? undefined) as string | undefined]))
+    base.residentStatus = {
+      requests: residentRequestSummary(cur.helperRequests ?? [], (id) => names.get(id)),
+      ownerName: cur.conversationOwner ? (names.get(cur.conversationOwner) ?? 'A helper') : null,
+      residentApprovals: (cur.pendingActions ?? [])
+        .filter((a) => a.state === 'pending' && a.approver === 'resident')
+        .map((a) => ({ id: a.id, text: a.text ?? a.tool, kind: a.kind ?? 'ai_action' })),
+    }
     delete base.helperRequests
     delete base.pendingActions
+    delete base.conversationOwner
     return base
   })() : null
 
+  // Section 8: what the screens need to show beyond the case row.
+  //  helper:   resident statements, observations the resident disputed, and earlier serious events (information only)
+  //  resident: what was noted (so a wrong one can be flagged for the helper); the resident can flag, never retract
+  let lifecycleInfo: LifecycleInfo | null = null
+  if (cur) {
+    try {
+      const row = await getCase(cur.id)
+      const st = readStored((row as any)?.riskObservations)
+      const live = st.observations.filter(o => o.id && !o.retracted && o.source !== 'resident')
+      if (resident) {
+        lifecycleInfo = { statements: st.statements ?? [], disputed: [], prior: [], notes: live.map(o => ({ id: o.id!, label: RISK_RULES[o.code]?.label ?? o.code, disputed: !!o.disputedAt })) }
+      } else {
+        lifecycleInfo = {
+          statements: st.statements ?? [],
+          disputed: st.observations.filter(o => o.disputedAt && !o.retracted).map(o => ({ obsId: o.id!, note: o.disputeNote, at: o.disputedAt! })),
+          prior: await getPriorSeriousEvents(householdId, cur.id),
+          notes: [],
+        }
+      }
+    } catch (e) {
+      reportError(e, { householdId, fn: 'getState/lifecycleInfo' })
+    }
+  }
+
   return {
     now,
+    lifecycleInfo,
     me:     membershipId ?? null,
     ready:  memberships.length > 0,
     emergencyNumber: household.emergencyNumber,
@@ -755,7 +856,7 @@ export async function getSetup(householdId: string) {
 // ── Case lifecycle ────────────────────────────────────────────────────────────
 
 function activeCase(state: HouseholdState, now = Date.now()): DoorCase | null {
-  const c = state.cases[0]
+  const c = state.cases.find(x => x.lifecycle !== 'closed')
   if (!c) return null
   if (c.status === 'waiting') return c
   const awaitingConfirm = c.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt
@@ -789,6 +890,8 @@ async function openCase(
     createdAt:   now,
     helperIndex: 0,
     deadlineAt:  now + secs * 1000,
+    deadlineKind: m ? 'household' : 'household', // Section 5.3: initial deadline is household timeout
+    timerDeadlines: {},
     status:      'waiting',
     log:         [],
     chain:       approved.map(m => m.id), // Will be re-sorted by tier below
@@ -818,6 +921,11 @@ async function openCase(
   if (notice.requiresApproval && notice.status === 'short_notice') {
     secs = parseNoticeSettings(household).approvalTimerSec
     c.deadlineAt = now + secs * 1000
+    c.deadlineKind = 'approval'
+    c.timerDeadlines = { approval: c.deadlineAt }
+    // Record the approval timer independently using the deadline helper
+    const { recordTimerDeadline } = await import('@/lib/doorstep/deadline')
+    await recordTimerDeadline(state.householdId, c.id, 'approval', c.deadlineAt, 'Short-notice visit requires approval')
   }
 
   // Section 7: Store approval retry interval for later use
@@ -859,6 +967,20 @@ async function openCase(
   if (state.cases.length > 200) state.cases.pop()
   await createCase({ ...c, householdId: state.householdId })
 
+  // Spec 7.2 step 4: a short-notice visit that needs approval gets a recorded approval request, so the helper (or the
+  // resident) has a real item to approve and the hold lifts only when it is approved. Silence never approves.
+  if (notice.status === 'short_notice' && notice.requiresApproval) {
+    try {
+      const { createPendingAction } = await import('../doorstep/pendingActions')
+      const label = c.visitLabel ? `${c.visitLabel}` : 'a visitor'
+      const created = await createPendingAction(c.id, 'visit_approval', `Let ${label} in? This visit was arranged on short notice.`, 'short_notice', { approver: notice.approver === 'resident' ? 'resident' : 'helper', kind: 'visit_approval' })
+      if (created) {
+        const { notifyPendingAction } = await import('../doorstep/approvalNotify')
+        await notifyPendingAction({ householdId: state.householdId, caseId: c.id, action: created }).catch((e) => console.error('[STORE] approval notify failed', e))
+      }
+    } catch (e) { console.error('[STORE] visit approval record failed', e) }
+  }
+
   // Spec 4.3: if the camera is already offline when the case opens, mark it unavailable immediately.
   if (anyDeviceOffline(state)) {
     const offlineSince = Math.min(...Object.values(state.devices).filter(d => !d.online).map(d => d.since))
@@ -880,21 +1002,25 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 
   await tick(householdId)
 
-  // Check database for open waiting cases to prevent duplicates across instances
-  const openCases = await getOpenCasesForHousehold(householdId)
-  if (openCases.length > 0) {
-    // Merge the event into the most recent waiting case
-    const existingId = openCases[0].id
-    const existing = state.cases.find(c => c.id === existingId)
-    if (existing && existing.status === 'waiting') {
-      // P9: Count repeated button_press events as extra_knock within 30s window
-      if (event.event_type === 'button_press') {
-        await handleExtraKnock(householdId, existingId, event.device_id)
-      }
-      addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
-      await updateCase(existing.id, existing)
-      return null  // Return null to indicate the event was merged into an existing case
+  // Security: run stale case sweep before checking for active case
+  await sweepStaleCases(householdId, Date.now())
+
+  // Section 8.2: a new event attaches to the newest case that is not closed, because the system cannot reliably tell
+  // visitors apart. Only a closed case lets the event open a new case (starting at 0, nothing carried over).
+  const active = await getActiveLifecycleCase(householdId)
+  if (active) {
+    const existing = state.cases.find(c => c.id === active.id)
+    // P9: Count repeated button_press events as extra_knock within 30s window
+    if (event.event_type === 'button_press') {
+      await handleExtraKnock(householdId, active.id, event.device_id)
     }
+    const attached = await attachEvent(active.id)
+    if (existing) {
+      addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
+      if (attached.ok && attached.possibleNewVisitor) addLog(existing, 'Possible new visitor: this event came after the earlier visit was dealt with. A helper can split it into a new case.')
+      await updateCase(existing.id, existing)
+    }
+    return null  // Return null to indicate the event was merged into an existing case
   }
 
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
@@ -915,6 +1041,15 @@ async function handleExtraKnock(householdId: string, caseId: string, _deviceId: 
   } catch (e) {
     console.error('[G2] Failed to handle extra_knock:', e)
   }
+}
+
+/**
+ * Section 8.2: open the new case for a split "possible new visitor". Goes through openCase, so the normal alert path
+ * runs (the first helper is notified) and the new case starts at 0 with a fresh answer timer.
+ */
+export async function openSplitCase(householdId: string, from: { id: string; eventType: string; deviceId: string | null }): Promise<DoorCase> {
+  const state = await getOrCreateState(householdId)
+  return openCase(state, 'visitor', from.eventType, `Split from case ${from.id}: a possible new visitor.`, from.deviceId, null)
 }
 
 /**
@@ -1084,6 +1219,8 @@ export async function selfVerify(
     c.checkWord  = undefined
     c.checkMode  = undefined
     c.deadlineAt = now + state.timeoutSec * 1000
+    c.deadlineKind = 'household'
+    c.timerDeadlines = {}
     addLog(c, 'Resident said the visitor did NOT pass the check. Treated as an unknown visitor: full alert and SMS.')
     const first = approved.find(m => m.id === c.chain[c.helperIndex])
     if (first) {
@@ -1431,12 +1568,22 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
 // ── Escalation wiring ─────────────────────────────────────────────────────────
 
-async function caseTimeoutSec(caseId: string, householdSec: number): Promise<number> {
+/** Seconds the next helper gets (spec 5.3). `notice` provides the resident's short-notice policy and approval timer. */
+async function caseTimeoutSec(caseId: string, householdSec: number, notice: NoticeSettings): Promise<{ seconds: number; kind: string }> {
   try {
     const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true } })
-    const needsApproval = row?.noticeStatus === 'short_notice'
-    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval)
-  } catch { return householdSec }   // never block escalation on a read failure
+    const needsApproval = row?.noticeStatus === 'short_notice' && notice.shortNoticePolicy !== 'ai_handles'
+    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval, notice.approvalTimerSec)
+  } catch { return { seconds: householdSec, kind: 'household' } }   // never block escalation on a read failure
+}
+
+/** Spec 6.1: the mode that governs a case is the more human-led of the stored event minimum and the band of its score.
+ *  case.controlMode alone is only the event minimum, so a score-60 case built from M1-level events would read as M1. */
+function modeOfCase(c: { riskScore?: number | null; controlMode?: string | null; effectiveMode?: string | null }): ControlMode {
+  return maxMode(
+    effectiveModeFor(c.riskScore, (c.controlMode as ControlMode | null | undefined) ?? null),
+    ((c.effectiveMode as ControlMode | null | undefined) ?? 'ai_leads'),
+  )
 }
 
 /** Database claim + alerts for one household. Used by tick() and by the worker sweep. */
@@ -1477,8 +1624,7 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
       if (step.kind === 'exhausted') {
         // Spec 7.2 step 4: nobody accepted. Alert every configured contact together (push and SMS in parallel) and
         // wait for the sends so a failure lands in the case log instead of disappearing.
-        const exhaustedMode = ((c as any).effectiveMode || (c as any).controlMode) as string | undefined
-        const helperLed = ['helper_only', 'helper_urgent', 'emergency'].includes(exhaustedMode || '')
+        const helperLed = controlModeRank(modeOfCase(c as any)) >= controlModeRank('helper_only')
         const body = helperLed
           ? `URGENT: nobody has answered for ${residentName}'s door and the case needs a helper. Do not open the door. Check the app or call them now.`
           : `Doorbell: nobody answered for ${residentName}. The door stays closed. Please call them now.`
@@ -1493,11 +1639,7 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         }
       }
       // Issue #4: When mode is helper-led (M3+) or higher, also re-notify the primary helper (chain[0])
-      const controlMode = (c as any).controlMode as string | undefined
-      const effectiveMode = (c as any).effectiveMode as string | undefined
-      const mode = effectiveMode || controlMode
-      const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(mode || 'ai_leads')
-      if (modeRank >= 3 && c.chain[0] && c.chain[0] !== step.toId) {
+      if (controlModeRank(modeOfCase(c as any)) >= controlModeRank('helper_only') && c.chain[0] && c.chain[0] !== step.toId) {
         const primary = await getMembership(c.chain[0])
         if (primary) {
           pushToMembership(primary.id, { title: '🚪 Reminder: still waiting', body: 'The case has moved to the next helper. Please check in.', tag: c.id, url: '/helper' })
@@ -1528,7 +1670,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
     try {
       const household = await getHousehold(row.householdId)
       if (!household) continue
-      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS)
+      const { seconds: timeoutSec, kind: timeoutKind } = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household))
       const chain = ((row.chain as any) as string[]) || []
       const c: DoorCase = {
         id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
@@ -1536,15 +1678,20 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
         status: row.status as CaseStatus, log: ((row.log as any) || []),
         chain: chain.length ? chain : (await getApprovedMemberships(row.householdId)).map(m => m.id),
         lane: (row.lane as 'normal' | 'expected' | null) ?? undefined,
+        // The backstop must see the same score and mode the live path sees, or every swept case reads as M0:
+        // no primary re-notify and no URGENT SMS.
+        riskScore: (row as any).riskScore ?? undefined,
+        controlMode: (row as any).controlMode ?? undefined,
       }
-      steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
+      steps += await escalateDueCase(c, Date.now(), { timeoutSec, timeoutKind, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
 
       // Section 7: Approval retry for no_response cases
       const noticeStatus = (row as any).noticeStatus as string | undefined
-      if (c.status === 'no_response' && noticeStatus === 'short_notice') {
+      const noticeSettings = parseNoticeSettings(household)
+      if (c.status === 'no_response' && noticeStatus === 'short_notice' && noticeSettings.shortNoticePolicy !== 'ai_handles') {
         // Spec 7.2 step 4: retry at the resident's chosen interval. No fixed retry count: the visit stays closed and
         // the request keeps going round the chain until someone answers or the retry window (24 h) ends.
-        const approvalRetrySec = parseNoticeSettings(household).approvalRetrySec
+        const approvalRetrySec = noticeSettings.approvalRetrySec
         const timeSinceDeadline = Date.now() - c.deadlineAt
         const retryInterval = Math.floor(timeSinceDeadline / (approvalRetrySec * 1000))
         if (retryInterval > 0 && timeSinceDeadline <= APPROVAL_RETRY_WINDOW_MS) {
@@ -1627,11 +1774,11 @@ export async function tick(householdId?: string) {
     warnIfAlertsFailing(state, now)
 
     for (const c of state.cases) {
-      if (c.status !== 'waiting' || now < c.deadlineAt) continue
+      if (c.status !== 'waiting' || c.lifecycle === 'closed' || now < c.deadlineAt) continue
       try {
-        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec)
+        const { seconds: timeoutSec, kind: timeoutKind } = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household))
         const deps = escalationDeps(householdId, household.residentName, timeoutSec)
-        await escalateDueCase(c, now, { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
+        await escalateDueCase(c, now, { timeoutSec, timeoutKind, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {
         reportError(e, { householdId, fn: 'tick/escalate', caseId: c.id })
       }
@@ -1644,6 +1791,10 @@ export async function tick(householdId?: string) {
     if (now - state.lastRequestSweepAt > 30_000) {
       state.lastRequestSweepAt = now
       sweepRequests(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepRequests' }))
+      // Section 8.2: close idle cases whose quiet period has passed.
+      sweepQuietCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepQuietCases' }))
+      // Security: close any case that has been open for more than 1 hour
+      sweepStaleCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepStaleCases' }))
     }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }

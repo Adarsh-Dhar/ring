@@ -17,8 +17,119 @@ import { getDb } from '@/lib/db/client'
 import { createAuditEvent, writeAudit } from './audit'
 
 export const DEADLINE_POLICY = 'earliest_wins' as const
+export const NO_ACTIVE_TIMER_SENTINEL_MS = 365 * 24 * 60 * 60 * 1000 // 1 year (non-null sentinel)
 
-export type TimerKind = 'household' | 'approval' | 'risk_decision' | 'takeover' | 'emergency'
+export type TimerKind = 'household' | 'approval' | 'risk_decision' | 'takeover' | 'emergency' | 'none'
+
+export type TimerDeadlineMap = {
+  household?: number
+  approval?: number
+  risk_decision?: number
+  takeover?: number
+}
+
+/** Normalize timer deadlines to a consistent type (handle null/undefined/SQL null) */
+export function normalizeTimerDeadlines(deadlines: any): TimerDeadlineMap {
+  if (!deadlines) return {}
+  if (typeof deadlines === 'object' && !Array.isArray(deadlines)) {
+    const result: TimerDeadlineMap = {}
+    for (const [key, value] of Object.entries(deadlines)) {
+      if (typeof value === 'number' && value > 0) {
+        result[key as keyof TimerDeadlineMap] = value
+      }
+    }
+    return result
+  }
+  return {}
+}
+
+/** Find the governing timer (earliest deadline). Takeover wins ties. */
+export function governingTimer(deadlines: TimerDeadlineMap): { kind: TimerKind; deadlineMs: number } | null {
+  const entries = Object.entries(deadlines).filter(([_, ms]) => typeof ms === 'number' && ms > 0)
+  if (entries.length === 0) return null
+
+  // Sort by deadline, then by priority (takeover > risk_decision > approval > household)
+  const priority: Record<TimerKind, number> = {
+    takeover: 4,
+    risk_decision: 3,
+    approval: 2,
+    household: 1,
+    emergency: 0,
+    none: 0,
+  }
+
+  entries.sort((a, b) => {
+    const [kindA, msA] = a as [TimerKind, number]
+    const [kindB, msB] = b as [TimerKind, number]
+    if (msA !== msB) return msA - msB
+    return (priority[kindB] ?? 0) - (priority[kindA] ?? 0)
+  })
+
+  const [kind, deadlineMs] = entries[0] as [TimerKind, number]
+  return { kind, deadlineMs }
+}
+
+/** Choose the strongest expired timer for expiry behavior. Takeover > risk_decision > approval > household. */
+export function chooseExpiredTimer(deadlines: TimerDeadlineMap, now: number): { kind: TimerKind; deadlineMs: number } | null {
+  const priority: Record<TimerKind, number> = {
+    takeover: 4,
+    risk_decision: 3,
+    approval: 2,
+    household: 1,
+    emergency: 0,
+    none: 0,
+  }
+
+  const expired = Object.entries(deadlines)
+    .filter(([_, ms]) => typeof ms === 'number' && ms <= now)
+    .map(([kind, ms]) => ({ kind: kind as TimerKind, deadlineMs: ms as number }))
+
+  if (expired.length === 0) return null
+
+  // Return the highest priority expired timer
+  expired.sort((a, b) => (priority[b.kind] ?? 0) - (priority[a.kind] ?? 0))
+  return expired[0]
+}
+
+/** Clear all timer deadlines and set to a specific kind (used for emergency/timerless states). */
+export async function clearAllTimerDeadlines(
+  householdId: string,
+  caseId: string,
+  reason: string,
+  kind: TimerKind
+): Promise<void> {
+  const db = getDb()
+  const now = Date.now()
+  const targetDeadline = kind === 'emergency' || kind === 'none'
+    ? now + NO_ACTIVE_TIMER_SENTINEL_MS
+    : now + 365 * 24 * 60 * 60 * 1000
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const row = await db.case.findUnique({
+      where: { id: caseId },
+      select: { status: true, deadlineAt: true }
+    })
+    if (!row || row.status !== 'waiting') return
+
+    const r = await db.case.updateMany({
+      where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt },
+      data: {
+        deadlineAt: new Date(targetDeadline),
+        deadlineKind: kind,
+        timerDeadlines: {},
+      }
+    })
+
+    if (r.count === 1) {
+      try {
+        const { syncCaseDeadline } = await import('@/lib/doorbell/store')
+        if (typeof syncCaseDeadline === 'function') syncCaseDeadline(householdId, caseId, targetDeadline)
+      } catch { /* cache sync is best effort */ }
+      await writeAudit(caseId, createAuditEvent('system', 'timers_cleared', { reason, kind })).catch(() => {})
+      return
+    }
+  }
+}
 
 /** Record a timer deadline independently, even if it doesn't shorten the governing deadline. */
 export async function recordTimerDeadline(

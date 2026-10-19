@@ -1,0 +1,103 @@
+@@ -97,6 +97,9 @@
+       select: { deadlineAt: true, deadlineKind: true, status: true, timerDeadlines: true },
+     })
+     if (!row || row.status !== 'waiting') return false
++    // A confirmed emergency has no acknowledgement timers. The correction path must explicitly
++    // move deadlineKind back to `none` before re-arming ordinary timers.
++    if (row.deadlineKind === 'emergency') return false
+ 
+     const currentMap = legacyTimerMap(row)
+     const oldForKind = currentMap[kind]
+@@ -113,6 +116,7 @@
+         id: caseId,
+         status: 'waiting',
+         deadlineAt: row.deadlineAt,
++        deadlineKind: row.deadlineKind,
+         timerDeadlines: prismaJsonCompare(row.timerDeadlines),
+       },
+       data: {
+@@ -154,7 +158,7 @@
+  * A timer that is already expired cannot be cancelled: the timeout path must still escalate it.
+  * If other timers remain, the earliest one becomes the scheduler deadline. If none remain, mark
+  * the case as explicitly timerless and move the non-null legacy deadline beyond the stale-case TTL.
+- * Compare-and-set on both fields prevents cancellation from overwriting a concurrent timer update.
++ * Compare-and-set on all governing fields prevents cancellation from overwriting a concurrent timer update.
+  */
+ export async function cancelTimerDeadline(
+   householdId: string,
+@@ -169,7 +173,7 @@
+       where: { id: caseId },
+       select: { deadlineAt: true, deadlineKind: true, status: true, timerDeadlines: true },
+     })
+-    if (!row || row.status !== 'waiting') return false
++    if (!row || row.status !== 'waiting' || row.deadlineKind === 'emergency') return false
+ 
+     const currentMap = legacyTimerMap(row)
+     const currentDeadlineForKind = currentMap[kind]
+@@ -186,6 +190,7 @@
+         id: caseId,
+         status: 'waiting',
+         deadlineAt: row.deadlineAt,
++        deadlineKind: row.deadlineKind,
+         timerDeadlines: prismaJsonCompare(row.timerDeadlines),
+       },
+       data: {
+@@ -201,6 +206,58 @@
+       await writeAudit(caseId, createAuditEvent('system', 'timer_cancelled', {
+         kind, reason, nextGoverningKind: nextGoverning?.kind ?? null,
+         nextDeadlineAt: nextGoverning?.deadlineMs ?? null,
++      })).catch(() => {})
++      return true
++    }
++  }
++  return false
++}
++
++/**
++ * Clear every acknowledgement timer for a no-timer state such as a confirmed emergency.
++ * `deadlineAt` remains non-null for legacy/schema compatibility, but is only a sentinel: the
++ * scheduler must ignore it whenever deadlineKind is `none` or `emergency`.
++ * The compare-and-set includes all timer-index fields so a concurrent timer update cannot be lost.
++ */
++export async function clearAllTimerDeadlines(
++  householdId: string,
++  caseId: string,
++  reason: string,
++  state: 'none' | 'emergency' = 'none',
++  now = Date.now(),
++): Promise<boolean> {
++  const db = getDb()
++  const sentinel = now + NO_ACTIVE_TIMER_SENTINEL_MS
++  for (let attempt = 0; attempt < 3; attempt++) {
++    const row = await db.case.findUnique({
++      where: { id: caseId },
++      select: { deadlineAt: true, deadlineKind: true, status: true, timerDeadlines: true },
++    })
++    if (!row || row.status !== 'waiting') return false
++
++    const currentMap = legacyTimerMap(row)
++    if (row.deadlineKind === state && Object.keys(currentMap).length === 0) return false
++
++    const update = await db.case.updateMany({
++      where: {
++        id: caseId,
++        status: 'waiting',
++        deadlineAt: row.deadlineAt,
++        deadlineKind: row.deadlineKind,
++        timerDeadlines: prismaJsonCompare(row.timerDeadlines),
++      },
++      data: {
++        deadlineAt: new Date(sentinel),
++        deadlineKind: state,
++        timerDeadlines: {} as Prisma.InputJsonValue,
++      },
++    })
++
++    if (update.count === 1) {
++      const { syncCaseDeadline } = await import('@/lib/doorbell/store')
++      syncCaseDeadline(householdId, caseId, sentinel, state, {})
++      await writeAudit(caseId, createAuditEvent('system', 'timers_cleared', {
++        reason, state, clearedKinds: Object.keys(currentMap),
+       })).catch(() => {})
+       return true
+     }

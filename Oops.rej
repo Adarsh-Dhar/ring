@@ -1,0 +1,19 @@
+@@ -215,7 +215,7 @@
+ | S5-05 | 80 | 20 | 80 | 40 s |
+ | S5-06 | 100 | 0 | 100 | none (emergency) |
+ 
+-To check a timer, compare `deadlineAt` with the case creation time in Prisma Studio, or watch the countdown if the helper card shows one.
++To check timers, inspect `timerDeadlines` in Prisma Studio: each applicable timer is stored as an absolute Unix-millisecond deadline. `deadlineAt`/`deadlineKind` must represent the earliest active timer (takeover wins ties). For explicit `none` or `emergency` states, `timerDeadlines` must be empty and the compatibility deadline is ignored.
+ 
+ ### 5.2 What differs at each score
+ 
+@@ -236,6 +236,9 @@
+ | S5-23 | Takeover at 80 | Reach S = 80. | The timer is 40 s. The urgent alert reached all helpers at once first. |
+ | S5-24 | Emergency | Press 💥 Door force. | No timer. Primary and backup are alerted at the same time. |
+ | S5-25 | Nobody answers | Let all helpers stay silent. | The case ends in "no response". The resident is told to keep the door closed. This is never treated as approval. |
++
++
++**Timer arbitration rule:** all applicable timers remain independently recorded. `deadlineAt` is the scheduler wake-up and must equal the earliest active timer. If a worker wakes late and multiple timers have expired, process one escalation step and select the strongest expired behavior (`takeover` before `risk_decision`, then `approval`, then legacy `household`) so a delayed sweep cannot skip several helpers. The newly contacted helper receives a fresh window for every still-active reason. When the chain is exhausted, clear the timer map and enter `no_response`; never interpret silence as approval.
+ 
+ ### 5.4 The action gate
+ 

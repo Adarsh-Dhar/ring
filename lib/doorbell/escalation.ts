@@ -29,6 +29,7 @@
  */
 
 import type { DoorCase } from './store'
+import { chooseExpiredTimer, expiryBehavior, normalizeTimerDeadlines, NO_ACTIVE_TIMER_SENTINEL_MS, type TimerKind, type ExpiryBehavior } from '@/lib/doorstep/deadline'
 
 export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted' | 'emergency'
 
@@ -157,24 +158,38 @@ export async function escalateDueCase(
   cfg: EscalationConfig,
   deps: EscalationDeps,
 ): Promise<number> {
-  // P11: Check for emergency case first
-  if (isEmergencyCase(c)) {
-    return escalateEmergencyCase(c, now, deps)
-  }
+  // Complete the one-time emergency handoff if a confirmed override has not yet been claimed.
+  // A marked emergency is timerless and must never enter ordinary helper-timeout escalation.
+  if (c.deadlineKind === 'emergency' && c.log.some(l => l.msg === EMERGENCY_LOG_MARK)) return 0
+  if (isEmergencyCase(c)) return escalateEmergencyCase(c, now, deps)
+  if (c.status !== 'waiting') return 0
 
-  // Section 5.3: Check which timers expired and apply expiry behavior
-  const { checkExpiredTimers, expiryBehavior } = await import('@/lib/doorstep/deadline')
-  const expiredTimers = await checkExpiredTimers(c.id, now)
-
-  // For takeover timer expiry, we need to ensure the primary stays alerted
-  // This is handled by the escalation step logic below
+  const timerMap = normalizeTimerDeadlines(c.timerDeadlines)
+  // `none` and `emergency` are explicit no-acknowledgement-timer states. deadlineAt is only a
+  // non-null schema sentinel in these states, never a reason to contact another helper.
+  if ((c.deadlineKind === 'none' || c.deadlineKind === 'emergency') && Object.keys(timerMap).length === 0) return 0
+  const initiallyExpired = chooseExpiredTimer(timerMap, now)
+  // If we have an independent timer map, it is authoritative. A stale cached deadlineAt must
+  // not make a later timer expire early. Legacy rows without a map still use deadlineAt.
+  if (!initiallyExpired && Object.keys(timerMap).length > 0) return 0
+  if (!initiallyExpired && now < c.deadlineAt) return 0
 
   let won = 0
 
   for (let i = 0; i < MAX_STEPS_PER_CALL; i++) {
-    if (c.status !== 'waiting' || now < c.deadlineAt) return won
+    if (c.status !== 'waiting') return won
 
-    const expect: StepExpect = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt, lane: c.lane ?? null }
+    // Use the timer map check once at the start of escalation, not on each loop iteration
+    // to avoid multiple escalations for a single expired timer
+    if (!initiallyExpired && now < c.deadlineAt) return won
+
+    const expect: StepExpect = {
+      helperIndex: c.helperIndex,
+      deadlineAt: c.deadlineAt,
+      deadlineKind: c.deadlineKind ?? null,
+      lane: c.lane ?? null,
+      ...(c.timerDeadlines !== undefined ? { timerDeadlines: timerMap } : {}),
+    }
     const fromId = c.chain[c.helperIndex]
     const fromName = (await deps.nameOf(fromId)) ?? 'Someone'
 
@@ -191,13 +206,22 @@ export async function escalateDueCase(
       toId   = fromId
     } else if (c.helperIndex + 1 >= c.chain.length) {
       kind   = 'exhausted'
-      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt, status: 'no_response', lane: c.lane, resolvedAt: c.deadlineAt }
+      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt, status: 'no_response', lane: c.lane, resolvedAt: c.deadlineAt, timerDeadlines: {} }
       msg    = `${fromName} did not answer. Nobody left to ask. Resident told to keep door closed.`
     } else {
       kind   = 'next_helper'
       toId   = c.chain[c.helperIndex + 1]
       toName = (await deps.nameOf(toId)) ?? 'next helper'
-      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, deadlineKind: cfg.timeoutKind ?? 'household', status: 'waiting', lane: c.lane }
+      // Refresh the timer deadlines for the next helper (keep active reasons, reset deadlines)
+      const nextTimers: Record<string, number> = {}
+      for (const [k, v] of Object.entries(timerMap)) {
+        if (typeof v === 'number' && v > now) {
+          nextTimers[k] = v // Keep future timers
+        } else {
+          nextTimers[k] = now + cfg.timeoutSec * 1000 // Reset expired timers
+        }
+      }
+      change = { helperIndex: c.helperIndex + 1, deadlineAt: c.deadlineAt + cfg.timeoutSec * 1000, deadlineKind: cfg.timeoutKind ?? 'household', status: 'waiting', lane: c.lane, timerDeadlines: nextTimers }
       msg    = `${fromName} did not answer in ${cfg.timeoutSec}s. Escalated to ${toName}.`
     }
 
@@ -220,6 +244,7 @@ export async function escalateDueCase(
     c.status      = change.status
     c.lane        = change.lane
     if (change.resolvedAt !== undefined) c.resolvedAt = change.resolvedAt
+    if (change.timerDeadlines !== undefined) c.timerDeadlines = change.timerDeadlines
     c.log         = log
     won++
 
@@ -229,6 +254,10 @@ export async function escalateDueCase(
     if (deps.onTimeout && fromId) {
       await deps.onTimeout(c.id, fromId)
     }
+
+    // When using independent timer map, only escalate once per call
+    // to avoid advancing through the entire chain on a delayed worker tick
+    if (Object.keys(timerMap).length > 0) return won
   }
 
   return won

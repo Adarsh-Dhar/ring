@@ -265,16 +265,40 @@ async function loadStateFromDB(householdId: string): Promise<void> {
     const now = Date.now()
     for (const c of cases) {
       if (c.status === 'waiting') {
-        if (c.deadlineAt <= now) {
-          // Deadline already passed while the server was down — give a short grace window
-          // so tick() can immediately escalate/resolve rather than leaving it stuck.
-          c.deadlineAt = now + 5_000
-          c.log.push({ t: now, msg: 'Server restarted. Case deadline had already passed; resuming escalation.' })
-          // Save the grace window so the database and memory agree about the deadline.
-          // (The escalation claim compares the saved deadline; a mismatch would only cost one reload.)
-          updateCase(c.id, { deadlineAt: c.deadlineAt, log: c.log }).catch(e => reportError(e, { householdId, fn: 'restart-grace' }))
-        } else {
-          c.log.push({ t: now, msg: 'Server restarted. Resuming timer from saved deadline (no duplicate alert).' })
+        // Reconcile the compatibility deadline with the independently stored timers on startup.
+        // The timer map is authoritative: a stale, earlier deadlineAt must never expire a later timer early.
+        let timerMap = normalizeTimerDeadlines(c.timerDeadlines)
+        const explicitlyTimerless = c.deadlineKind === 'none' || c.deadlineKind === 'emergency'
+        if (!explicitlyTimerless && Object.keys(timerMap).length === 0) {
+          // Backward compatibility for a pre-migration row that has no timer map.
+          const allowedKinds: TimerKind[] = ['household', 'approval', 'risk_decision', 'takeover']
+          const kind: TimerKind = allowedKinds.includes(c.deadlineKind as TimerKind) ? c.deadlineKind as TimerKind : 'household'
+          timerMap[kind as keyof TimerDeadlineMap] = c.deadlineAt
+        }
+
+        if (!explicitlyTimerless) {
+          let governing = governingTimer(timerMap)
+          if (governing && governing.deadlineMs <= now) {
+            // Timers that elapsed while the server was down receive a single five-second restart grace.
+            // Future timers are preserved, not shortened or reset merely because another field was stale.
+            const graceAt = now + 5_000
+            for (const [kind, deadlineMs] of Object.entries(timerMap)) {
+              if (deadlineMs <= now) timerMap[kind as keyof TimerDeadlineMap] = graceAt
+            }
+            governing = governingTimer(timerMap)
+            c.log.push({ t: now, msg: 'Server restarted. An expired timer received a five-second grace before escalation resumes.' })
+          }
+
+          if (governing && (c.deadlineAt !== governing.deadlineMs || c.deadlineKind !== governing.kind || JSON.stringify(normalizeTimerDeadlines(c.timerDeadlines)) !== JSON.stringify(timerMap))) {
+            c.deadlineAt = governing.deadlineMs
+            c.deadlineKind = governing.kind
+            c.timerDeadlines = timerMap
+            updateCase(c.id, { deadlineAt: c.deadlineAt, deadlineKind: c.deadlineKind, timerDeadlines: c.timerDeadlines, log: c.log }).catch(e => reportError(e, { householdId, fn: 'restart-timer-reconcile' }))
+          } else if (governing) {
+            c.deadlineAt = governing.deadlineMs
+            c.deadlineKind = governing.kind
+            c.timerDeadlines = timerMap
+          }
         }
       }
       // Section 7: Build chain sorted by tier (primary, backup, third) then by position
@@ -548,10 +572,23 @@ function matchPlanned(
 /** G1: Alert all helpers for a confirmed emergency, exactly once */
 export async function alertEmergency(householdId: string, caseId: string): Promise<boolean> {
   const db = getDb()
+  const now = Date.now()
+  // Disable all acknowledgement timers before attempting the exactly-once alert claim. Doing this
+  // as a separate idempotent update ensures even a case whose emergency was already alerted cannot
+  // retain a stale approval/risk/takeover deadline.
+  await db.case.updateMany({
+    where: { id: caseId, status: 'waiting' },
+    data: {
+      deadlineAt: new Date(now + NO_ACTIVE_TIMER_SENTINEL_MS),
+      deadlineKind: 'emergency',
+      timerDeadlines: {},
+    },
+  })
+
   // Claim: only one caller, on any server, gets count === 1.
   const claim = await db.case.updateMany({
     where: { id: caseId, emergencyAlertedAt: null },
-    data: { emergencyAlertedAt: new Date() },
+    data: { emergencyAlertedAt: new Date(now) },
   })
   if (claim.count !== 1) return false
 
@@ -1220,7 +1257,7 @@ export async function selfVerify(
     c.checkMode  = undefined
     c.deadlineAt = now + state.timeoutSec * 1000
     c.deadlineKind = 'household'
-    c.timerDeadlines = {}
+    c.timerDeadlines = { household: c.deadlineAt }
     addLog(c, 'Resident said the visitor did NOT pass the check. Treated as an unknown visitor: full alert and SMS.')
     const first = approved.find(m => m.id === c.chain[c.helperIndex])
     if (first) {

@@ -196,7 +196,10 @@ export async function getOverdueCases(graceMs: number, limit = 100) {
     where: {
       closedAt: null, // section 8: a closed case is out of the sweep
       OR: [
-        { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) } },
+        // Only actual timers are swept. NULL remains eligible for backward compatibility with
+        // pre-deadlineKind rows; explicit `none`/`emergency` states are timerless.
+        { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) }, deadlineKind: null },
+        { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) }, deadlineKind: { notIn: ['none', 'emergency'] } },
         { status: 'no_response', noticeStatus: 'short_notice', resolvedAt: { gte: new Date(now - APPROVAL_RETRY_WINDOW_MS) } },
         { status: 'no_response', resolvedAt: { gte: new Date(now - NO_RESPONSE_TTL_MS) } },
       ],

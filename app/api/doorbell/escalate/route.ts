@@ -9,6 +9,11 @@ import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { claimEscalationStep } from '@/lib/db/cases'
 import { DEFAULT_ESCALATION_SECONDS } from '@/lib/doorbell/config'
+import { backupTimeoutSec, timerDurationsFor } from '@/lib/doorstep/helperEscalation'
+import { parseNoticeSettings } from '@/lib/doorstep/noticePolicy'
+import { governingTimer, normalizeTimerDeadlines, NO_ACTIVE_TIMER_SENTINEL_MS, type TimerDeadlineMap, type TimerKind } from '@/lib/doorstep/deadline'
+import type { ControlMode } from '@/lib/doorstep/riskRules'
+import { effectiveScore, riskDecisionNeeded } from '@/lib/doorstep/collaborationController'
 import { createHelperRequest, type HelperRequestKind } from '@/lib/doorstep/helperRequests'
 import { writeAudit, audit } from '@/lib/doorstep/audit'
 import { getApprovedMemberships } from '@/lib/db/memberships'
@@ -39,7 +44,7 @@ export async function POST(req: NextRequest) {
   const db = getDb()
   const c = await db.case.findFirst({
     where: { id: caseId, householdId },
-    select: { id: true, householdId: true, status: true, helperIndex: true, chain: true, deadlineAt: true, lane: true, log: true, riskScore: true, controlMode: true, riskObservations: true },
+    select: { id: true, householdId: true, kind: true, status: true, helperIndex: true, chain: true, deadlineAt: true, deadlineKind: true, timerDeadlines: true, lane: true, log: true, riskScore: true, controlMode: true, riskObservations: true, noticeStatus: true },
   })
 
   if (!c) {
@@ -48,6 +53,9 @@ export async function POST(req: NextRequest) {
 
   if (c.status !== 'waiting') {
     return fail('Case is not waiting', 400)
+  }
+  if (c.deadlineKind === 'emergency' || c.kind === 'sos' || c.riskScore === 100 || c.controlMode === 'emergency') {
+    return fail('Emergency workflows do not use helper acknowledgement timers; all configured helpers are alerted together.', 409)
   }
 
   const chain = ((c.chain as unknown) as string[] | null) ?? []
@@ -70,14 +78,53 @@ export async function POST(req: NextRequest) {
   }
 
   // Claim the escalation step (compare-and-set), so two helpers pressing the button cannot both advance the case.
-  const household = await db.household.findUnique({ where: { id: c.householdId }, select: { timeoutSec: true } })
+  const household = await db.household.findUnique({
+    where: { id: c.householdId },
+    select: {
+      timeoutSec: true,
+      minNoticeHours: true,
+      shortNoticePolicy: true,
+      approvalTimerSec: true,
+      approvalRetrySec: true,
+      unknownVisitorPolicy: true,
+    },
+  })
   const timeoutSec = household?.timeoutSec || DEFAULT_ESCALATION_SECONDS
+  const notice = parseNoticeSettings(household)
+  const needsApproval = c.noticeStatus === 'short_notice' && notice.shortNoticePolicy !== 'ai_handles'
+  const mode = (c.controlMode as ControlMode | null) ?? null
+  const durations = timerDurationsFor(c.riskScore, mode, timeoutSec, needsApproval, notice.approvalTimerSec)
+  const sEff = effectiveScore(c.riskScore ?? 0, mode)
+  const fallback = backupTimeoutSec(c.riskScore, mode, timeoutSec, needsApproval, notice.approvalTimerSec)
   const now = Date.now()
-  const log = [...(((c.log as unknown) as { t: number; msg: string }[] | null) ?? []), { t: now, msg: `Escalated to the next helper by a helper.` }]
+
+  // A manually contacted backup receives a fresh window for every active reason. Keep the reasons
+  // independently named; `deadlineAt` is only the earliest scheduler deadline.
+  const active = new Set(Object.keys(normalizeTimerDeadlines(c.timerDeadlines)) as Array<keyof TimerDeadlineMap>)
+  if (needsApproval) active.add('approval')
+  if (durations.risk_decision !== undefined && (active.has('risk_decision') || riskDecisionNeeded(sEff))) active.add('risk_decision')
+  if (durations.takeover !== undefined) active.add('takeover')
+  if (c.lane === 'expected') active.add('household')
+  if (active.size === 0) {
+    const fallbackKind = (fallback.kind === 'approval' || fallback.kind === 'risk_decision' || fallback.kind === 'takeover' || fallback.kind === 'household')
+      ? fallback.kind as Exclude<TimerKind, 'emergency'>
+      : 'household'
+    active.add(fallbackKind)
+  }
+
+  const nextTimers: TimerDeadlineMap = {}
+  for (const timerKind of active) {
+    const seconds = durations[timerKind] ?? (timerKind === fallback.kind ? fallback.seconds : timeoutSec)
+    if (Number.isFinite(seconds) && seconds > 0) nextTimers[timerKind] = now + seconds * 1000
+  }
+  const governing = governingTimer(nextTimers)
+  const nextDeadlineAt = governing?.deadlineMs ?? now + NO_ACTIVE_TIMER_SENTINEL_MS
+  const nextDeadlineKind = governing?.kind ?? 'none'
+  const log = [...(((c.log as unknown) as { t: number; msg: string }[] | null) ?? []), { t: now, msg: `Escalated to the next helper by a helper; active timers: ${Object.keys(nextTimers).join(', ') || 'none'}.` }]
   const claimed = await claimEscalationStep(
     caseId,
-    { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt.getTime(), lane: c.lane },
-    { helperIndex: nextIndex, deadlineAt: now + timeoutSec * 1000, status: 'waiting', lane: c.lane },
+    { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt.getTime(), deadlineKind: c.deadlineKind ?? null, lane: c.lane ?? null, ...(c.timerDeadlines != null ? { timerDeadlines: normalizeTimerDeadlines(c.timerDeadlines) } : {}) },
+    { helperIndex: nextIndex, deadlineAt: nextDeadlineAt, deadlineKind: nextDeadlineKind, timerDeadlines: nextTimers, status: 'waiting', lane: c.lane },
     log,
   )
   if (!claimed) {

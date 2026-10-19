@@ -11,6 +11,37 @@ export type { EscalationDeps, EscalationConfig, EscalationKind, StepChange, Step
 
 import { activeTimer, effectiveScore, riskDecisionNeeded, timersFor } from './collaborationController'
 import type { ControlMode } from './riskRules'
+import type { TimerDeadlineMap } from './deadline'
+
+/** Return ALL applicable timer durations (not just the governing one) for a fresh helper. */
+export function timerDurationsFor(
+  score: number | null | undefined,
+  minMode: ControlMode | null | undefined,
+  householdSec: number,
+  needsApproval: boolean = false,
+  approvalSec?: number,
+): TimerDeadlineMap {
+  const result: TimerDeadlineMap = {}
+  const eff = effectiveScore(score ?? 0, minMode)
+  const timers = timersFor(eff, minMode, approvalSec)
+
+  if (needsApproval && timers.approvalSec !== null) {
+    result.approval = timers.approvalSec
+  }
+  if (timers.riskDecisionSec !== null && riskDecisionNeeded(eff)) {
+    result.risk_decision = timers.riskDecisionSec
+  }
+  if (timers.takeoverSec !== null) {
+    result.takeover = timers.takeoverSec
+  }
+
+  // If no specific timers, use household as fallback
+  if (Object.keys(result).length === 0) {
+    result.household = householdSec
+  }
+
+  return result
+}
 
 /** Seconds the NEXT helper gets (spec 5.3): the risk/takeover timer for S_eff. Returns both seconds and the timer kind. */
 export function backupTimeoutSec(

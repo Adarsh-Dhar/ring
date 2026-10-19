@@ -25,14 +25,14 @@ import { readStored, mergeFresh, applyHelperAction, applyDispute, addResidentSta
 import { logCorrectionLabel, labelActionFor } from './correctionLabels'
 import { hasPendingHelperRequest } from './caseLifecycle'
 import { createInterviewStamp } from './riskRules'
-import { effectiveScore, effectiveModeFor, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
+import { effectiveScore, effectiveModeFor, MODE_FLOOR_SCORE, timersFor, riskDecisionNeeded } from './collaborationController'
 import { createHelperRequest, getLatestRequest, type HelperRequestKind } from './helperRequests'
 import { getApprovedMemberships } from '@/lib/db/memberships'
 import { buildHelperRequest, formatPushNotification, formatSms } from './requestContent'
 import { contactHelper } from './contactLog'
 import { getPreferences } from '@/lib/db/preferences'
 import { reportError } from '@/lib/errors'
-import { shortenDeadline } from './deadline'
+import { recordTimerDeadline, clearAllTimerDeadlines } from './deadline'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -290,10 +290,17 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     transcript: '',
     interviewState: newStored.interviewState,
   })
+  const previousRisk = scoreObservations(stored.observations, {
+    transcript: '',
+    interviewState: stored.interviewState,
+  })
+  const hadConfirmedThreat = previousRisk.ledger.some(e => e.code === 'immediate_threat' && e.state === 'confirmed')
+  const hasConfirmedThreat = risk.ledger.some(e => e.code === 'immediate_threat' && e.state === 'confirmed')
+  const previouslyTimerlessOverride = previousRisk.minMode === 'emergency' || hadConfirmedThreat
+  const timerlessOverride = risk.minMode === 'emergency' || hasConfirmedThreat
 
-  // G1c: Fire emergency alert if case newly became emergency
+  // G1c: Critical overrides are handled immediately and never wait for an acknowledgement timer.
   const prevMode = (c.controlMode as ControlMode | null) ?? null
-  const becameEmergency = risk.minMode === 'emergency' && prevMode !== 'emergency'
   // Spec 7.4: a mode rise is judged on the EFFECTIVE mode (score band and event minimum together). Comparing only the
   // event minimum missed score-only rises, e.g. S_eff 65 (helper-led) with an event minimum of M1.
   const prevEffMode = effectiveModeFor(c.riskScore ?? 0, prevMode)
@@ -334,45 +341,54 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   })
 
   if (!SHADOW) {
-    if (becameEmergency) {
-      // Emergency has no timer; everyone is alerted now, deadline left alone
-      const { alertEmergency } = await import('@/lib/doorbell/store')
-      await alertEmergency(c.householdId, caseId)
-    } else if (eff > prevEff) {
-      // Spec 5.3: when S_eff rises, record ALL relevant timers independently.
-      // Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60) once helper-led.
-      // The governing deadline is the earliest of all active timers.
+    if (timerlessOverride) {
+      // Section 4.4/5.3: a confirmed immediate threat or M5 override bypasses ordinary
+      // acknowledgement timers. Preserve a non-null sentinel deadline, but clear every active timer.
+      await clearAllTimerDeadlines(
+        c.householdId,
+        caseId,
+        risk.minMode === 'emergency' ? 'Emergency override: acknowledgement timers disabled' : 'Confirmed immediate threat: acknowledgement timers disabled',
+        'emergency',
+      ).catch(e => reportError(e, { fn: 'clearEmergencyTimers', caseId }))
+
+      if (risk.minMode === 'emergency') {
+        const { alertEmergency } = await import('@/lib/doorbell/store')
+        await alertEmergency(c.householdId, caseId)
+      } else {
+        const { alertUrgent } = await import('@/lib/doorbell/store')
+        await alertUrgent(c.householdId, caseId, 'threat')
+      }
+    } else if (eff > prevEff || previouslyTimerlessOverride) {
+      // If an authenticated correction removed the override, first leave the timerless state;
+      // then re-arm only the timers required by the current score/mode and any new policy event.
+      if (previouslyTimerlessOverride) {
+        await clearAllTimerDeadlines(c.householdId, caseId, 'Emergency override corrected; recompute active timers', 'none')
+          .catch(e => reportError(e, { fn: 'restoreTimersAfterOverride', caseId }))
+      }
+
+      // Spec 5.3: each active reason is recorded independently. The governing deadline is always
+      // the earliest timer, but the individual timer kind/duration must remain in timerDeadlines.
       const timers = timersFor(eff, risk.minMode, undefined)
       const now = Date.now()
 
-      // Record risk-decision timer if applicable
-      if (timers.riskDecisionSec !== null) {
-        await (await import('./deadline')).recordTimerDeadline(
+      if (timers.riskDecisionSec !== null && riskDecisionNeeded(eff)) {
+        await recordTimerDeadline(
           c.householdId, caseId, 'risk_decision',
           now + timers.riskDecisionSec * 1000,
           `S_eff ${prevEff}->${eff}: risk decision timer`
         )
       }
 
-      // Record takeover timer if applicable
       if (timers.takeoverSec !== null) {
-        await (await import('./deadline')).recordTimerDeadline(
+        await recordTimerDeadline(
           c.householdId, caseId, 'takeover',
           now + timers.takeoverSec * 1000,
           `S_eff ${prevEff}->${eff}: takeover timer`
         )
       }
 
-      // Shorten the governing deadline if the active timer is earlier
-      const timer = activeTimer(timers, { riskDecisionNeeded: riskDecisionNeeded(eff) })
-      if (timer?.seconds != null) {
-        await shortenDeadline(c.householdId, caseId, now + timer.seconds * 1000, timer.kind, `S_eff ${prevEff}->${eff}`)
-      }
-
-      // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)
-      // Create risk-decision or takeover requests, deduplicated per (caseId, modeRank)
+      // Section 7.4: notify helpers on effective-mode rise.
       if (rose) {
-        // Best-effort: the score is already saved, so a failed notification must never fail the edit.
         await notifyModeRise({ caseId, householdId: c.householdId, prevMode: prevEffMode, prevEff, eff, minMode: newEffMode, observations: newStored.observations })
           .catch(e => reportError(e, { fn: 'notifyModeRise', caseId }))
       }
@@ -391,13 +407,13 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     // P8: Fire urgent alert whenever S_eff is 80 to 99 (M4 mode), once per case.
     // Previously this only fired for confirmed immediate_threat.
     // Keep alertEmergency for M5 (S_eff 100).
-    const hasConfirmedThreat = risk.ledger.some(
-      e => e.code === 'immediate_threat' && e.state === 'confirmed'
-    )
     const isUrgentRange = eff >= 80 && eff < 100
-    if ((isUrgentRange || hasConfirmedThreat) && !c.urgentAlertedAt) {
+    // Confirmed threats were handled above, with their acknowledgement timers cleared.
+    // A high score without a confirmed threat still gets an immediate urgent alert and keeps its
+    // score-driven takeover timer as required by the control table.
+    if (isUrgentRange && !hasConfirmedThreat && !c.urgentAlertedAt) {
       const { alertUrgent } = await import('@/lib/doorbell/store')
-      await alertUrgent(c.householdId, caseId, isUrgentRange && !hasConfirmedThreat ? 'score' : 'threat')
+      await alertUrgent(c.householdId, caseId, 'score')
     }
   }
 
@@ -410,11 +426,30 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
  *  risk-decision timer, never extends it. Compare-and-set, same as applyRiskEdit. */
 export async function requestHelperDecision(caseId: string): Promise<void> {
   const db = getDb()
-  const c = await db.case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, deadlineAt: true, status: true, householdId: true } })
-  if (!c || c.status !== 'waiting') return
+  const c = await db.case.findUnique({
+    where: { id: caseId },
+    select: { riskScore: true, controlMode: true, status: true, householdId: true, deadlineKind: true },
+  })
+  if (!c || c.status !== 'waiting' || c.deadlineKind === 'emergency') return
   const minMode = (c.controlMode as ControlMode | null) ?? null
   const eff = effectiveScore(c.riskScore ?? 0, minMode)
-  const t = activeTimer(timersFor(eff, minMode), { riskDecisionNeeded: true })
-  if (!t || t.seconds === null) return          // S_eff 0 or 100: no risk-decision timer
-  await shortenDeadline(c.householdId, caseId, Date.now() + t.seconds * 1000, 'risk_decision', 'ai_budget_exceeded')
+  const timers = timersFor(eff, minMode)
+  if (timers.riskDecisionSec === null) return // S_eff 0 or 100: no risk-decision timer
+
+  const now = Date.now()
+  // This is an AI-action approval request, so its timer must be stored as risk_decision even
+  // when takeover has the same duration.
+  await recordTimerDeadline(
+    c.householdId, caseId, 'risk_decision',
+    now + timers.riskDecisionSec * 1000,
+    'AI action exceeded the current autonomy budget',
+  )
+  // At helper-led scores the takeover deadline is a separate reason with its own identity.
+  if (timers.takeoverSec !== null) {
+    await recordTimerDeadline(
+      c.householdId, caseId, 'takeover',
+      now + timers.takeoverSec * 1000,
+      'AI action requires helper decision while in helper-led mode',
+    )
+  }
 }

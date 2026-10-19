@@ -45,6 +45,38 @@ describe('escalation steps', () => {
     expect(db.alerts).toEqual([]); expect(c.helperIndex).toBe(0)
   })
 
+  it('does not escalate early when cached deadlineAt is stale but independent timers are still in the future', async () => {
+    const c = mkCase({
+      deadlineAt: T0 - 1,
+      deadlineKind: 'risk_decision',
+      timerDeadlines: { risk_decision: T0 + 60_000 },
+    })
+    const db = fakeDb(rowOf(c))
+    expect(await escalateDueCase(c, T0 + 10_000, CFG, db.deps('A'))).toBe(0)
+    expect(db.alerts).toEqual([])
+    expect(c.helperIndex).toBe(0)
+  })
+
+  it('does not delay an expired independent timer because cached deadlineAt is later', async () => {
+    const c = mkCase({
+      deadlineAt: T0 + 90_000,
+      deadlineKind: 'risk_decision',
+      timerDeadlines: { risk_decision: T0 + 10_000 },
+    })
+    const db = fakeDb(rowOf(c))
+    expect(await escalateDueCase(c, T0 + 11_000, CFG, db.deps('A'))).toBe(1)
+    expect(db.alerts).toEqual(['A:next_helper:b'])
+    expect(c.helperIndex).toBe(1)
+  })
+
+  it('does not run an acknowledgement timer for an explicit emergency timerless case', async () => {
+    const c = mkCase({ deadlineAt: T0 - 1, deadlineKind: 'emergency', timerDeadlines: {}, riskScore: 85, controlMode: 'helper_urgent' } as Partial<DoorCase>)
+    const db = fakeDb(rowOf(c))
+    expect(await escalateDueCase(c, T0 + 120_000, CFG, db.deps('A'))).toBe(0)
+    expect(db.alerts).toEqual([])
+    expect(c.helperIndex).toBe(0)
+  })
+
   it('asks the next helper once the deadline passes and pushes the deadline out', async () => {
     const c = mkCase(); const db = fakeDb(rowOf(c))
     expect(await escalateDueCase(c, T0 + 30_000, CFG, db.deps('A'))).toBe(1)

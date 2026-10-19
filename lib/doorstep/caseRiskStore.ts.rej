@@ -1,0 +1,76 @@
+@@ -334,45 +341,53 @@
+   })
+ 
+   if (!SHADOW) {
+-    if (becameEmergency) {
+-      // Emergency has no timer; everyone is alerted now, deadline left alone
+-      const { alertEmergency } = await import('@/lib/doorbell/store')
+-      await alertEmergency(c.householdId, caseId)
+-    } else if (eff > prevEff) {
+-      // Spec 5.3: when S_eff rises, record ALL relevant timers independently.
+-      // Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60) once helper-led.
+-      // The governing deadline is the earliest of all active timers.
++    if (timerlessOverride) {
++      // Section 4.4/5.3: a confirmed immediate threat or M5 override bypasses ordinary
++      // acknowledgement timers. Preserve a non-null sentinel deadline, but clear every active timer.
++      await clearAllTimerDeadlines(
++        c.householdId,
++        caseId,
++        risk.minMode === 'emergency' ? 'Emergency override: acknowledgement timers disabled' : 'Confirmed immediate threat: acknowledgement timers disabled',
++        'emergency',
++      ).catch(e => reportError(e, { fn: 'clearEmergencyTimers', caseId }))
++
++      if (risk.minMode === 'emergency') {
++        const { alertEmergency } = await import('@/lib/doorbell/store')
++        await alertEmergency(c.householdId, caseId)
++      } else {
++        const { alertUrgent } = await import('@/lib/doorbell/store')
++        await alertUrgent(c.householdId, caseId, 'threat')
++      }
++    } else if (eff > prevEff || previouslyTimerlessOverride) {
++      // If an authenticated correction removed the override, first leave the timerless state;
++      // then re-arm only the timers required by the current score/mode and any new policy event.
++      if (previouslyTimerlessOverride) {
++        await clearAllTimerDeadlines(c.householdId, caseId, 'Emergency override corrected; recompute active timers', 'none')
++          .catch(e => reportError(e, { fn: 'restoreTimersAfterOverride', caseId }))
++      }
++
++      // Spec 5.3: each active reason is recorded independently. The governing deadline is always
++      // the earliest timer, but the individual timer kind/duration must remain in timerDeadlines.
+       const timers = timersFor(eff, risk.minMode, undefined)
+       const now = Date.now()
+ 
+-      // Record risk-decision timer only once the score actually requires human action (M1+).
+       if (timers.riskDecisionSec !== null && riskDecisionNeeded(eff)) {
+-        await (await import('./deadline')).recordTimerDeadline(
++        await recordTimerDeadline(
+           c.householdId, caseId, 'risk_decision',
+           now + timers.riskDecisionSec * 1000,
+           `S_eff ${prevEff}->${eff}: risk decision timer`
+         )
+       }
+-
+-      // Record takeover timer if applicable
+       if (timers.takeoverSec !== null) {
+-        await (await import('./deadline')).recordTimerDeadline(
++        await recordTimerDeadline(
+           c.householdId, caseId, 'takeover',
+           now + timers.takeoverSec * 1000,
+           `S_eff ${prevEff}->${eff}: takeover timer`
+         )
+       }
+ 
+-      // Shorten the governing deadline if the active timer is earlier
+-      const timer = activeTimer(timers, { riskDecisionNeeded: riskDecisionNeeded(eff) })
+-      if (timer?.seconds != null) {
+-        await shortenDeadline(c.householdId, caseId, now + timer.seconds * 1000, timer.kind, `S_eff ${prevEff}->${eff}`)
+-      }
+-
+-      // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)
+-      // Create risk-decision or takeover requests, deduplicated per (caseId, modeRank)
++      // Section 7.4: notify helpers on effective-mode rise.
+       if (rose) {
+-        // Best-effort: the score is already saved, so a failed notification must never fail the edit.
+         await notifyModeRise({ caseId, householdId: c.householdId, prevMode: prevEffMode, prevEff, eff, minMode: newEffMode, observations: newStored.observations })
+           .catch(e => reportError(e, { fn: 'notifyModeRise', caseId }))
+       }

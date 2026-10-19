@@ -1,0 +1,13 @@
+@@ -46,8 +46,10 @@
+   const timers = timersFor(eff, minMode, approvalSec)
+   const result: TimerSeconds = { household: householdSec }
+   if (needsApproval) result.approval = timers.approvalSec
+-  // A risk-decision timer can be started by a particular AI action even below the M1 score edge.
+-  if (timers.riskDecisionSec !== null && riskDecisionNeeded(eff)) result.risk_decision = timers.riskDecisionSec
++  // Preserve the formula for any risk-decision timer that is already active. An AI action can
++  // exceed its authority budget below M1, so re-arming an existing action timer must not fall
++  // back to the household timeout merely because the score alone would not create a new timer.
++  if (timers.riskDecisionSec !== null) result.risk_decision = timers.riskDecisionSec
+   if (timers.takeoverSec !== null) result.takeover = timers.takeoverSec
+   return result
+ }

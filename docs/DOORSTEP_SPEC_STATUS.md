@@ -84,11 +84,11 @@ Implemented as of Round 5 (18 Oct 2026):
 - `tests/fixtures/section12/`: synthetic fixture set (credential-request, immediate-threat, refuse-to-leave)
 - `npm run calibrate` runs the harness; exits non-zero on fixture failures
 
-## Section 5.3: emergency timer values
+## Section 5.3: timer implementation and remaining validation
 
-Spec 4.4 rule 5: confirmed `immediate_threat` bypasses the acknowledgement timer — done via `alertUrgent`.
-General score-based timer interpolation: done (DEFAULT_ESCALATION_SECONDS → 10 s at score 100).
-Timer placeholders remain until Section 5.3 values are confirmed.
+**Implemented in code (runtime still needs verification):** independent approval, risk-decision, takeover and legacy-household timer deadlines are stored in `Case.timerDeadlines`; `deadlineAt`/`deadlineKind` track the earliest governing wake-up. Timer expiry selects one reason, applies its specified notification behavior, uses an atomic escalation claim, and re-arms applicable reasons for the newly contacted helper. Explicit `none` and `emergency` states carry no acknowledgement timers. Confirmed threats and M5 emergencies clear acknowledgement timers.
+
+**Still required before declaring Section 5 release-complete:** apply all migrations to a scratch PostgreSQL database; regenerate Prisma Client; run typecheck and current Section 5/escalation tests; exercise database-backed concurrent updates, worker restart and timeout delivery; and validate pilot timer defaults with intended residents, chosen supporters and safeguarding professionals. The timer weights/defaults are pilot values, not validated danger probabilities.
 
 ## Section 6.3: minimum control modes
 

@@ -1,0 +1,64 @@
+@@ -29,13 +29,14 @@
+  */
+ 
+ import type { DoorCase } from './store'
+-import { chooseExpiredTimer, expiryBehavior, normalizeTimerDeadlines, type TimerKind, type ExpiryBehavior } from '@/lib/doorstep/deadline'
++import { chooseExpiredTimer, expiryBehavior, normalizeTimerDeadlines, NO_ACTIVE_TIMER_SENTINEL_MS, type TimerKind, type ExpiryBehavior } from '@/lib/doorstep/deadline'
+ 
+ export type EscalationKind = 'expected_to_normal' | 'next_helper' | 'exhausted' | 'emergency'
+ 
+ export interface StepExpect {
+   helperIndex: number
+   deadlineAt:  number
++  deadlineKind?: string | null
+   lane?:       string | null
+   /** Optimistic concurrency guard: do not overwrite a timer added by another process. */
+   timerDeadlines?: { [kind: string]: number }
+@@ -115,14 +116,14 @@
+   // Emergency: move the deadline to the end of the 30-minute case window, no acknowledgement timer.
+   const change: StepChange = {
+     helperIndex: c.helperIndex,
+-    deadlineAt: now + 30 * 60 * 1000,
++    deadlineAt: now + NO_ACTIVE_TIMER_SENTINEL_MS,
+     deadlineKind: 'emergency',
+     timerDeadlines: {},
+     status: 'waiting',
+     lane: c.lane,
+   }
+ 
+-  const expect: StepExpect = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt, lane: c.lane ?? null, ...(c.timerDeadlines !== undefined ? { timerDeadlines: normalizeTimerDeadlines(c.timerDeadlines) } : {}) }
++  const expect: StepExpect = { helperIndex: c.helperIndex, deadlineAt: c.deadlineAt, deadlineKind: c.deadlineKind ?? null, lane: c.lane ?? null, ...(c.timerDeadlines !== undefined ? { timerDeadlines: normalizeTimerDeadlines(c.timerDeadlines) } : {}) }
+ 
+   // Claim first, alert second.
+   const owned = await deps.claim(c.id, expect, change, log)
+@@ -161,13 +162,20 @@
+   cfg: EscalationConfig,
+   deps: EscalationDeps,
+ ): Promise<number> {
++  // Complete the one-time emergency handoff if a confirmed override has not yet been claimed.
++  // A marked emergency is timerless and must never enter ordinary helper-timeout escalation.
++  if (c.deadlineKind === 'emergency' && c.log.some(l => l.msg === EMERGENCY_LOG_MARK)) return 0
+   if (isEmergencyCase(c)) return escalateEmergencyCase(c, now, deps)
+   if (c.status !== 'waiting') return 0
+ 
+   const timerMap = normalizeTimerDeadlines(c.timerDeadlines)
+-  // `none` is an explicit no-timer state for normal M0 cases and after the last timer is cancelled.
+-  if (c.deadlineKind === 'none' && Object.keys(timerMap).length === 0) return 0
++  // `none` and `emergency` are explicit no-acknowledgement-timer states. deadlineAt is only a
++  // non-null schema sentinel in these states, never a reason to contact another helper.
++  if ((c.deadlineKind === 'none' || c.deadlineKind === 'emergency') && Object.keys(timerMap).length === 0) return 0
+   const initiallyExpired = chooseExpiredTimer(timerMap, now)
++  // If we have an independent timer map, it is authoritative. A stale cached deadlineAt must
++  // not make a later timer expire early. Legacy rows without a map still use deadlineAt.
++  if (!initiallyExpired && Object.keys(timerMap).length > 0) return 0
+   if (!initiallyExpired && now < c.deadlineAt) return 0
+   // Select the strongest expired reason if the worker was delayed and several timers elapsed.
+   // One sweep causes one escalation step; this avoids advancing through the entire helper chain
+@@ -182,6 +190,7 @@
+   const expect: StepExpect = {
+     helperIndex: c.helperIndex,
+     deadlineAt: c.deadlineAt,
++    deadlineKind: c.deadlineKind ?? null,
+     lane: c.lane ?? null,
+     ...(c.timerDeadlines !== undefined ? { timerDeadlines: timerMap } : {}),
+   }
