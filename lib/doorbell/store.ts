@@ -923,6 +923,9 @@ async function openCase(
     c.deadlineAt = now + secs * 1000
     c.deadlineKind = 'approval'
     c.timerDeadlines = { approval: c.deadlineAt }
+    // Record the approval timer independently using the deadline helper
+    const { recordTimerDeadline } = await import('@/lib/doorstep/deadline')
+    await recordTimerDeadline(state.householdId, c.id, 'approval', c.deadlineAt, 'Short-notice visit requires approval')
   }
 
   // Section 7: Store approval retry interval for later use

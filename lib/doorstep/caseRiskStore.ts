@@ -339,11 +339,34 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       const { alertEmergency } = await import('@/lib/doorbell/store')
       await alertEmergency(c.householdId, caseId)
     } else if (eff > prevEff) {
-      // Spec 5.3: when S_eff rises, the governing timer shrinks. Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60)
-      // once helper-led. Compare-and-set below, and a deadline is never extended.
-      const timer = activeTimer(timersFor(eff, risk.minMode, undefined), { riskDecisionNeeded: riskDecisionNeeded(eff) })
+      // Spec 5.3: when S_eff rises, record ALL relevant timers independently.
+      // Risk-decision = 120 - S_eff; takeover = min(120 - S_eff, 60) once helper-led.
+      // The governing deadline is the earliest of all active timers.
+      const timers = timersFor(eff, risk.minMode, undefined)
+      const now = Date.now()
+
+      // Record risk-decision timer if applicable
+      if (timers.riskDecisionSec !== null) {
+        await (await import('./deadline')).recordTimerDeadline(
+          c.householdId, caseId, 'risk_decision',
+          now + timers.riskDecisionSec * 1000,
+          `S_eff ${prevEff}->${eff}: risk decision timer`
+        )
+      }
+
+      // Record takeover timer if applicable
+      if (timers.takeoverSec !== null) {
+        await (await import('./deadline')).recordTimerDeadline(
+          c.householdId, caseId, 'takeover',
+          now + timers.takeoverSec * 1000,
+          `S_eff ${prevEff}->${eff}: takeover timer`
+        )
+      }
+
+      // Shorten the governing deadline if the active timer is earlier
+      const timer = activeTimer(timers, { riskDecisionNeeded: riskDecisionNeeded(eff) })
       if (timer?.seconds != null) {
-        await shortenDeadline(c.householdId, caseId, Date.now() + timer.seconds * 1000, timer.kind, `S_eff ${prevEff}->${eff}`)
+        await shortenDeadline(c.householdId, caseId, now + timer.seconds * 1000, timer.kind, `S_eff ${prevEff}->${eff}`)
       }
 
       // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)

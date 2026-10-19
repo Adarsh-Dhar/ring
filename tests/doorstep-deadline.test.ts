@@ -1,11 +1,11 @@
 /**
  * Section 5.3: Timer tests
- * Tests the production timer functions: timersFor, activeTimer, and shortenDeadline
+ * Tests the production timer functions: timersFor, activeTimer, shortenDeadline, recordTimerDeadline, and checkExpiredTimers
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { timersFor, activeTimer, DEFAULT_APPROVAL_SECONDS, RISK_TIMER_BASE, TAKEOVER_CAP_SECONDS } from '@/lib/doorstep/collaborationController'
-import { shortenDeadline } from '@/lib/doorstep/deadline'
+import { shortenDeadline, recordTimerDeadline, checkExpiredTimers, expiryBehavior, type TimerKind } from '@/lib/doorstep/deadline'
 
 const row: any = {}
 const syncCaseDeadline = vi.fn()
@@ -99,13 +99,89 @@ describe('Section 5.3: activeTimer selection', () => {
   })
 })
 
+describe('Section 5.3: Independent timer lifecycle', () => {
+  beforeEach(() => {
+    Object.assign(row, {
+      id: 'test-case-id',
+      householdId: 'test-household',
+      status: 'waiting',
+      deadlineAt: new Date(Date.now() + 120000),
+      timerDeadlines: {},
+    })
+    syncCaseDeadline.mockClear()
+  })
+
+  it('recordTimerDeadline stores timer independently even if it does not shorten governing deadline', async () => {
+    const now = Date.now()
+    // Set initial deadline to 60s from now
+    row.deadlineAt = new Date(now + 60000)
+    row.timerDeadlines = { household: now + 60000 }
+
+    // Record a risk-decision timer at 90s (later than governing)
+    await recordTimerDeadline('test-household', 'test-case-id', 'risk_decision', now + 90000, 'test reason')
+
+    // Timer should be recorded even though it doesn't shorten the deadline
+    expect(row.timerDeadlines.risk_decision).toBe(now + 90000)
+    expect(row.deadlineAt.getTime()).toBe(now + 60000) // Governing deadline unchanged
+  })
+
+  it('recordTimerDeadline shortens governing deadline if timer is earlier', async () => {
+    const now = Date.now()
+    row.deadlineAt = new Date(now + 120000)
+    row.timerDeadlines = { household: now + 120000 }
+
+    // Record a risk-decision timer at 30s (earlier than governing)
+    await recordTimerDeadline('test-household', 'test-case-id', 'risk_decision', now + 30000, 'test reason')
+
+    expect(row.timerDeadlines.risk_decision).toBe(now + 30000)
+    expect(row.deadlineAt.getTime()).toBe(now + 30000) // Governing deadline shortened
+    expect(row.deadlineKind).toBe('risk_decision')
+  })
+
+  it('recordTimerDeadline does not update if timer already has earlier deadline', async () => {
+    const now = Date.now()
+    row.deadlineAt = new Date(now + 60000)
+    row.timerDeadlines = { risk_decision: now + 30000 }
+
+    // Try to record same timer with later deadline
+    await recordTimerDeadline('test-household', 'test-case-id', 'risk_decision', now + 90000, 'test reason')
+
+    // Should not update
+    expect(row.timerDeadlines.risk_decision).toBe(now + 30000)
+  })
+
+  it('checkExpiredTimers returns all expired timers', async () => {
+    const now = Date.now()
+    row.timerDeadlines = {
+      approval: now - 10000, // expired
+      risk_decision: now + 30000, // not expired
+      takeover: now - 5000, // expired
+    }
+
+    const expired = await checkExpiredTimers('test-case-id', now)
+
+    expect(expired).toHaveLength(2)
+    expect(expired.find(e => e.kind === 'approval')).toBeDefined()
+    expect(expired.find(e => e.kind === 'takeover')).toBeDefined()
+    expect(expired.find(e => e.kind === 'risk_decision')).toBeUndefined()
+  })
+
+  it('expiryBehavior returns correct behavior for each timer kind', () => {
+    expect(expiryBehavior('approval')).toBe('notify_backup')
+    expect(expiryBehavior('risk_decision')).toBe('notify_backup')
+    expect(expiryBehavior('takeover')).toBe('notify_backup_keep_primary')
+    expect(expiryBehavior('emergency')).toBe('emergency')
+    expect(expiryBehavior('household')).toBe('notify_backup')
+  })
+})
+
 describe('Section 5.3: shortenDeadline behavior', () => {
   beforeEach(() => {
     Object.assign(row, {
       id: 'test-case-id',
       householdId: 'test-household',
       status: 'waiting',
-      deadlineAt: new Date(Date.now() + 120000), // 2 minutes from now
+      deadlineAt: new Date(Date.now() + 120000),
       timerDeadlines: {},
     })
     syncCaseDeadline.mockClear()

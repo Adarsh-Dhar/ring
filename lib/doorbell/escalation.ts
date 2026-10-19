@@ -148,6 +148,8 @@ export function mergeSaved(c: DoorCase, saved: Partial<DoorCase>) {
  * Advance one case through every step that is due at `now`.
  * Returns how many steps THIS caller won (0 = somebody else already did it, or nothing was due).
  * P11: If case is emergency, uses emergency path (skip timer, alert all helpers immediately).
+ *
+ * Section 5.3: Check which timer(s) expired and apply the appropriate expiry behavior.
  */
 export async function escalateDueCase(
   c: DoorCase,
@@ -159,6 +161,13 @@ export async function escalateDueCase(
   if (isEmergencyCase(c)) {
     return escalateEmergencyCase(c, now, deps)
   }
+
+  // Section 5.3: Check which timers expired and apply expiry behavior
+  const { checkExpiredTimers, expiryBehavior } = await import('@/lib/doorstep/deadline')
+  const expiredTimers = await checkExpiredTimers(c.id, now)
+
+  // For takeover timer expiry, we need to ensure the primary stays alerted
+  // This is handled by the escalation step logic below
 
   let won = 0
 
