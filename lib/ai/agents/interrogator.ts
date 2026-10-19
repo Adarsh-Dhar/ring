@@ -78,7 +78,8 @@ async function controlFor(householdId: string, a: { score: number; minMode: any 
 }
 /** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone.
  *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used.
- *  Section 7.2: holdOnly remains true even after status flips to no_response (until a helper accepts). */
+ *  Section 7.2: holdOnly remains true even after status flips to no_response (until a helper accepts).
+ *  Section 7.2: safetyOnly when helper-led with no helper answering. */
 async function gateFor(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
   const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
   const stored = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
@@ -86,8 +87,13 @@ async function gateFor(householdId: string, caseId: string, tool: string, o: { d
   // Section 7.2: holdOnly stays true for short_notice even after no_response
   const isShortNotice = row?.noticeStatus === 'short_notice'
   const holdOnly = isShortNotice && (row?.status === 'waiting' || row?.status === 'no_response')
+  // Section 7.2: safetyOnly when helper-led (M3+) and no_response
+  const minMode = (row?.controlMode as any) || 'ai_leads'
+  const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(minMode)
+  const safetyOnly = modeRank >= 3 && row?.status === 'no_response'
   return gateAction(tool, sEff, await getPreferences(householdId), {
     holdOnly,
+    safetyOnly,
     decision: o.decision,
   })
 }
@@ -97,6 +103,11 @@ async function gateOrAsk(householdId: string, caseId: string, tool: string, o: {
   const g = await gateFor(householdId, caseId, tool, o)
   if (g.decision === 'ask_helper' && g.reason === 'over_budget') {
     await requestHelperDecision(caseId).catch(e => console.error('[AI interrogator] requestHelperDecision', e))
+  }
+  // Section 7: Create pending action when helper approval is needed
+  if (g.decision === 'ask_helper') {
+    const { createPendingAction } = await import('@/lib/doorstep/pendingActions')
+    await createPendingAction(caseId, tool, `Action requires helper approval: ${g.reason}`)
   }
   return g
 }
@@ -119,7 +130,7 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     // Server-side gate: re-read the case from DB and check
     const c = await getDb().case.findUnique({
       where: { id: caseId },
-      select: { id: true, kind: true, lane: true, expectedId: true, recurringId: true, householdId: true },
+      select: { id: true, kind: true, lane: true, expectedId: true, recurringId: true, householdId: true, conversationOwner: true },
     })
     if (!c) {
       console.error('[AI interrogator] Case not found:', caseId)
@@ -127,6 +138,12 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     }
     if (!isUnplannedVisit(c)) {
       console.log('[AI interrogator] Skipped: planned visit')
+      return
+    }
+
+    // Section 7: Check if a helper owns the conversation
+    if (c.conversationOwner) {
+      console.log('[AI interrogator] Skipped: helper owns the conversation')
       return
     }
 

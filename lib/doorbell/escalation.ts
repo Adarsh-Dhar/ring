@@ -14,6 +14,8 @@
  *   - Never shows "safe to open"
  *   - Applies 100 override immediately upon confirming source
  *
+ * Section 7: Marks helper requests as timed_out when a helper doesn't answer.
+ *
  * Exactly-once rule: a step is CLAIMED in the database first (a compare-and-set on
  * helperIndex + deadlineAt + lane + status). Only the caller whose claim succeeds may
  * alert anyone. A second server, a restarted server or the worker sweep that tries the
@@ -53,6 +55,8 @@ export interface EscalationDeps {
   nameOf(membershipId: string | undefined): Promise<string | undefined>
   /** Send push/SMS. Called only after a successful claim. */
   onStep(c: DoorCase, step: { kind: EscalationKind; fromId?: string; toId?: string; fromName?: string; toName?: string }): Promise<void> | void
+  /** Section 7: Mark helper request as timed out. Called when a helper doesn't answer. */
+  onTimeout?(caseId: string, membershipId: string): Promise<void>
 }
 
 export interface EscalationConfig {
@@ -208,6 +212,11 @@ export async function escalateDueCase(
     won++
 
     await deps.onStep(c, { kind, fromId, toId, fromName, toName })
+
+    // Section 7: Mark helper request as timed out when a helper doesn't answer
+    if (deps.onTimeout && fromId) {
+      await deps.onTimeout(c.id, fromId)
+    }
   }
 
   return won

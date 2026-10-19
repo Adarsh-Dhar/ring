@@ -6,7 +6,234 @@ This document summarizes the implementation of Section 7 features as specified i
 
 Section 7 implements helper collaboration, request state tracking, safe defaults, and resident controls for emergency situations.
 
-## Completed Changes
+## Completed Changes (Updated)
+
+### 1. Database Migration ✅
+
+**File:** `prisma/migrations/20261019000008_section7_helper_requests/migration.sql`
+
+- Created HelperRequest table with all state machine fields
+- Added Membership.tier column (default: 'primary')
+- Added Case.conversationOwner and Case.pendingActions columns
+- Added Household.approvalRetrySec column (default: 300)
+- Added foreign key constraints and indexes
+
+**Status:** Migration file created, ready to apply when database is accessible.
+
+### 2. Helper Request State Machine ✅ (FULLY WIRED)
+
+**File:** `lib/doorstep/helperRequests.ts`
+
+All state transitions are now called:
+- `createHelperRequest()` - Called in mode-rise notifications, escalation, and approval retry
+- `markDelivered()` - Called in `contactHelper()` when at least one channel succeeds
+- `markAcked()` - Called in `ackCase()` when helper acknowledges
+- `markAccepted()` - Called in `answerCase()` when helper answers 'safe'
+- `markDeclined()` - Called in `answerCase()` when helper answers 'not_safe'
+- `markTimedOut()` - Called in escalation's `onTimeout` callback
+
+**Integration points:**
+- `lib/doorstep/contactLog.ts` - Marks delivered on successful contact
+- `lib/doorbell/store.ts` - ackCase, answerCase, escalationDeps
+- `lib/doorstep/caseRiskStore.ts` - mode-rise notifications
+- `lib/doorbell/store.ts` - approval retry in sweepOverdueCases
+
+### 3. Contact Logging Infrastructure ✅
+
+**File:** `lib/doorstep/contactLog.ts`
+
+- Updated to mark requests as delivered when at least one channel succeeds
+- All contact attempts logged with structured audit events
+- Updates HelperRequest.channels with delivery results
+
+**Updated files:**
+- `lib/doorbell/store.ts` - notifyAll, smsAll now use contactHelper
+- Added caseId parameter to smsAll for proper audit logging
+
+### 4. Structured Audit Log ✅
+
+**File:** `lib/doorstep/audit.ts`
+
+- Fully implemented with all audit event creators
+- Used throughout the codebase for tracking significant actions
+
+### 5. Pending Actions ✅ (INTEGRATED)
+
+**File:** `lib/doorstep/pendingActions.ts`
+
+- Fully implemented
+- Integrated in `lib/ai/agents/interrogator.ts` - `gateOrAsk()` now creates pending actions when helper approval is needed
+- API endpoint at `/api/doorbell/action` approves/rejects pending actions
+
+### 6. AI Recommendation Engine ✅
+
+**File:** `lib/doorstep/recommendation.ts`
+
+- Fully implemented
+- Can be integrated into helper screen to show AI recommendations
+
+### 7. Helper Request Content Builder ✅
+
+**File:** `lib/doorstep/requestContent.ts`
+
+- Fully implemented
+- Used in mode-rise notifications and approval retry
+
+### 8. Safe Defaults ✅ (FULLY APPLIED)
+
+**Files:**
+- `lib/ai/agents/interrogator.ts` - gateFor() maintains holdOnly even after no_response
+- `lib/doorstep/actionGate.ts` - Added safetyOnly option
+- `lib/ai/agents/interrogator.ts` - gateFor() now passes safetyOnly when helper-led and no_response
+- AI is limited to safety scripts when helper-led with no helper answering
+
+### 9. Mode-Rise Notifications ✅
+
+**File:** `lib/doorstep/caseRiskStore.ts`
+
+- Fully implemented in applyRiskEdit()
+- Creates risk-decision or takeover requests when S_eff rises (0 → 20, M2, M3)
+- Deduplicated per (caseId, modeRank)
+- Sends notifications with full request content
+
+### 10. Contact Chain Tiers ✅ (FULLY APPLIED)
+
+**Prisma:** Added Membership.tier column
+
+**Integration:**
+- `lib/doorbell/store.ts` - loadStateFromDB() now sorts chain by tier (primary, backup, third) then by position
+- `lib/doorbell/store.ts` - openCase() also sorts chain by tier
+- Chain ordering: primary → backup → third, with position as tiebreaker
+
+### 11. Helper Control APIs ✅
+
+**Files:**
+- `app/api/doorbell/action/route.ts` - Approve/reject pending actions with helperMayApprove check
+- `app/api/doorbell/takeover/route.ts` - Take over/release conversation
+- `app/api/doorbell/escalate/route.ts` - Escalate to next helper
+
+**Integration:**
+- Takeover now silences AI (checked in startInterrogator)
+- All actions logged with audit events
+
+### 12. Resident Preferences ✅
+
+**File:** `lib/doorstep/residentPreferences.ts`
+
+- Added helperMayApprove field to Preferences
+- Parsed in parsePreferences()
+- Checked in approve-action endpoint
+- Default: all false (helper cannot approve without explicit permission)
+
+**Prisma:** Added Household.approvalRetrySec (default: 300)
+
+### 13. Approval Retry Logic ✅
+
+**File:** `lib/doorbell/store.ts`
+
+- Implemented in sweepOverdueCases()
+- For no_response cases with short_notice, retries at approvalRetrySec intervals
+- Limited to 5 retries
+- Creates new round of HelperRequest with incrementing round number
+- Uses Household.approvalRetrySec configuration
+
+## Remaining Work
+
+### UI Integration (PENDING)
+
+**Resident Screen (`app/resident/page.tsx`):**
+- Show HelperRequest state for current case
+- Display "no helper has answered yet" message with SOS and emergency number
+- Show pending actions if any
+- Display audit trail panel
+
+**Helper Screen:**
+- Call new API routes (action, takeover, escalate)
+- Show shared case view with audit trail
+- Display action controls (approve/reject pending actions)
+- Show AI recommendation panel
+- Display takeover/release controls
+
+### Resident Controls (PENDING)
+
+**Contact Order:**
+- UI to edit Membership.tier (primary, backup, third)
+- UI to reorder contacts within tier
+
+**Sensory Settings:**
+- Ensure settings reach resident screen
+- UI to toggle muted alerts, reduced animation
+
+**Revoke All:**
+- Add "revoke all delegations" button in resident settings
+- Implementation should reset all delegation preferences to 'helper'
+
+### Test Suite (PENDING)
+
+**File:** `tests/doorstep-section7.test.ts`
+
+Tests needed:
+- Request state transitions (sent → delivered → acked → accepted/declined/timed_out)
+- Failed contacts being logged
+- No consent from silence (no_response doesn't grant permission)
+- Hold-only gate after timeout
+- All-contacts alert exactly once
+- Single-use approval (consumed after execution)
+- Takeover silencing the AI
+- Resident-wins cases (P13)
+- 40-minute example: 0 → 20 → S_eff 60 → emergency
+
+### Additional Infrastructure (OPTIONAL)
+
+- Web-push delivery beacon in service worker (`public/sw.js`)
+- Twilio status webhook for SMS delivery receipts
+
+## Fixes Applied
+
+### Database Migration
+✅ Created migration file with all Section 7 tables and columns
+
+### Request State Machine
+✅ All state transitions now called:
+- markDelivered in contactHelper
+- markAcked in ackCase
+- markAccepted/Declined in answerCase
+- markTimedOut in escalation onTimeout
+
+### Pending Actions
+✅ createPendingAction called in gateOrAsk when helper approval needed
+
+### Takeover
+✅ AI checks conversationOwner in startInterrogator and stays silent
+
+### Safe Defaults
+✅ safetyOnly passed to gateAction when helper-led and no_response
+
+### Approval Retry
+✅ Implemented in sweepOverdueCases using Household.approvalRetrySec
+
+### Contact Tiers
+✅ Chain sorted by tier (primary, backup, third) in loadStateFromDB and openCase
+
+## Summary
+
+**Backend Implementation:** 100% complete
+**UI Integration:** 0% complete
+**Test Coverage:** 0% complete
+
+All core Section 7 backend functionality is now implemented and integrated. The system can:
+- Track helper request state through full lifecycle
+- Log all contact attempts with delivery status
+- Create and manage pending actions for single-use approvals
+- Provide AI recommendations
+- Implement safe defaults (hold-only, safety-only)
+- Notify helpers on mode rise
+- Sort contacts by tier
+- Support takeover, escalation, and action approval
+- Retry approval requests at configured intervals
+- Check resident preferences for helper approval permissions
+
+The remaining work is primarily UI integration and test coverage, which are frontend-facing tasks.
 
 ### 1. Helper Request State Machine (7.2)
 

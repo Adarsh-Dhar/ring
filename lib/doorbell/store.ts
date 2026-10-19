@@ -225,7 +225,21 @@ async function loadStateFromDB(householdId: string): Promise<void> {
           c.log.push({ t: now, msg: 'Server restarted. Resuming timer from saved deadline (no duplicate alert).' })
         }
       }
-      c.chain = c.chain.length ? c.chain : known
+      // Section 7: Build chain sorted by tier (primary, backup, third) then by position
+      // Need to read tier from database since it's not in the in-memory membership structure
+      const db = getDb()
+      const membershipsWithTier = await db.membership.findMany({
+        where: { householdId, consent: 'approved' },
+        select: { id: true, tier: true, position: true },
+      })
+      const tierOrder = { primary: 0, backup: 1, third: 2 }
+      const sortedMemberships = membershipsWithTier.sort((a, b) => {
+        const tierA = tierOrder[(a.tier as any) || 'primary']
+        const tierB = tierOrder[(b.tier as any) || 'primary']
+        if (tierA !== tierB) return tierA - tierB
+        return a.position - b.position
+      })
+      c.chain = c.chain.length ? c.chain : sortedMemberships.map(m => m.id)
     }
 
     const dbExpected  = await getExpectedVisitsForHousehold(householdId)
@@ -766,7 +780,7 @@ async function openCase(
     deadlineAt:  now + secs * 1000,
     status:      'waiting',
     log:         [],
-    chain:       approved.map(m => m.id),
+    chain:       approved.map(m => m.id), // Will be re-sorted by tier below
     deviceId,
     lane:        m ? 'expected' : 'normal',
     recurringId: m?.recurring?.id,
@@ -778,6 +792,21 @@ async function openCase(
     checkWord:   residentCheck && !hasSecret ? m!.passphrase : undefined,
     expectedId:  m && !m.recurring ? m.id : undefined,
   }
+
+  // Section 7: Sort chain by tier (primary, backup, third) then by position
+  const db = getDb()
+  const membershipsWithTier = await db.membership.findMany({
+    where: { householdId: state.householdId, consent: 'approved' },
+    select: { id: true, tier: true, position: true },
+  })
+  const tierOrder = { primary: 0, backup: 1, third: 2 }
+  const sortedMemberships = membershipsWithTier.sort((a, b) => {
+    const tierA = tierOrder[(a.tier as any) || 'primary']
+    const tierB = tierOrder[(b.tier as any) || 'primary']
+    if (tierA !== tierB) return tierA - tierB
+    return a.position - b.position
+  })
+  c.chain = sortedMemberships.map(m => m.id)
 
   // Minimum-notice policy. Separate from risk: it can require approval, it never adds points.
   const planned = m && !m.recurring ? state.expected.find(x => x.id === m.id) : undefined
@@ -791,6 +820,9 @@ async function openCase(
     secs = parseNoticeSettings(household).approvalTimerSec
     c.deadlineAt = now + secs * 1000
   }
+
+  // Section 7: Store approval retry interval for later use
+  ;(c as any).approvalRetrySec = household.approvalRetrySec || 300
 
   addLog(c, note)
   if (notice.status === 'short_notice') addLog(c, notice.reason)
@@ -964,6 +996,13 @@ export async function ackCase(householdId: string, caseId: string, membershipId:
     c.ackedAt = Date.now(); c.ackedBy = membershipId
     addLog(c, `${membership.user.name} saw the alert.`)
     await updateCase(c.id, c)
+
+    // Section 7: Mark helper request as acknowledged
+    const { getLatestRequest, markAcked } = await import('@/lib/doorstep/helperRequests')
+    const request = await getLatestRequest(caseId, membershipId, 'approval')
+    if (request) {
+      await markAcked(request.id)
+    }
   }
   return { ok: true, case: c }
 }
@@ -1118,6 +1157,18 @@ export async function answerCase(
   addLog(c, `${membership.user.name} answered: ${label}.`)
   if (answer === 'safe') await markUsed(state, c)
   await updateCase(c.id, c)
+
+  // Section 7: Mark helper request as accepted or declined
+  const { getLatestRequest, markAccepted, markDeclined } = await import('@/lib/doorstep/helperRequests')
+  const request = await getLatestRequest(caseId, membershipId, 'approval')
+  if (request) {
+    if (answer === 'safe') {
+      await markAccepted(request.id)
+    } else {
+      await markDeclined(request.id)
+    }
+  }
+
   return { ok: true, case: c }
 }
 
@@ -1425,7 +1476,7 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         return
       }
       if (step.kind === 'exhausted') {
-        smsAll({ householdId }, `Doorbell: nobody answered for ${residentName}. Please call them now.`, residentName, true)
+        smsAll({ householdId }, `Doorbell: nobody answered for ${residentName}. Please call them now.`, residentName, true, c.id)
         return
       }
       const to = step.toId ? await getMembership(step.toId) : null
@@ -1447,6 +1498,14 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         }
       }
     },
+    onTimeout: async (caseId, membershipId) => {
+      // Section 7: Mark helper request as timed out
+      const { getLatestRequest, markTimedOut } = await import('@/lib/doorstep/helperRequests')
+      const request = await getLatestRequest(caseId, membershipId, 'approval')
+      if (request) {
+        await markTimedOut(request.id)
+      }
+    },
   }
 }
 
@@ -1455,6 +1514,8 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
  * so a case still escalates when the web process is down or restarting.
  * `graceMs` keeps this from racing the web server's own 1 s tick; if the web server got there
  * first the claim simply fails and nothing is sent twice.
+ *
+ * Section 7: Also handles approval retry for cases in no_response status.
  */
 export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
   const rows = await getOverdueCases(graceMs)
@@ -1473,6 +1534,43 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
         lane: (row.lane as 'normal' | 'expected' | null) ?? undefined,
       }
       steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
+
+      // Section 7: Approval retry for no_response cases
+      if (c.status === 'no_response' && c.noticeStatus === 'short_notice') {
+        const approvalRetrySec = household.approvalRetrySec || 300
+        const timeSinceDeadline = Date.now() - c.deadlineAt
+        // Retry if we're at a retry interval boundary
+        const retryInterval = Math.floor(timeSinceDeadline / (approvalRetrySec * 1000))
+        if (retryInterval > 0 && retryInterval <= 5) { // Limit to 5 retries
+          const { createHelperRequest, getLatestRequest } = await import('@/lib/doorstep/helperRequests')
+          const { buildHelperRequest, formatPushNotification, formatSms } = await import('@/lib/doorstep/requestContent')
+          const { contactHelper } = await import('@/lib/doorstep/contactLog')
+          const { getPreferences } = await import('@/lib/db/preferences')
+
+          // Check if we already sent a retry request for this interval
+          const existing = await getLatestRequest(c.id, chain[0], 'approval')
+          if (!existing || existing.round !== retryInterval) {
+            // Send new round of requests
+            const prefs = await getPreferences(c.householdId)
+            const memberships = await getApprovedMemberships(c.householdId)
+
+            for (const m of memberships) {
+              const requestId = await createHelperRequest({
+                caseId: c.id,
+                membershipId: m.id,
+                kind: 'approval',
+                round: retryInterval,
+              })
+
+              const content = buildHelperRequest([], 'ai_leads', 0, c.noticeStatus, prefs)
+              const pushNotif = formatPushNotification(content)
+              const smsBody = formatSms(content)
+
+              await contactHelper(c.id, m.id, { push: pushNotif, sms: smsBody }, requestId)
+            }
+          }
+        }
+      }
     } catch (e) {
       reportError(e, { fn: 'sweepOverdueCases', caseId: row.id })
     }

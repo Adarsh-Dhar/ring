@@ -3,11 +3,13 @@
  *
  * Wraps push and SMS with detailed logging and failure tracking.
  * Updates HelperRequest.channels with delivery results.
+ * Marks request as delivered when at least one channel succeeds.
  */
 import { pushToMembership, sendSms, type PushPayload } from '@/lib/doorbell/notify'
 import { getPushSubscriptionsForMembership } from '@/lib/db/push'
 import { getMembership } from '@/lib/db/memberships'
-import { updateChannels, type HelperRequest } from './helperRequests'
+import { getDb } from '@/lib/db/client'
+import { updateChannels, markDelivered, type HelperRequest } from './helperRequests'
 import { writeAudit, audit } from './audit'
 
 export interface ContactResult {
@@ -29,7 +31,7 @@ export async function contactHelper(
     return { push: { sent: 0, failed: 0, noSubscription: true }, sms: { ok: false, reason: 'membership not found' } }
   }
 
-  const user = await (await import('@/lib/db/households')).getDb().user.findUnique({
+  const user = await getDb().user.findUnique({
     where: { id: membership.userId },
     select: { name: true, phone: true },
   })
@@ -79,6 +81,11 @@ export async function contactHelper(
       push: { sent: pushSent, failed: pushFailed, noSubscription },
       sms: { ok: smsOk, reason: smsReason },
     })
+
+    // Mark as delivered if at least one channel succeeded
+    if (pushSent > 0 || smsOk) {
+      await markDelivered(requestId)
+    }
   }
 
   return {
