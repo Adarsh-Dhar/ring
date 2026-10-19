@@ -95,18 +95,6 @@ export async function getActiveLifecycleCase(householdId: string) {
   })
 }
 
-/**
- * Section 8: the case a new door event attaches to, if any: the newest case for this household that is not closed.
- * Replaces the old "newest WAITING case" lookup, because a case whose answer flow has finished still belongs to the
- * same visitor episode until its quiet period ends or a helper closes it.
- */
-export async function getActiveLifecycleCase(householdId: string) {
-  return getDb().case.findFirst({
-    where: { householdId, closedAt: null },
-    orderBy: { createdAt: 'desc' },
-  })
-}
-
 export async function updateCase(caseId: string, data: Partial<DoorCase>) {
   const updateData: Prisma.CaseUpdateInput = {}
 
