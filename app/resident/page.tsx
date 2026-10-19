@@ -8,6 +8,8 @@ import RegularApprovals from './RegularApprovals'
 import ApprovedNote from './ApprovedNote'
 import DelegationSettings from './DelegationSettings'
 import ResidentCaseNotes from './ResidentCaseNotes'
+import { modeScreenFor, visitorModeOf, isUrgentMode } from '@/lib/doorstep/residentModeScreen'
+import { modeRank } from '@/lib/doorstep/riskRules'
 
 // calm = no vibration and no beep. Used while a helper is checking, so a visitor never startles the resident.
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
@@ -98,6 +100,10 @@ export default function ResidentPage() {
   const callTarget = answeredBy ?? first
   const emergencyContact = first?.name ?? 'your emergency contact'
 
+  // Spec 6.2: the mode text comes from the snapshot's riskScore/controlMode, so it shows even when SSE is down.
+  const modeScreen = modeScreenFor(c)
+  const visitorMode = visitorModeOf(c)
+
   // Order matters: anything that means "we can't be sure" comes BEFORE any "all quiet" or "OK to open" screen.
   let screen: Screen
   if (unauthorized) {
@@ -108,6 +114,9 @@ export default function ResidentPage() {
     screen = { icon: '🔒', title: 'Not paired', sub: 'Enter the pairing code to connect your device.', bg: 'bg-amber-700', alarm: true }
   } else if (stale || (error && !snap)) {
     screen = { icon: '⚠️', title: 'Connection lost', sub: `Keep the door closed. Call ${emergencyContact}.`, bg: 'bg-amber-700', alarm: true }
+  } else if (modeScreen && isUrgentMode(visitorMode)) {
+    // Spec 6.1 step 1: M4 and M5 come first. A forced entry at night, or with the device offline, still says "Move away".
+    screen = { icon: modeScreen.icon, title: modeScreen.title, bg: modeScreen.bg, alarm: true }
   } else if (sseLost || (realtimeState?.state === 'CLOSED_KEEP_SHUT' && realtimeState?.canOpen === false)) {
     screen = { icon: '⚠️', title: 'Keep the door closed', sub: `Call ${emergencyContact}.`, bg: 'bg-amber-700', alarm: true }
   } else if (snap && !snap.dbHealthy) {
@@ -141,6 +150,9 @@ export default function ResidentPage() {
   } else if (c.kind === 'visitor' && c.visitorLeftAt && c.status !== 'waiting' && (c.riskScore ?? 0) < 100 && c.controlMode !== 'emergency') {
     // Section 8.2: the visitor has left. The score is frozen; a serious event keeps the case with the helper.
     screen = { icon: '👋', title: 'The visitor has left', sub: c.lifecycle === 'helper_review' ? 'Your helper is still looking at this.' : undefined, bg: 'bg-slate-700', calm: true }
+  } else if (modeScreen && visitorMode && modeRank(visitorMode) >= modeRank('ai_assisted')) {
+    // Spec 6.2: M1 to M3 show the exact mode wording, ahead of night lock and the generic waiting text.
+    screen = { icon: modeScreen.icon, title: modeScreen.title, bg: modeScreen.bg, alarm: modeScreen.alarm, calm: modeScreen.calm }
   } else if (snap?.quietNow && (c.status === 'waiting' || (c.status === 'answered' && c.answer === 'safe'))) {
     screen = { icon: '🌙', title: 'Night lock is on', sub: 'Do not open the door', bg: 'bg-indigo-900' }
   } else if (c.lane === 'expected' && c.status === 'waiting' && (c.checkMode === 'code' || c.checkWord)) {
@@ -160,7 +172,7 @@ export default function ResidentPage() {
     const helperStatus = c.helperIndex > 0
       ? `Asking ${helpers.find(h => h.id === c.chain[c.helperIndex])?.name ?? 'next helper'}`
       : `Asking ${currentHelper?.name ?? 'a helper'}`
-    screen = { icon: '🚪', title: 'Someone is here', sub: `Keep the door closed. ${helperStatus}.`, bg: 'bg-sky-800', calm: true }
+    screen = { icon: '🚪', title: modeScreen?.title ?? 'Someone is here', sub: `Keep the door closed. ${helperStatus}.`, bg: 'bg-sky-800', calm: true }
   } else if (c.status === 'no_response') {
     screen = { icon: '⚠️', title: "Don't open the door", sub: 'Nobody answered. Call your emergency contact.', bg: 'bg-amber-700', alarm: true }
   } else if (c.answer === 'safe' && (c as any).selfVerifiedAt && !c.declinedAt) {

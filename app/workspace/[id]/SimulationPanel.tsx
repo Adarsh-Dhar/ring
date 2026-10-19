@@ -158,21 +158,24 @@ function DoorbellSim() {
     }
     // Short-notice visit waiting for approval: say the holding line only, then stop. No greeting, no questions.
     if (s.holdingOnly) {
-      if (s.allowed?.holding) await say(s.lines.holding)
+      const h = await postJson('/api/ai/interrogator/line', { caseId: r.data.caseId, line: 'holding' })
+      if (h.data?.allowed && h.data.text) await say(h.data.text)
       setChat((c) => [...c, { from: 'system', text: 'This visit needs approval first. The door stays closed.' }])
       return setPhase('done')
     }
     setMaxTurns(typeof s.maxTurns === 'number' ? s.maxTurns : null)
     setPhase('thinking')
-    if (!s.allowed?.greet) {
+    // The words come only from the dispatcher (gated, audited, and it stamps "AI responding" so repeat knocks count).
+    const g = await postJson('/api/ai/interrogator/line', { caseId: r.data.caseId, line: 'greet' })
+    if (!g.data?.allowed || !g.data.text) {
       setChat((c) => [...c, { from: 'system', text: 'The assistant may not greet alone at this risk level. Helpers have been alerted.' }])
       return setPhase('done')
     }
-    await say(s.lines.greet)
+    await say(g.data.text)
     setPhase('waiting')
   }
 
-  async function handleReply(r: { ok: boolean; data: any }, originalText: string) {
+  async function handleReply(r: { ok: boolean; data: any }, originalText = '') {
     if (!r.ok) { setPhase('waiting'); setText(originalText); return setNotice(r.data.error || 'The answer could not be processed.') }
     const j = r.data
     if (j.error) {

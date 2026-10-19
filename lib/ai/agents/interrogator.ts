@@ -2,10 +2,10 @@ import { generateJson } from '@/lib/ai/client'
 import { InterrogatorTurnOut, type InterrogatorTurnResult } from '@/lib/ai/schemas'
 import { INTERROGATOR_SYSTEM } from '@/lib/ai/prompts/interrogator'
 import { riskFlagsFor, riskMatchesFor, semanticFlag } from './risk'
-import { computeControl, MODE_FLOOR_SCORE } from '@/lib/doorstep/collaborationController'
-import { gateAction, LINE_TOOL } from '@/lib/doorstep/actionGate'
+import { computeControl } from '@/lib/doorstep/collaborationController'
+import { LINE_TOOL } from '@/lib/doorstep/actionGate'
+import { dispatchAiAction, gateFor, gateOrAsk, PRECONDITION_LINE } from '@/lib/doorstep/toolDispatcher'
 import { helperMakesFirstContact, parseNoticeSettings } from '@/lib/doorstep/noticePolicy'
-import { requestHelperDecision } from '@/lib/doorstep/caseRiskStore'
 import { getPreferences } from '@/lib/db/preferences'
 import type { Decision } from '@/lib/doorstep/residentPreferences'
 import type { LineId } from '@/lib/ai/talkback'
@@ -14,10 +14,10 @@ import { liveAssessment } from '@/lib/ai/risk/combine'
 import { setCaseAi, aiFlags, getCaseAi } from '@/lib/ai/caseAi'
 import { pickTalkback, interrogatorLines, LISTEN_SECONDS } from '@/lib/ai/talkback'
 import { clampWords, hasBannedPhrase, validQuestion, wrapUntrusted } from '@/lib/ai/guard'
-import { wrapPcmAsWav, cachedLineAudio } from '@/lib/ai/tts'
+import { wrapPcmAsWav } from '@/lib/ai/tts'
 import { getDb } from '@/lib/db/client'
 import { isUnplannedVisit } from '../interrogation/gate'
-import { createInterviewStamp, type InterviewState, modeRank } from '@/lib/doorstep/riskRules'
+import { modeRank } from '@/lib/doorstep/riskRules'
 import { getEventResponse, renderEventResponse, getUncertainResponse } from '@/lib/doorstep/eventResponses'
 import {
   MAX_TURNS,
@@ -38,12 +38,6 @@ export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'fail
 
 /** P7: Reason for finishing interrogation - extended for pressure_continues */
 export type FinishReason = 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed' | 'over_budget' | 'pressure_continues'
-
-/** P7: Stamp interview state when specific lines are spoken. */
-async function stampInterviewState(householdId: string, caseId: string, stampType: keyof InterviewState) {
-  const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
-  await applyRiskEdit(caseId, { kind: 'interview', stampType, at: new Date().toISOString() })
-}
 
 interface InterrogationTurn {
   question: string      // the question this answer replies to
@@ -76,53 +70,8 @@ const trailing = (turns: InterrogationTurn[], pred: (t: InterrogationTurn) => bo
 async function controlFor(householdId: string, a: { score: number; minMode: any }) {
   return computeControl({ score: a.score, minMode: a.minMode, prefs: await getPreferences(householdId) })
 }
-/** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone.
- *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used.
- *  Section 7.2: holdOnly remains true even after status flips to no_response (until a helper accepts).
- *  Section 7.2: safetyOnly when helper-led with no helper answering. */
-async function gateFor(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
-  const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
-  const stored = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
-  const sEff = Math.max(stored, o.sEff ?? 0)
-  // Section 7.2: holdOnly stays true for short_notice even after no_response
-  const isShortNotice = row?.noticeStatus === 'short_notice'
-  const holdOnly = isShortNotice && (row?.status === 'waiting' || row?.status === 'no_response')
-  // Section 7.2: safetyOnly when helper-led (M3+: helper_only and above) and no_response
-  const minMode = (row?.controlMode as any) || 'ai_leads'
-  const safetyOnly = modeRank(minMode) >= modeRank('helper_only') && row?.status === 'no_response'
-  return gateAction(tool, sEff, await getPreferences(householdId), {
-    holdOnly,
-    safetyOnly,
-    decision: o.decision,
-  })
-}
-
-/** Gate, and when the AI is over budget start the risk-decision timer (spec 5.3) so a helper is asked. */
-async function gateOrAsk(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
-  const g = await gateFor(householdId, caseId, tool, o)
-  // Section 7.3: a helper's single-use approval lets this one action through. A prohibited tool is never unlocked.
-  if (g.decision === 'ask_helper') {
-    const { consumeApprovedForTool } = await import('@/lib/doorstep/pendingActions')
-    const spent = await consumeApprovedForTool(caseId, tool).catch(() => null)
-    if (spent) return { ...g, decision: 'allow' as const, reason: 'helper_approved' }
-  }
-  if (g.decision === 'ask_helper' && g.reason === 'over_budget') {
-    await requestHelperDecision(caseId).catch(e => console.error('[AI interrogator] requestHelperDecision', e))
-  }
-  // Section 7: Create pending action when helper approval is needed
-  if (g.decision === 'ask_helper') {
-    // Best-effort: failing to record the request must not change the gate's answer or stop the AI turn.
-    try {
-      const { createPendingAction } = await import('@/lib/doorstep/pendingActions')
-      await createPendingAction(caseId, tool, tool, g.reason)
-    } catch (e) {
-      console.error('[AI interrogator] createPendingAction', e)
-    }
-  }
-  return g
-}
-
-export { gateOrAsk }
+/** The gate and its helper-decision side effects live in the dispatcher (spec 9). Re-exported for existing callers. */
+export { gateOrAsk, gateFor }
 
 /** Which fixed talkback lines the AI may speak alone right now. Safety lines (close, holding script) are always true. */
 export async function allowedLines(householdId: string, caseId: string): Promise<Record<LineId, boolean>> {
@@ -132,6 +81,12 @@ export async function allowedLines(householdId: string, caseId: string): Promise
   }
   return out
 }
+/** Close the interview with a fixed line. Like every AI action it is gated, audited and stamped by the dispatcher.
+ *  Returns the words for the door to speak, or null if the dispatcher refused (then nothing is said). */
+async function closeWith(householdId: string, caseId: string, line: 'close' | 'safety'): Promise<string | null> {
+  return (await dispatchAiAction({ householdId, caseId, line })).text
+}
+
 export async function startInterrogator(householdId: string, caseId: string, deviceId: string | null) {
   try {
     const f = await aiFlags(householdId)
@@ -174,12 +129,16 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     // Server-driven (Ring, once supported): ask → listen → up to MAX_TURNS turns
     const householdData = await aiFlags(householdId)
     await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS, residentName: householdData.residentName })
-    const opener = interrogatorLines(householdData.residentName).greet
-    const g = await gateOrAsk(householdId, caseId, 'greet_routine_request')
-    if (g.decision !== 'allow') { console.warn('[AI interrogator] greeting not allowed alone:', g.reason, 'budget', g.budget); return }   // helpers are already alerted
-    // P7: Stamp "respondingAt" when we start speaking
-    await stampInterviewState(householdId, caseId, 'respondingAt')
-    if (!(await tb.say(householdId, deviceId!, opener))) { await setCaseAi(caseId, { interrogationState: 'failed' }); return }
+    // Spec 9: the greeting goes through the dispatcher. It gates, audits, plays it, and only then stamps respondingAt.
+    const d = await dispatchAiAction({
+      householdId, caseId, line: 'greet', residentName: householdData.residentName,
+      play: (t) => tb.say(householdId, deviceId!, t),
+    })
+    if (!d.allowed) {
+      if (d.reason === 'playback_failed') { await setCaseAi(caseId, { interrogationState: 'failed' }); return }
+      console.warn('[AI interrogator] greeting not allowed alone:', d.reason)   // helpers are already alerted
+      return
+    }
     await setCaseAi(caseId, { interrogationState: 'listening' })
   } catch (e) {
     console.error('[AI interrogator]', e)
@@ -218,13 +177,13 @@ export async function processAnswer(
     // Optional operator ceiling (AI_INTERROGATOR_MAX_TURNS). Unlimited by default.
     if (turns.length >= MAX_TURNS) {
       await finishInterrogation(householdId, caseId, turns, 'max_turns')
-      return { question: null, final: true, close: interrogatorLines(null).close }
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
 
     // The visitor walked away or never speaks: stop, and say so in the risk.
     if (turns.length >= SILENT_LIMIT && trailing(turns, t => !t.transcript && !t.modelFailed) >= SILENT_LIMIT) {
       await finishInterrogation(householdId, caseId, turns, 'evasive')
-      return { question: null, final: true, close: interrogatorLines(null).close }
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
 
     // P7: M2 - if a confirmed pressure_after_boundary appears, stop questioning, say the boundary line, and hand over.
@@ -324,24 +283,7 @@ export async function processAnswer(
 
     if (!nextQuestion) {
       await finishInterrogation(householdId, caseId, updatedTurns, satisfied ? 'done' : 'max_turns', out)
-      return { question: null, final: true, close: interrogatorLines(null).close }
-    }
-
-    // P7: Detect when specific talkback lines are about to be spoken and stamp interview state
-    // This is a simple heuristic - in production, the exact line spoken should be tracked
-    if (modelQ) {
-      const qLower = modelQ.toLowerCase()
-      if (qLower.includes('rule') || qLower.includes('explain')) {
-        await stampInterviewState(householdId, caseId, 'rulesExplainedAt')
-      } else if (qLower.includes('not acceptable') || qLower.includes('boundary')) {
-        await stampInterviewState(householdId, caseId, 'boundaryStatedAt')
-      } else if (qLower.includes('not permitted') || qLower.includes('cannot enter') || qLower.includes('entry is not')) {
-        // Stamping entryDeniedAt also counts as boundary and as asking to leave.
-        await stampInterviewState(householdId, caseId, 'entryDeniedAt')
-        await stampInterviewState(householdId, caseId, 'boundaryStatedAt')
-      } else if (/\b(please leave|you must leave|cannot continue|need (you )?to leave)\b/i.test(modelQ)) {
-        await stampInterviewState(householdId, caseId, 'askedToLeaveAt')
-      }
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
 
     // Risk is updated live after EVERY answer, so helpers see it while the visitor is still at the door.
@@ -356,75 +298,83 @@ export async function processAnswer(
     // If mode is M4 or higher and we have any confirmed risk events, stop the conversation.
     const newConfirmedBehaviours = live.observations.filter(o => o.state === 'confirmed' && o.source === 'transcript')
     if (modeRank(control.mode) >= modeRank('helper_urgent') && newConfirmedBehaviours.length > 0) {
-      const closeLine = interrogatorLines(null).safety
+      const closeLine = await closeWith(householdId, caseId, 'safety')
       await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
       return { question: null, final: true, close: closeLine }
     }
 
     // P16: M3 uncertain events - pause questions, play safety script, preserve evidence
     // Evidence is preserved automatically through the observation store (not deleted by cleanup)
-    const hasUncertainPhysicalOrThreat = live.observations.some(o => 
-      o.state === 'uncertain' && 
-      ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault'].includes(o.code)
-    )
-    if (modeRank(control.mode) >= modeRank('helper_only') && hasUncertainPhysicalOrThreat) {
+    const PHYSICAL_OR_THREAT = ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault']
+    const uncertainObs = live.observations.find(o => o.state === 'uncertain' && PHYSICAL_OR_THREAT.includes(o.code))
+    if (modeRank(control.mode) >= modeRank('helper_only') && uncertainObs) {
       // For uncertain physical events, use the uncertain response with safety script
-      const uncertainObs = live.observations.find(o =>
-        o.state === 'uncertain' &&
-        ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault'].includes(o.code)
-      )
-      if (uncertainObs) {
-        const uncertainResponse = getUncertainResponse(uncertainObs.code)
-        if (uncertainResponse) {
-          const g = await gateFor(householdId, caseId, uncertainResponse.tool, { sEff: control.effectiveScore })
-          if (g.decision === 'allow') {
-            await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
-            return { question: null, final: true, close: uncertainResponse.response }
-          }
+      const uncertainResponse = getUncertainResponse(uncertainObs.code)
+      if (uncertainResponse) {
+        const d = await dispatchAiAction({ householdId, caseId, tool: uncertainResponse.tool, text: uncertainResponse.response, sEff: control.effectiveScore })
+        if (d.allowed) {
+          await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+          return { question: null, final: true, close: d.text }
         }
       }
-      const closeLine = interrogatorLines(null).safety
+      const closeLine = await closeWith(householdId, caseId, 'safety')
       await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
       return { question: null, final: true, close: closeLine }
     }
 
     // P15: Check for event-specific scripted responses
-    // These run in addition to the mode. Each response still goes through the action gate.
+    // These run in addition to the mode. Each response goes through the dispatcher (gate, audit, stamp).
     for (const obs of newConfirmedBehaviours) {
       const eventResponse = getEventResponse(obs.code)
       if (eventResponse) {
-        const g = await gateFor(householdId, caseId, eventResponse.tool, { sEff: control.effectiveScore })
-        if (g.decision === 'allow') {
-          // Load approved alternative for pressure_after_rule if available
-          let approvedAlternative: string | undefined
-          if (obs.code === 'pressure_after_rule') {
-            const prefs = await getPreferences(householdId)
-            approvedAlternative = prefs.approvedAlternative
-          }
+        // Load approved alternative for pressure_after_rule if available
+        let approvedAlternative: string | undefined
+        if (obs.code === 'pressure_after_rule') {
+          const prefs = await getPreferences(householdId)
+          approvedAlternative = prefs.approvedAlternative
+        }
+        const d = await dispatchAiAction({
+          householdId, caseId, tool: eventResponse.tool,
+          text: renderEventResponse(eventResponse, obs.quotes ?? [], { approvedAlternative }),
+          sEff: control.effectiveScore,
+        })
+        if (d.allowed) {
           // Speak the scripted response instead of the next question
           await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
-          return { question: null, final: true, close: renderEventResponse(eventResponse, obs.quotes ?? [], { approvedAlternative }) }
+          return { question: null, final: true, close: d.text }
         }
       }
     }
 
-    // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
-    const gq = await gateOrAsk(householdId, caseId, 'neutral_verification_question', { sEff: control.effectiveScore, decision: 'ask_purpose' })
-    if (gq.decision !== 'allow') {
-      // P7: M3 and above - return the safety line instead of "Thank you. Please wait a moment."
-      const closeLine = modeRank(control.mode) >= modeRank('helper_only')
-        ? interrogatorLines(null).safety
-        : interrogatorLines(null).close
-      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
-      return { question: null, final: true, close: closeLine }
+    // Spec 4.2: a behaviour that was ignored only because its precondition line never played (rules not explained,
+    // boundary not stated, visitor not yet asked to leave) is fixed by playing that fixed line now. The dispatcher
+    // stamps it when it is played, so the next repeat can be scored. This replaces guessing stamps from model wording.
+    let outgoing: string | null = null
+    const missing = live.ledger.find(e => e.state === 'uncertain' && PRECONDITION_LINE[String(e.debug?.why)])
+    if (missing) {
+      const pre = await dispatchAiAction({ householdId, caseId, line: PRECONDITION_LINE[String(missing.debug?.why)], sEff: control.effectiveScore })
+      if (pre.allowed) outgoing = pre.text
     }
+
+    // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
+    if (!outgoing) {
+      const dq = await dispatchAiAction({ householdId, caseId, tool: 'neutral_verification_question', text: nextQuestion, sEff: control.effectiveScore, decision: 'ask_purpose' })
+      if (!dq.allowed) {
+        // P7: M3 and above - return the safety line instead of "Thank you. Please wait a moment."
+        const closeLine = await closeWith(householdId, caseId, modeRank(control.mode) >= modeRank('helper_only') ? 'safety' : 'close')
+        await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+        return { question: null, final: true, close: closeLine }
+      }
+      outgoing = dq.text
+    }
+    newTurn.next = outgoing   // the next turn's "question this answers" is what was actually said
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
       visitorSummary: out.realReasonSummary ?? undefined,
       riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
       // riskScore, riskLedger, controlMode are now written by applyRiskEdit
     })
-    return { question: nextQuestion, final: false, close: null }
+    return { question: outgoing, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
     let errorMessage = 'AI service error. Please try again.'
@@ -512,12 +462,10 @@ async function finishInterrogation(
   })
 }
 
-/** Fixed lines (+ cached TTS audio when available) for the device/sim to play. */
-export async function interrogatorScript(householdId: string, residentName: string | null, caseId?: string) {
-  const lines = interrogatorLines(residentName)
-  const audio: Record<string, string | null> = {}
-  for (const id of Object.keys(lines) as (keyof typeof lines)[]) audio[id] = await cachedLineAudio(householdId, id, lines[id])
+/** What the device may ask for right now. It carries NO line text: the words come only from POST /api/ai/interrogator/line,
+ *  which runs the dispatcher (gate, audit, stamp). `allowed` is advisory, for the UI. */
+export async function interrogatorScript(householdId: string, _residentName: string | null, caseId?: string) {
   const allowed = caseId ? await allowedLines(householdId, caseId) : null   // null = no case to gate against
-  return { lines, audio, allowed, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
+  return { allowed, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
 }
 export { wrapPcmAsWav }

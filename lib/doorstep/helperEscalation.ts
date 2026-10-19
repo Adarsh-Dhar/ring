@@ -18,9 +18,11 @@ export function backupTimeoutSec(
   minMode: ControlMode | null | undefined,
   householdSec: number,
   needsApproval: boolean = false,
+  /** The resident's approval timer. Without it the backup would always get the 120 s default. */
+  approvalSec?: number,
 ): number {
   if (score == null && !minMode) return householdSec
   const eff = effectiveScore(score ?? 0, minMode)
-  const t = activeTimer(timersFor(eff, minMode), { needsApproval, riskDecisionNeeded: riskDecisionNeeded(eff) })
+  const t = activeTimer(timersFor(eff, minMode, approvalSec), { needsApproval, riskDecisionNeeded: riskDecisionNeeded(eff) })
   return t && t.seconds !== null ? t.seconds : householdSec
 }

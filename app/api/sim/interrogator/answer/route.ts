@@ -5,7 +5,6 @@ import { hit } from '@/lib/ratelimit'
 import { getDb } from '@/lib/db/client'
 import { processAnswer } from '@/lib/ai/agents/interrogator'
 import { aiFlags } from '@/lib/ai/caseAi'
-import { interrogatorLines } from '@/lib/ai/talkback'
 import { isUnplannedVisit } from '@/lib/ai/interrogation/gate'
 
 export const dynamic = 'force-dynamic'
@@ -49,7 +48,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     question: r.question,
     final:    r.final,
-    close:    r.final ? interrogatorLines(f.residentName).close : null,
+    close:    r.final ? r.close : null,   // the interviewer's gated line (safety / event response / close), not a hardcoded one
     error:    r.error,
     // Like the audio route: transcript, claims, verdict and risk are NOT returned to the visitor side.
   })

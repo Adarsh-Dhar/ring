@@ -60,11 +60,13 @@ export interface EscalationDeps {
 }
 
 export interface EscalationConfig {
-  /** P7: Acknowledgement timer (shrinks with score: 60s at 0 → 10s at 100, floor 10s) */
+  /** Seconds the next helper gets before the case moves on. Callers compute it from the case's S_eff and mode
+   *  (spec 5.3: approval, risk-decision 120 - S_eff, or takeover min(120 - S_eff, 60)), not from a fixed number. */
   timeoutSec: number
-  /** P7: Decision timer after acknowledgement (shrinks with score: 180s at 0 → 45s at 100, floor 45s) */
+  /** Seconds a helper has to decide after acknowledging. Fixed default. */
   decisionSec: number
-  /** P7: No-response timer for unacknowledged helpers (shrinks with score: 300s at 0 → 90s at 100, floor 90s) */
+  /** Not read by the step engine today: nobody-answered ends in `no_response` and the retry path in the worker. Kept so
+   *  existing callers still type-check. */
   noResponseSec: number
   expectedTimeoutSec: number
 }

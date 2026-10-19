@@ -7,6 +7,8 @@ import { getMembership, getApprovedMemberships } from '../db/memberships'
 import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
+import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
+import { maxMode, modeRank as controlModeRank } from '@/lib/doorstep/riskRules'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
 import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus } from '../doorstep/noticePolicy'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
@@ -1507,12 +1509,23 @@ export const resetAlertWarning = () => { lastDegradedPushAt = 0 }
 
 // ── Escalation wiring ─────────────────────────────────────────────────────────
 
-async function caseTimeoutSec(caseId: string, householdSec: number): Promise<number> {
+/** Seconds the next helper gets (spec 5.3). `approvalSec` is the resident's own approval timer, so the backup gets the
+ *  same window the first helper got, not the 120 s default. */
+async function caseTimeoutSec(caseId: string, householdSec: number, approvalSec?: number): Promise<number> {
   try {
     const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true } })
     const needsApproval = row?.noticeStatus === 'short_notice'
-    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval)
+    return backupTimeoutSec(row?.riskScore, row?.controlMode as ControlMode | null, householdSec, needsApproval, approvalSec)
   } catch { return householdSec }   // never block escalation on a read failure
+}
+
+/** Spec 6.1: the mode that governs a case is the more human-led of the stored event minimum and the band of its score.
+ *  case.controlMode alone is only the event minimum, so a score-60 case built from M1-level events would read as M1. */
+function modeOfCase(c: { riskScore?: number | null; controlMode?: string | null; effectiveMode?: string | null }): ControlMode {
+  return maxMode(
+    effectiveModeFor(c.riskScore, (c.controlMode as ControlMode | null | undefined) ?? null),
+    ((c.effectiveMode as ControlMode | null | undefined) ?? 'ai_leads'),
+  )
 }
 
 /** Database claim + alerts for one household. Used by tick() and by the worker sweep. */
@@ -1553,8 +1566,7 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
       if (step.kind === 'exhausted') {
         // Spec 7.2 step 4: nobody accepted. Alert every configured contact together (push and SMS in parallel) and
         // wait for the sends so a failure lands in the case log instead of disappearing.
-        const exhaustedMode = ((c as any).effectiveMode || (c as any).controlMode) as string | undefined
-        const helperLed = ['helper_only', 'helper_urgent', 'emergency'].includes(exhaustedMode || '')
+        const helperLed = controlModeRank(modeOfCase(c as any)) >= controlModeRank('helper_only')
         const body = helperLed
           ? `URGENT: nobody has answered for ${residentName}'s door and the case needs a helper. Do not open the door. Check the app or call them now.`
           : `Doorbell: nobody answered for ${residentName}. The door stays closed. Please call them now.`
@@ -1569,11 +1581,7 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
         }
       }
       // Issue #4: When mode is helper-led (M3+) or higher, also re-notify the primary helper (chain[0])
-      const controlMode = (c as any).controlMode as string | undefined
-      const effectiveMode = (c as any).effectiveMode as string | undefined
-      const mode = effectiveMode || controlMode
-      const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(mode || 'ai_leads')
-      if (modeRank >= 3 && c.chain[0] && c.chain[0] !== step.toId) {
+      if (controlModeRank(modeOfCase(c as any)) >= controlModeRank('helper_only') && c.chain[0] && c.chain[0] !== step.toId) {
         const primary = await getMembership(c.chain[0])
         if (primary) {
           pushToMembership(primary.id, { title: '🚪 Reminder: still waiting', body: 'The case has moved to the next helper. Please check in.', tag: c.id, url: '/helper' })
@@ -1604,7 +1612,7 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
     try {
       const household = await getHousehold(row.householdId)
       if (!household) continue
-      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS)
+      const timeoutSec = await caseTimeoutSec(row.id, household.timeoutSec || DEFAULT_ESCALATION_SECONDS, parseNoticeSettings(household).approvalTimerSec)
       const chain = ((row.chain as any) as string[]) || []
       const c: DoorCase = {
         id: row.id, kind: row.kind as CaseKind, eventType: row.eventType,
@@ -1612,6 +1620,10 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
         status: row.status as CaseStatus, log: ((row.log as any) || []),
         chain: chain.length ? chain : (await getApprovedMemberships(row.householdId)).map(m => m.id),
         lane: (row.lane as 'normal' | 'expected' | null) ?? undefined,
+        // The backstop must see the same score and mode the live path sees, or every swept case reads as M0:
+        // no primary re-notify and no URGENT SMS.
+        riskScore: (row as any).riskScore ?? undefined,
+        controlMode: (row as any).controlMode ?? undefined,
       }
       steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
 
@@ -1705,7 +1717,7 @@ export async function tick(householdId?: string) {
     for (const c of state.cases) {
       if (c.status !== 'waiting' || c.lifecycle === 'closed' || now < c.deadlineAt) continue
       try {
-        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec)
+        const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec, parseNoticeSettings(household).approvalTimerSec)
         const deps = escalationDeps(householdId, household.residentName, timeoutSec)
         await escalateDueCase(c, now, { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, deps)
       } catch (e) {

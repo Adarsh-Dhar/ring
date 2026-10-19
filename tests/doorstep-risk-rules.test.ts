@@ -123,10 +123,15 @@ describe('risk rules (spec sections 1, 4, 6)', () => {
     expect(r.score).toBe(25)
     // P6: refuse_to_leave now sets helper_only floor (M3)
     expect(r.minMode).toBe('helper_only')
-    // lock_manipulation requires entryDeniedAt — without it, scores 0 and registers as uncertain
+    // lock_manipulation requires entryDeniedAt — without it, it scores 0 but stays an ACTIVE uncertain event.
+    // Spec 6.3: an uncertain physical event still raises the mode to M3, so a sensor-confirmed tamper is never dropped.
     const lockNoStamp = score([makeObs('lock_manipulation', 'sensor', '')])
     expect(lockNoStamp.score).toBe(0) // entry_not_denied_yet
-    expect(lockNoStamp.minMode).toBe('ai_leads') // no floor without confirmation
+    expect(lockNoStamp.minMode).toBe('helper_only')
+    expect(lockNoStamp.activeSerious).toBe(1)
+    // A model (transcript) claim of the same thing still cannot raise anything.
+    const lockFromModel = score([makeObs('lock_manipulation', 'transcript', 'touching the lock')])
+    expect(lockFromModel.minMode).toBe('ai_leads')
     // With entryDeniedAt, lock_manipulation scores 30 and sets helper_only floor (P6: M3)
     const lockWithStamp = scoreWithTranscript([makeObs('lock_manipulation', 'sensor', '')], '', { entryDeniedAt: new Date().toISOString() })
     expect(lockWithStamp.score).toBe(30)

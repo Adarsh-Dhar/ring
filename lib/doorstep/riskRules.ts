@@ -442,13 +442,23 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
       if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
       // Spec 4.2: lock_manipulation requires entry to have been denied first.
       // For sensor events we also check the timestamp is after the denial (allow 60s clock skew).
+      // A failed precondition must not hide a physical event: the points stay at 0, but the event is still an
+      // active uncertain one, so its uncertainFloor (spec 6.3: M3) applies until a helper resolves it.
+      const failPrecondition = (why: string) => {
+        // Only a source the rule accepts (sensor, helper) can raise it. A model claim (transcript) still cannot.
+        if (rule.uncertainFloor && !isResolved && rule.sources.includes(o.source)) {
+          uncertainCodes.add(o.code)
+          activeSeriousKeys.add(o.id ?? `idx-${idx}`)
+        }
+        return reject('uncertain', why)
+      }
       if (o.code === 'lock_manipulation') {
-        if (!interviewState.entryDeniedAt) return reject('uncertain', 'entry_not_denied_yet')
+        if (!interviewState.entryDeniedAt) return failPrecondition('entry_not_denied_yet')
         if (o.source === 'sensor') {
           const eventMs = new Date(o.at).getTime()
           const deniedMs = new Date(interviewState.entryDeniedAt).getTime()
           const CLOCK_SKEW_MS = 60_000
-          if (eventMs < deniedMs - CLOCK_SKEW_MS) return reject('uncertain', 'sensor_before_entry_denied')
+          if (eventMs < deniedMs - CLOCK_SKEW_MS) return failPrecondition('sensor_before_entry_denied')
         }
       }
     }

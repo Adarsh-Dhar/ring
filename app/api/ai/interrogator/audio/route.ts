@@ -9,7 +9,7 @@ export const runtime = 'nodejs'
 import { getDb } from '@/lib/db/client'
 import { processAnswer } from '@/lib/ai/agents/interrogator'
 import { aiFlags } from '@/lib/ai/caseAi'
-import { interrogatorLines } from '@/lib/ai/talkback'
+import { dispatchAiAction } from '@/lib/doorstep/toolDispatcher'
 import { isUnplannedVisit } from '@/lib/ai/interrogation/gate'
 import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
 
@@ -58,7 +58,9 @@ export async function POST(req: NextRequest) {
   const audioBuf = Buffer.from(p.data.audio, 'base64')
   if (audioBuf.length < 100) {
     markMicUnavailable(c.id, 'Empty or near-empty audio received')
-    return NextResponse.json({ question: null, final: true, close: interrogatorLines(f.residentName).close })
+    // Even this fixed line is an AI action: gate, audit and stamp it like every other.
+    const closing = await dispatchAiAction({ householdId, caseId: c.id, line: 'close', residentName: f.residentName })
+    return NextResponse.json({ question: null, final: true, close: closing.text })
   }
 
   const r = await processAnswer(householdId, c.id, audioBuf, p.data.mimeType)
@@ -72,7 +74,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     question: r.question,
     final: r.final,
-    close: r.final ? interrogatorLines(f.residentName).close : null,
+    // What the door says is whatever the interviewer chose (gated safety line, event response or plain close), never a hardcoded line.
+    close: r.final ? r.close : null,
+    error: r.error,
     // transcript, claims, verdict, flags are NOT returned to the device: the visitor side never learns what was understood
   })
 }

@@ -61,11 +61,11 @@ export interface Timers {
   emergency: null
 }
 
-export function timersFor(sEff: number, minMode?: ControlMode | null, approvalSec: number = DEFAULT_APPROVAL_SECONDS): Timers {
+export function timersFor(sEff: number, minMode?: ControlMode | null, approvalSec?: number): Timers {
   const s = clampScore(sEff)
   const helperLed = s >= 60 || modeRank(minMode ?? 'ai_leads') >= modeRank('helper_only')
   return {
-    approvalSec: Number.isFinite(approvalSec) && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS,
+    approvalSec: Number.isFinite(approvalSec) && approvalSec && approvalSec > 0 ? Math.round(approvalSec) : DEFAULT_APPROVAL_SECONDS,
     riskDecisionSec: s >= 1 && s <= 99 ? RISK_TIMER_BASE - s : null,
     takeoverSec: helperLed && s < 100 ? Math.min(RISK_TIMER_BASE - s, TAKEOVER_CAP_SECONDS) : null,
     emergency: null,
@@ -93,10 +93,6 @@ export function riskDecisionNeeded(sEff: number): boolean {
   return AUTHORITY_COST.greet_routine_request > 100 - clampScore(sEff)
 }
 
-/** Section 7.2 (nobody in the chain answers) keeps its own curve. Unchanged from before. */
-export const NO_RESPONSE_CURVE = { atZero: 300, atMax: 90, min: 90 } as const
-const noResponse = (s: number) => Math.max(NO_RESPONSE_CURVE.min, Math.round(NO_RESPONSE_CURVE.atZero + (NO_RESPONSE_CURVE.atMax - NO_RESPONSE_CURVE.atZero) * (s / 100)))
-
 /** Dashboard order (spec 5.2): S_eff, then event severity, then the most recent event first. */
 export function compareForDashboard(
   a: { effectiveScore: number; eventSeverity: number; lastEventAt: number },
@@ -123,8 +119,6 @@ export interface Control {
   /** Dashboard rank. Higher means look at this case first: S_eff, then event severity. */
   helperPriority: number
   timers: Timers
-  /** Section 7.2 timer. */
-  noResponseSeconds: number
   permissions: Permissions
   /** Plain sentence for the case log and the helper screen. */
   summary: string
@@ -151,7 +145,6 @@ export function computeControl(input: { score: number; minMode?: ControlMode | n
     humanOversightIndex: sEff,
     helperPriority: sEff * 10 + eventSeverity,
     timers: timersFor(sEff, input.minMode, input.approvalSec),
-    noResponseSeconds: noResponse(sEff),
     permissions: permittedActions(input.prefs, mode, sEff),
     summary: LEADS[mode],
   }

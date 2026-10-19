@@ -183,7 +183,9 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     }
 
     case 'interview': {
-      // Add an interview state stamp.
+      // Add an interview state stamp. First write wins: replaying a line must not move the 30 s knock window
+      // or the entry-denied time that sensor events are compared against.
+      if (stored.interviewState[edit.stampType]) return { ok: true }
       const stamp = createInterviewStamp(edit.stampType, edit.at)
       newStored = {
         ...stored,
