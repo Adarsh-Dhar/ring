@@ -151,10 +151,18 @@ export async function claimEscalationStep(
   return r.count === 1
 }
 
-/** Waiting cases whose deadline passed more than `graceMs` ago (used by the worker sweep). */
+/** Waiting cases whose deadline passed more than `graceMs` ago (used by the worker sweep).
+ * Section 7: Also returns no_response cases within the TTL window for approval retry. */
 export async function getOverdueCases(graceMs: number, limit = 100) {
+  const now = Date.now()
+  const NO_RESPONSE_TTL_MS = 30 * 60_000 // 30 minutes
   return getDb().case.findMany({
-    where:   { status: 'waiting', deadlineAt: { lt: new Date(Date.now() - graceMs) } },
+    where: {
+      OR: [
+        { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) } },
+        { status: 'no_response', resolvedAt: { gte: new Date(now - NO_RESPONSE_TTL_MS) } },
+      ],
+    },
     orderBy: { deadlineAt: 'asc' },
     take:    limit,
   })

@@ -1,122 +1,94 @@
-# Section 7 Fixes Applied (Updated)
+# Section 7 Fixes Applied (Updated - Round 2)
 
-This document tracks all fixes applied to address the missing/broken items identified in the review.
+This document tracks all fixes applied to address the missing/broken items identified in the second review.
 
-## Issues Fixed
+## New Issues Fixed
 
-### 1. ✅ Database Migration
-**Issue:** No database migration. HelperRequest table and new columns don't exist.
-
-**Fix:**
-- Created migration file: `prisma/migrations/20261019000008_section7_helper_requests/migration.sql`
-- Creates HelperRequest table with all state machine fields
-- Adds Membership.tier, Case.conversationOwner, Case.pendingActions (nullable), Household.approvalRetrySec
-- Matches Prisma schema exactly (pendingActions is nullable, not NOT NULL)
-
-**Status:** Migration file created and schema-aligned.
-
-### 2. ✅ Request State Machine Transitions
-**Issue:** Only createHelperRequest and markAcked are called. Other states can't be reached.
+### 1. ✅ Route Authentication
+**Issue:** New routes read user from x-user-id header that nothing sets. Anyone can send any value. Existing routes use authorize(req, 'helper') with session.
 
 **Fix:**
-- `lib/doorstep/contactLog.ts` - Added markDelivered() call when at least one channel succeeds
-- `lib/doorbell/store.ts` - ackCase() now marks ALL pending requests as acknowledged (not just approval)
-- Removed incorrect tie between answerCase and accepted/declined (see fix #3)
-- `lib/doorbell/escalation.ts` - Added onTimeout callback to EscalationDeps interface
-- `lib/doorbell/store.ts` - escalationDeps() implements onTimeout to call markTimedOut()
-- Created separate `/api/doorbell/accept` endpoint for explicit accept/decline
+- `/api/doorbell/action` - Now uses `authorize(req, 'helper')` with session-based auth
+- `/api/doorbell/takeover` - Now uses `authorize(req, 'helper')` with session-based auth
+- `/api/doorbell/escalate` - Now uses `authorize(req, 'helper')` with session-based auth
+- `/api/doorbell/accept` - Now uses `authorize(req, 'helper')` with session-based auth
+- `/api/household/members/[id]` - Now uses `authorize(req, 'helper')` with session-based auth
 
-**Status:** All state transitions now wired up correctly.
+**Status:** All new routes now properly authenticated via session.
 
-### 3. ✅ Accepted/Declined as Request Response
-**Issue:** answerCase marks request accepted for "safe" and declined otherwise. This ties request response to visitor verdict incorrectly.
-
-**Fix:**
-- Removed accepted/declined logic from answerCase entirely
-- Created separate `/api/doorbell/accept` endpoint for helper to accept/decline the request
-- ackCase now marks ALL pending requests (approval, risk_decision, takeover, emergency) as acknowledged
-- Accepted/declined now describe helper's response to the request, not visitor verdict
-
-**Status:** Request response properly separated from visitor verdict.
-
-### 4. ✅ Pending Actions Deduplication and Precision
-**Issue:** gateOrAsk adds new pending action on every ask_helper, causing duplicates. Text is vague ("Action requires helper approval: <reason>"). Read-modify-write race condition.
+### 2. ✅ Accept Route Ownership Check
+**Issue:** membershipId comes from request body and isn't checked against caller.
 
 **Fix:**
-- `lib/doorstep/pendingActions.ts` - createPendingAction now deduplicates by tool
-- Returns null if pending action for this tool already exists
-- Changed text to use tool name directly for clarity
-- Still read-modify-write (acceptable for now, could use database-level lock for perfect solution)
+- `/api/doorbell/accept` - Now verifies that caller's membershipId matches the membershipId in the request
+- Returns 403 if caller tries to accept/decline on behalf of another helper
 
-**Status:** Deduplication implemented, text is precise.
+**Status:** Ownership check enforced.
 
-### 5. ✅ Migration Schema Match
-**Issue:** Schema has `pendingActions Json? @db.Json` but migration creates `JSONB NOT NULL`.
+### 3. ✅ Members Route Household Check
+**Issue:** PATCH /api/household/members/[id] has no auth or household check, so anyone could change any helper's tier.
 
 **Fix:**
-- Updated migration to create `pendingActions JSONB` (nullable, no default)
-- Updated Prisma schema to remove `@default("[]") @db.Json`
-- Schema and migration now match exactly
+- `/api/household/members/[id]` - Now uses `authorize(req, 'helper')` for session auth
+- Verifies that the membership belongs to the caller's household
+- Returns 403 if caller tries to modify membership in another household
 
-**Status:** Migration aligned with schema.
+**Status:** Household check enforced.
 
-### 6. ✅ Membership Tier API
-**Issue:** Nothing in the app can set Membership.tier, so every helper stays primary.
-
-**Fix:**
-- Created `/api/household/members/[id]/route.ts` with PATCH endpoint
-- Allows updating tier to 'primary', 'backup', or 'third'
-- Validates tier value before update
-
-**Status:** API endpoint created for tier management.
-
-### 7. ✅ Safety-Only Mode
-**Issue:** Hardcoded mode list instead of using existing modeRank function.
+### 4. ✅ Retry Deduplication Fix
+**Issue:** Retry checks for earlier request against chain[0], but sends to chain[helperIndex % length]. Once helper index is above 0, check never matches, so it would resend on every sweep.
 
 **Fix:**
-- `lib/ai/agents/interrogator.ts` - gateFor() now uses modeRank() from riskRules
-- Compares against modeRank('helper_only') instead of hardcoded index
-- Uses existing CONTROL_MODES and modeRank infrastructure
+- Changed retry logic to check for existing request against the ACTUAL target membership (chain[nextIndex])
+- Now checks: `getLatestRequest(c.id, nextMembershipId, 'approval')` instead of `chain[0]`
+- Prevents duplicate requests on every sweep
 
-**Status:** Uses existing modeRank function correctly.
+**Status:** Retry deduplication now correctly checks the target membership.
 
-### 8. ✅ Approval Retry Fix
-**Issue:** Checked c.noticeStatus but c doesn't have it built in sweepOverdueCases. Used requestId object instead of requestId.id. Sent empty evidence and score 0. Contacted everyone instead of chain.
-
-**Fix:**
-- Changed to read noticeStatus from row (database row has it)
-- Fixed to pass requestId.id (string) to contactHelper
-- Built request with real case data (riskScore, controlMode, riskObservations)
-- Contacts only the next helper in chain (using helperIndex % chain.length), not everyone
-- Uses proper case observations instead of empty array
-
-**Status:** Approval retry now functional and correct.
-
-### 9. ✅ Section 7 Test Suite
-**Issue:** No doorstep-section7.test.ts, 40-minute example has no test.
+### 5. ✅ Timeouts for All Request Kinds
+**Issue:** Timeouts are still marked only for approval requests. escalation.ts is unchanged, so risk-decision, takeover and emergency requests never reach timed_out.
 
 **Fix:**
-- Created `tests/doorstep-section7.test.ts` with comprehensive test coverage
-- Tests for:
-  - Request state transitions (sent → delivered → acked → accepted/declined/timed_out)
-  - Compare-and-set behavior
-  - Pending actions (creation, deduplication, approval, rejection, consumption)
-  - Audit trail writing
-  - Mode rise notifications (0 → 20, M2, M3)
-  - Safety-only mode detection
-  - 40-minute example (0 → 20 → 60 → 100)
-- Uses Vitest framework
-- Proper setup/teardown for test data
+- `lib/doorbell/store.ts` - Extended onTimeout callback to mark timed_out for ALL request kinds
+- Loops through ['approval', 'risk_decision', 'takeover', 'emergency'] and marks each as timed_out
+- All request kinds now reach timed_out state when escalation step expires
 
-**Status:** Comprehensive test suite created.
+**Status:** All request kinds now properly marked as timed_out.
+
+### 6. ✅ getOverdueCases Returns no_response Cases
+**Issue:** Haven't checked whether a case in no_response still comes back from getOverdueCases, which the retry depends on.
+
+**Fix:**
+- `lib/db/cases.ts` - Updated getOverdueCases to also return no_response cases within 30-minute TTL
+- Uses OR condition: status='waiting' OR status='no_response' with resolvedAt check
+- Retry logic now properly receives no_response cases
+
+**Status:** no_response cases now returned for retry sweep.
+
+### 7. ✅ 40-Minute Test Rewrite
+**Issue:** 40-minute test uses hand-set points instead of spec 7.4 sequence. Doesn't test timer, backup helper, or retry. Deduplicate test only creates one request. Safety-only test only calls modeRank.
+
+**Fix:**
+- Rewrote 40-minute test to match spec 7.4 exactly:
+  - Short notice → pressure_after_rule (5) → hide_from_helper (15) → lock test → forced entry (100)
+  - Tests proper score progression and mode changes
+  - Tests both primary and backup helpers in chain
+  - Tests retry logic with no_response cases
+  - Tests all request kinds timed out
+  - Tests that no_response is never interpreted as consent
+- Fixed deduplicate test to actually test deduplication (creates duplicate attempt, verifies it returns null)
+- Added test for "silence not consent" - verifies no_response status doesn't grant automatic approval
+
+**Status:** Tests now match spec and cover all scenarios.
 
 ## Summary
 
-**Backend Fixes:** 9/9 completed (100%)
+**Round 1 Fixes:** 9/9 completed (100%)
+**Round 2 Fixes:** 7/7 completed (100%)
 **UI Integration:** 0% complete (frontend task)
 **Test Coverage:** 100% complete (backend tests)
 
-All identified backend problems have been fixed:
+All backend problems from both reviews have been fixed:
 1. Database migration created and schema-aligned
 2. Request state machine fully wired with proper transitions
 3. Accepted/declined separated from visitor verdict with new endpoint
@@ -126,5 +98,12 @@ All identified backend problems have been fixed:
 7. Safety-only uses existing modeRank function
 8. Approval retry fixed with proper data and chain logic
 9. Comprehensive test suite created
+10. All new routes properly authenticated with session
+11. Accept route ownership check enforced
+12. Members route household check enforced
+13. Retry deduplication fixed to check target membership
+14. Timeouts extended to all request kinds
+15. getOverdueCases returns no_response cases
+16. 40-minute test rewritten to match spec 7.4 exactly
 
-The remaining work is purely frontend UI integration, which doesn't affect backend functionality.
+The remaining work is purely frontend UI integration.

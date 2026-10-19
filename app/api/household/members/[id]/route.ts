@@ -4,39 +4,47 @@
  * Update membership settings including tier (Section 7).
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { getMembership } from '@/lib/db/memberships'
+import { authorize, fail, parse } from '@/lib/guard'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+const Body = z.object({
+  tier: z.enum(['primary', 'backup', 'third']),
+})
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try {
-    const body = await req.json()
-    const { tier } = body
+  const a = await authorize(req, 'helper')
+  if (a.ok === false) return a.res
 
-    if (!tier) {
-      return NextResponse.json({ error: 'Missing tier' }, { status: 400 })
-    }
+  const p = await parse(req, Body)
+  if (p.ok === false) return p.res
 
-    if (!['primary', 'backup', 'third'].includes(tier)) {
-      return NextResponse.json({ error: 'Invalid tier' }, { status: 400 })
-    }
+  const { tier } = p.data
 
-    const membership = await getMembership(params.id)
-    if (!membership) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
-    }
+  const householdId = a.session!.householdId
 
-    const db = getDb()
-    await db.membership.update({
-      where: { id: params.id },
-      data: { tier },
-    })
-
-    return NextResponse.json({ success: true })
-  } catch (e) {
-    console.error('[MEMBERSHIP UPDATE]', e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  const membership = await getMembership(params.id)
+  if (!membership) {
+    return fail('Membership not found', 404)
   }
+
+  // Household check: membership must belong to the caller's household
+  if (membership.householdId !== householdId) {
+    return fail('Membership not in your household', 403)
+  }
+
+  const db = getDb()
+  await db.membership.update({
+    where: { id: params.id },
+    data: { tier },
+  })
+
+  return NextResponse.json({ success: true })
 }

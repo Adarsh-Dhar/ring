@@ -1494,11 +1494,14 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
       }
     },
     onTimeout: async (caseId, membershipId) => {
-      // Section 7: Mark helper request as timed out
-      const { getLatestRequest, markTimedOut } = await import('@/lib/doorstep/helperRequests')
-      const request = await getLatestRequest(caseId, membershipId, 'approval')
-      if (request) {
-        await markTimedOut(request.id)
+      // Section 7: Mark helper request as timed out for all request kinds
+      const { getLatestRequest, markTimedOut, type HelperRequestKind } = await import('@/lib/doorstep/helperRequests')
+      const kinds: HelperRequestKind[] = ['approval', 'risk_decision', 'takeover', 'emergency']
+      for (const kind of kinds) {
+        const request = await getLatestRequest(caseId, membershipId, kind)
+        if (request) {
+          await markTimedOut(request.id)
+        }
       }
     },
   }
@@ -1543,16 +1546,16 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
           const { contactHelper } = await import('@/lib/doorstep/contactLog')
           const { getPreferences } = await import('@/lib/db/preferences')
 
-          // Check if we already sent a retry request for this interval
-          const existing = await getLatestRequest(c.id, chain[0], 'approval')
-          if (!existing || existing.round !== retryInterval) {
-            // Send new round of requests to the next helper in chain, not everyone
-            const nextIndex = c.helperIndex % chain.length
-            const nextMembershipId = chain[nextIndex]
-            const memberships = await getApprovedMemberships(c.householdId)
-            const membership = memberships.find(m => m.id === nextMembershipId)
+          // Send to the next helper in chain (circular, not everyone at once)
+          const nextIndex = c.helperIndex % chain.length
+          const nextMembershipId = chain[nextIndex]
+          const memberships = await getApprovedMemberships(c.householdId)
+          const membership = memberships.find(m => m.id === nextMembershipId)
 
-            if (membership) {
+          if (membership) {
+            // Check if we already sent a retry request for this interval to THIS membership
+            const existing = await getLatestRequest(c.id, nextMembershipId, 'approval')
+            if (!existing || existing.round !== retryInterval) {
               const requestId = await createHelperRequest({
                 caseId: c.id,
                 membershipId: membership.id,

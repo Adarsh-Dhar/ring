@@ -5,64 +5,64 @@
  * While a helper owns the conversation, the AI stays silent.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
 import { writeAudit, audit } from '@/lib/doorstep/audit'
+import { authorize, fail, parse } from '@/lib/guard'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+const Body = z.object({
+  caseId: z.string().min(1).max(80),
+  action: z.enum(['takeover', 'release']),
+})
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json()
-    const { caseId, action } = body // action: 'takeover' or 'release'
+  const a = await authorize(req, 'helper')
+  if (a.ok === false) return a.res
 
-    if (!caseId || !action) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
-    }
+  const p = await parse(req, Body)
+  if (p.ok === false) return p.res
 
-    if (action !== 'takeover' && action !== 'release') {
-      return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
-    }
+  const { caseId, action } = p.data
 
-    const db = getDb()
-    const c = await db.case.findUnique({
-      where: { id: caseId },
-      select: { householdId: true, status: true, conversationOwner: true },
-    })
+  const householdId = a.session!.householdId
+  const membershipId = a.session!.membershipId!
 
-    if (!c) {
-      return NextResponse.json({ error: 'Case not found' }, { status: 404 })
-    }
+  const db = getDb()
+  const c = await db.case.findUnique({
+    where: { id: caseId, householdId },
+    select: { householdId: true, status: true, conversationOwner: true },
+  })
 
-    if (c.status !== 'waiting') {
-      return NextResponse.json({ error: 'Case is not waiting' }, { status: 400 })
-    }
-
-    const userId = req.headers.get('x-user-id')
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    if (action === 'takeover') {
-      if (c.conversationOwner) {
-        return NextResponse.json({ error: 'Conversation already owned' }, { status: 400 })
-      }
-      await db.case.update({
-        where: { id: caseId },
-        data: { conversationOwner: userId },
-      })
-      await writeAudit(caseId, audit.takeover(userId, c.conversationOwner || undefined))
-    } else {
-      if (c.conversationOwner !== userId) {
-        return NextResponse.json({ error: 'Not the conversation owner' }, { status: 400 })
-      }
-      await db.case.update({
-        where: { id: caseId },
-        data: { conversationOwner: null },
-      })
-      await writeAudit(caseId, audit.release(userId))
-    }
-
-    return NextResponse.json({ success: true })
-  } catch (e) {
-    console.error('[TAKEOVER API]', e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  if (!c) {
+    return fail('Case not found', 404)
   }
+
+  if (c.status !== 'waiting') {
+    return fail('Case is not waiting', 400)
+  }
+
+  if (action === 'takeover') {
+    if (c.conversationOwner) {
+      return fail('Conversation already owned', 400)
+    }
+    await db.case.update({
+      where: { id: caseId },
+      data: { conversationOwner: membershipId },
+    })
+    await writeAudit(caseId, audit.takeover(membershipId, c.conversationOwner || undefined))
+  } else {
+    if (c.conversationOwner !== membershipId) {
+      return fail('Not the conversation owner', 400)
+    }
+    await db.case.update({
+      where: { id: caseId },
+      data: { conversationOwner: null },
+    })
+    await writeAudit(caseId, audit.release(membershipId))
+  }
+
+  return NextResponse.json({ success: true })
 }
