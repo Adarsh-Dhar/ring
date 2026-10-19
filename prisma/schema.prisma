@@ -48,6 +48,8 @@ model Household {
   approvalRetrySec     Int                @default(300)
   unknownVisitorPolicy String             @default("ai_first_contact")
   preferences          Json?              @db.Json
+  quietPeriodMin       Int                @default(10)   // section 8.2: quiet period before an idle case closes (pilot default 10 minutes)
+  priorLookbackHours   Int                @default(24)   // section 8.2: window for earlier serious events shown to the helper
   AiRun             AiRun[]
   cases             Case[]
   devices           Device[]
@@ -233,11 +235,41 @@ model Case {
   urgentAlertedAt      DateTime?
   conversationOwner    String?       // userId of who owns the conversation (helper or AI)
   pendingActions       Json?
+  // Section 8.1 lifecycle. Separate from `status`, which is the doorbell answer flow (waiting/answered/no_response).
+  lifecycle            String    @default("open")   // open | helper_review | visitor_left | closed
+  visitorLeftAt        DateTime?
+  lastActivityAt       DateTime?                     // last event of any kind; the quiet period runs from here when no departure was recorded
+  closedAt             DateTime?
+  closedBy             String?                       // membership id, or "system" for the quiet-period close
+  outcome              String?                       // resolved_safe | resolved_incident | false_alarm (helper close only)
+  closeReason          String?
+  possibleNewVisitorAt DateTime?                     // set when an event arrived after the visitor left or during the quiet period
+  splitFromId          String?                       // case this one was split from
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   helperRequests       HelperRequest[]
 
   @@index([householdId])
   @@index([createdAt])
+  @@index([householdId, lifecycle])
+}
+
+/// Section 8.2: every correction is also logged as labelled data for the validation tests (section 12).
+model CorrectionLabel {
+  id          String   @id @default(cuid())
+  householdId String
+  caseId      String
+  obsId       String?
+  code        String?
+  action      String   // retract | resolve | dispute | confirm | restore | reset | statement | split | close
+  actorRole   String   // helper | resident | system
+  actorId     String?
+  reason      String?
+  scoreBefore Int?
+  scoreAfter  Int?
+  createdAt   DateTime @default(now())
+
+  @@index([caseId])
+  @@index([householdId, createdAt])
 }
 
 model ExpectedVisit {

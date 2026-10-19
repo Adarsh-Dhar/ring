@@ -17,8 +17,9 @@ import { z } from 'zod'
  *  door_wedge   → door_wedge_or_follow_in
  *  door_force   → forced_entry_or_assault
  *  tamper       → forced_entry_or_assault
+ *  visitor_left → no behaviour. Departure evidence (section 8.1): the case moves to visitor_left and the score is frozen.
  */
-export const SENSOR_EVENT_TYPES = ['knock', 'lock_tamper', 'door_wedge', 'door_force', 'tamper'] as const
+export const SENSOR_EVENT_TYPES = ['knock', 'lock_tamper', 'door_wedge', 'door_force', 'tamper', 'visitor_left'] as const
 export type SensorEventType = (typeof SENSOR_EVENT_TYPES)[number]
 
 export const SensorEventSchema = z.object({
@@ -27,7 +28,7 @@ export const SensorEventSchema = z.object({
   /** Idempotency key — store this in WebhookEvent to deduplicate retries. */
   eventId: z.string().min(1).max(120),
   /** Event type. */
-  type: z.enum(['knock', 'lock_tamper', 'door_wedge', 'door_force', 'tamper'] as const),
+  type: z.enum(['knock', 'lock_tamper', 'door_wedge', 'door_force', 'tamper', 'visitor_left'] as const),
   /** ISO 8601 timestamp when the sensor fired. Must be within ±5 minutes of server time. */
   at: z.string().refine(s => !isNaN(new Date(s).getTime()), 'Must be a valid ISO 8601 timestamp'),
   /** Optional debug payload (never used in scoring). */

@@ -10,6 +10,7 @@ import LiveView from './LiveView'
 import VisitRequests from './VisitRequests'
 import RegularVisitors from './RegularVisitors'
 import InterrogationCard from './InterrogationCard'
+import LifecyclePanel from './LifecyclePanel'
 import NoteComposer from './NoteComposer'
 
 export default function HelperPage() {
@@ -266,6 +267,8 @@ export default function HelperPage() {
               {c.visitIcon ?? '🙂'} Door camera: looks like regular visitor <b>{c.visitLabel}</b>. Check the person before you answer.
             </p>
           )}
+
+          <LifecyclePanel c={c} info={snap.lifecycleInfo} onChanged={refresh} />
 
           {c.kind === 'visitor' && c.lane !== 'expected' && <InterrogationCard caseId={c.id} />}
 

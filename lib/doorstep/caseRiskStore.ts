@@ -4,7 +4,13 @@
  *
  * applyRiskEdit(caseId, edit) reads the stored list, applies one edit, re-scores the whole list, and saves everything.
  * Edit kinds: 'fresh' (model pass), 'knock', 'append' (SOS or a report), 'interview' (stamp), 'helper',
- *             'availability' (camera/mic availability), 'reset' (soft-retract all observations).
+ *             'availability' (camera/mic availability), 'reset' (soft-retract all observations),
+ *             'dispute' (resident flag, never scores), 'statement' (resident says expected/known, never scores),
+ *             'replace' (swap the stored observations, used when a case is split).
+ *
+ * Section 8: the lifecycle state is derived and saved in the same write as the score. A closed case refuses new events.
+ * A case whose visitor has left ignores late model passes and knocks (score frozen); a new report reopens it and flags
+ * "possible new visitor".
  *
  * The knock window (30 s from the AI starting to respond) and the cap of 5 live here.
  *
@@ -14,10 +20,12 @@
  * Section 7.4: mode-rise notifications create risk-decision or takeover requests when S_eff rises.
  */
 import { getDb } from '@/lib/db/client'
-import { scoreObservations, riskLabelFor, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
-import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
+import { scoreObservations, riskLabelFor, modeRank, newObsId, deriveLifecycleState, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
+import { readStored, mergeFresh, applyHelperAction, applyDispute, addResidentStatement, type StoredRisk, type Correction } from './caseRisk'
+import { logCorrectionLabel, labelActionFor } from './correctionLabels'
+import { hasPendingHelperRequest } from './caseLifecycle'
 import { createInterviewStamp } from './riskRules'
-import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
+import { effectiveScore, effectiveModeFor, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
 import { createHelperRequest, getLatestRequest, type HelperRequestKind } from './helperRequests'
 import { getApprovedMemberships } from '@/lib/db/memberships'
 import { buildHelperRequest, formatPushNotification, formatSms } from './requestContent'
@@ -34,6 +42,12 @@ export type RiskEdit =
   | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore' | 'resolve'; who: string; reason?: string }
   | { kind: 'availability'; device: 'camera' | 'mic'; available: boolean; since: string; reason?: string }
   | { kind: 'reset'; who: string; reason: string }
+  | { kind: 'dispute'; obsId: string; who: string; note?: string }
+  | { kind: 'statement'; statementKind: 'expected' | 'known'; who: string; note?: string }
+  | { kind: 'replace'; stored: StoredRisk }
+
+/** Edits that are a new EVENT at the door (as opposed to a correction by a person). */
+const EVENT_KINDS = new Set<RiskEdit['kind']>(['fresh', 'knock', 'append', 'interview'])
 
 interface RiseCtx {
   caseId: string
@@ -103,14 +117,20 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   const SHADOW = process.env.RISK_SHADOW === '1'
   const c = await getDb().case.findUnique({
     where: { id: caseId },
-    select: { id: true, riskObservations: true, householdId: true, controlMode: true, riskScore: true, lastEventAt: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true },
+    select: { id: true, riskObservations: true, householdId: true, controlMode: true, riskScore: true, lastEventAt: true, deadlineAt: true, unconfirmedAlertedAt: true, urgentAlertedAt: true, lifecycle: true, visitorLeftAt: true, closedAt: true, possibleNewVisitorAt: true, emergencyAlertedAt: true },
   })
   if (!c) return { ok: false, error: 'case not found' }
+
+  // Section 8.2: a closed case takes no new events. The next event opens a new case at 0 (points never carry over).
+  if (c.closedAt && EVENT_KINDS.has(edit.kind)) return { ok: false, error: 'case is closed' }
+  // Section 8.1: once the visitor has left the score is frozen, so a late model pass or knock changes nothing.
+  if (c.visitorLeftAt && (edit.kind === 'fresh' || edit.kind === 'knock')) return { ok: true }
 
   // Read the current stored observations. The old format (ledger array) reads as empty.
   const stored = readStored(c.riskObservations as unknown)
 
   let newStored: StoredRisk
+  let label: Parameters<typeof logCorrectionLabel>[0] | null = null
 
   switch (edit.kind) {
     case 'fresh': {
@@ -178,6 +198,30 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       const result = applyHelperAction(stored, edit.idx, edit.action, edit.who, edit.reason, edit.obsId)
       if (result._error) return { ok: false, error: result._error }
       newStored = result
+      const target = result.observations.find(o => o.id === result.corrections[result.corrections.length - 1]?.obsId)
+      label = { householdId: c.householdId, caseId, obsId: target?.id, code: target?.code, action: labelActionFor(edit.action), actorRole: 'helper', actorId: edit.who, reason: edit.reason }
+      break
+    }
+
+    case 'dispute': {
+      // Section 8.2: a resident flag for the helper to review. The score does not change.
+      const result = applyDispute(stored, edit.obsId, edit.who, edit.note)
+      if (result._error) return { ok: false, error: result._error }
+      newStored = result
+      const target = result.observations.find(o => o.id === edit.obsId)
+      label = { householdId: c.householdId, caseId, obsId: edit.obsId, code: target?.code, action: 'dispute', actorRole: 'resident', actorId: edit.who, reason: edit.note }
+      break
+    }
+
+    case 'statement': {
+      // Section 8.2: "expected" or "known" is recorded and shown to the helper. It does not lower the score.
+      newStored = addResidentStatement(stored, edit.statementKind, edit.who, edit.note)
+      label = { householdId: c.householdId, caseId, action: 'statement', actorRole: 'resident', actorId: edit.who, reason: `${edit.statementKind}${edit.note ? `: ${edit.note}` : ''}` }
+      break
+    }
+
+    case 'replace': {
+      newStored = edit.stored
       break
     }
 
@@ -213,7 +257,8 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
         if (o.source === 'resident') {
           return { ...rest, resolvedAt: undefined, resolvedBy: undefined }
         }
-        return { ...rest, retracted: true, resolvedAt: undefined, resolvedBy: undefined }
+        // Section 8.2: every retraction records who, when and why.
+        return { ...rest, retracted: true, retractedAt: new Date().toISOString(), retractedBy: edit.who, retractReason: `RESET: ${edit.reason}`, resolvedAt: undefined, resolvedBy: undefined }
       })
       const resetCorrection: Correction = {
         idx: -1, // sentinel: applies to all
@@ -222,6 +267,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
         who: edit.who,
         reason: `RESET: ${edit.reason}`,
       }
+      label = { householdId: c.householdId, caseId, action: 'reset', actorRole: 'helper', actorId: edit.who, reason: edit.reason }
       newStored = {
         ...stored,
         observations: retractAll,
@@ -253,15 +299,30 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
   // Spec 5.2: stamp the time of the last event. Only a real change counts, so a re-score with no change keeps the old time.
   const changed = risk.score !== (c.riskScore ?? 0) || risk.minMode !== ((c.controlMode as ControlMode | null) ?? 'ai_leads')
 
+  // Section 8: a new report after the visitor left may be a new visitor, so the case reopens and says so.
+  const isNewEvent = edit.kind === 'append' || edit.kind === 'knock'
+  const reopened = isNewEvent && !!c.visitorLeftAt
+  const visitorLeftAt = reopened ? null : (c.visitorLeftAt ?? null)
+  const pending = await hasPendingHelperRequest(caseId)
+  const lifecycle = deriveLifecycleState({
+    closedAt: c.closedAt,
+    visitorLeftAt,
+    activeSerious: risk.activeSerious,
+    helperRequestPending: pending,
+    helperLedMode: modeRank(effectiveModeFor(risk.score, risk.minMode)) >= modeRank('helper_leads'),
+  })
+
   await getDb().case.update({
     where: { id: caseId },
     data: {
+      lifecycle,
+      ...(reopened ? { visitorLeftAt: null, possibleNewVisitorAt: new Date() } : {}),
+      ...(EVENT_KINDS.has(edit.kind) ? { lastActivityAt: new Date() } : {}),
       riskScore: risk.score,
       riskLedger: risk.ledger as any,
       controlMode: risk.minMode,
       riskLevel: riskLabelFor(eff),
       riskObservations: newStored as any,
-      ...(changed ? { lastEventAt: new Date() } : {}),
     },
   })
 
@@ -317,6 +378,8 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       await alertUrgent(c.householdId, caseId, isUrgentRange && !hasConfirmedThreat ? 'score' : 'threat')
     }
   }
+
+  if (label) await logCorrectionLabel({ ...label, scoreBefore: c.riskScore ?? 0, scoreAfter: risk.score })
 
   return { ok: true }
 }

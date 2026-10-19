@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { DoorCase, ExpectedVisit, RecurringVisit, RecurringNow } from '@/lib/doorbell/store'
+import type { DoorCase, ExpectedVisit, RecurringVisit, RecurringNow, LifecycleInfo } from '@/lib/doorbell/store'
 import type { PublicHelper } from '@/lib/doorbell/config'
 
 export interface DoorbellSnapshot {
   now: number
+  /** Section 8: statements, disputes, earlier serious events (helper) or noted items (resident). */
+  lifecycleInfo?: LifecycleInfo | null
   me: string | null
   ready: boolean
   emergencyNumber: string

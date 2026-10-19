@@ -24,6 +24,8 @@ type Risk = {
   helperResponse?: string  // P14: Helper response recommendation
 }
 
+type LedgerExtra = { serious?: boolean; resolved?: boolean; disputed?: boolean; retractedAt?: string; retractedBy?: string; retractReason?: string }
+
 type Ai = {
   visitorSummary: string | null
   riskLevel?: RiskLevel | null
@@ -125,7 +127,7 @@ function groupEvidence(ledger: Array<{ code: string; at: string; quote: string; 
 async function handleObservationAction(
   caseId: string,
   idx: number,
-  action: 'confirm' | 'reject' | 'restore',
+  action: 'confirm' | 'reject' | 'restore' | 'resolve',
   obsId?: string,
   reason?: string,
 ): Promise<{ ok: boolean; error?: string }> {
@@ -306,7 +308,23 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                           <span className="font-medium">{e.code}</span>
                           <span className="opacity-60"> ({e.source})</span>
                           {e.points > 0 && <span className="ml-1 text-emerald-400">+{e.points}</span>}
+                          {(e as LedgerExtra).disputed && <span className="ml-1 text-amber-300">🚩 resident flagged</span>}
+                          {(e as LedgerExtra).resolved && <span className="ml-1 opacity-70">(resolved)</span>}
                         </span>
+                        {(e as LedgerExtra).serious && !(e as LedgerExtra).resolved && e.idx !== undefined && (
+                          <button
+                            onClick={async () => {
+                              const reason = window.prompt('Resolve this serious event. Reason (required):')
+                              if (!reason) return
+                              const r = await handleObservationAction(caseId, e.idx!, 'resolve', e.obsId, reason)
+                              if (!r.ok) setActionError(`Resolve failed: ${r.error}`)
+                            }}
+                            className="px-2 py-0.5 text-xs bg-slate-600 hover:bg-slate-500 rounded"
+                            title="Resolve: keeps the points, removes the floor"
+                          >
+                            Resolve
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -341,8 +359,11 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                             </button>
                             <button
                               onClick={async () => {
-                                const r = await handleObservationAction(caseId, e.idx!, 'reject', e.obsId)
-                                if (!r.ok) setActionError(`Reject failed: ${r.error}`)
+                                // Section 8.2: a retraction records who, when and why, so a reason is required.
+                                const reason = window.prompt('Reason for retracting this evidence (required):')
+                                if (!reason) return
+                                const r = await handleObservationAction(caseId, e.idx!, 'reject', e.obsId, reason)
+                                if (!r.ok) setActionError(`Retract failed: ${r.error}`)
                               }}
                               className="px-2 py-0.5 text-xs bg-red-700 hover:bg-red-600 rounded"
                               title="Reject this evidence"
@@ -377,7 +398,8 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                         <span>{new Date(e.at).toLocaleTimeString()}</span>
                         <span className="flex-1">
                           <span>{e.code}</span>
-                          <span> ({e.retracted ? 'rejected by helper' : e.state})</span>
+                          <span> ({e.retracted ? 'retracted by helper' : e.state})</span>
+                          {e.retracted && (e as LedgerExtra).retractReason && <span className="ml-1 opacity-80">— {(e as LedgerExtra).retractReason}{(e as LedgerExtra).retractedAt ? `, ${new Date((e as LedgerExtra).retractedAt!).toLocaleTimeString()}` : ''}</span>}
                           {e.quote && <span className="ml-2 opacity-80">"{e.quote}"</span>}
                         </span>
                         {/* Restore button for rejected entries */}

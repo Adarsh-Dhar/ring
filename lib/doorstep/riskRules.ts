@@ -102,8 +102,12 @@ export const BEHAVIOURS = [
 ] as const
 export type Behaviour = (typeof BEHAVIOURS)[number]
 
-/** P9: Events that helpers can resolve. A resolved event keeps its points but no longer sets a floor or minimum score. */
-export const HELPER_RESOLVABLE: Behaviour[] = [
+/**
+ * Section 8.2: serious events stay active, and keep their floor, until a helper resolves them with a reason,
+ * even after the visitor leaves. This is exactly the set a helper may resolve.
+ * An UNCERTAIN physical or threat event (one with an uncertainFloor) is also serious while it is unresolved.
+ */
+export const SERIOUS_BEHAVIOURS: readonly Behaviour[] = [
   'hide_from_helper',
   'credential_request',
   'refuse_to_leave',
@@ -112,6 +116,19 @@ export const HELPER_RESOLVABLE: Behaviour[] = [
   'immediate_threat',
   'forced_entry_or_assault',
 ]
+
+/** Section 8.2: minor events end with the case. A helper never needs to resolve them. */
+export const MINOR_BEHAVIOURS: readonly Behaviour[] = [
+  'extra_knock',
+  'pressure_after_rule',
+  'pressure_after_boundary',
+  'purpose_contradiction',
+]
+
+export const isSerious = (b: Behaviour): boolean => (SERIOUS_BEHAVIOURS as readonly Behaviour[]).includes(b)
+
+/** P9: Events that helpers can resolve. A resolved event keeps its points but no longer sets a floor or minimum score. Equals the serious set. */
+export const HELPER_RESOLVABLE: Behaviour[] = [...SERIOUS_BEHAVIOURS]
 
 export interface BehaviourRule {
   label: string
@@ -249,6 +266,14 @@ export interface Observation {
   segment?: string
   /** A helper rejected this event. It never scores again, and a re-score never brings it back. */
   retracted?: boolean
+  /** Section 8.2: who retracted it, when, and why. Only an authenticated helper can retract. */
+  retractedAt?: string
+  retractedBy?: string
+  retractReason?: string
+  /** Section 8.2: a resident can flag an observation as disputed for the helper to review. A flag never changes the score. */
+  disputedAt?: string
+  disputedBy?: string
+  disputeNote?: string
   /**
    * Saved before a helper confirms an uncertain observation, so restore can undo the confirm exactly.
    * Never used in scoring; stripped when the observation is serialised without it.
@@ -258,6 +283,8 @@ export interface Observation {
   resolvedAt?: string
   /** P9: Helper ID who resolved this event. */
   resolvedBy?: string
+  /** Section 8.2: why the helper resolved it. */
+  resolveReason?: string
 }
 
 /** P11: Interview state stamp - a separate type from Observation, no longer a workaround. */
@@ -291,6 +318,18 @@ export interface LedgerEntry {
   debug?: Record<string, unknown>
   /** Whether the observation has been retracted by a helper. */
   retracted?: boolean
+  /** Section 8.2: the ledger keeps a retracted entry, marked with who, when and why. */
+  retractedAt?: string
+  retractedBy?: string
+  retractReason?: string
+  /** A helper resolved this (serious) event: it keeps its points but no longer sets a floor. */
+  resolved?: boolean
+  resolvedAt?: string
+  resolvedBy?: string
+  /** A resident flagged this entry for the helper to review. */
+  disputed?: boolean
+  /** True for a serious event (section 8.2). */
+  serious?: boolean
 }
 
 export interface RiskScore {
@@ -299,6 +338,8 @@ export interface RiskScore {
   ledger: LedgerEntry[]
   /** Minimum control mode set by confirmed events and combinations. */
   minMode: ControlMode
+  /** Section 8.2: how many serious events are still active (not retracted, not resolved). Zero lets a quiet case close. */
+  activeSerious: number
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9£$€%\s]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -352,6 +393,9 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   const seen = new Set<string>()
   const confirmed = new Set<Behaviour>()
   const uncertainCodes = new Set<Behaviour>()
+  // Section 8.2: floors come from ACTIVE events only. Resolving one event must not lift the floor of another event with the same code.
+  const activeConfirmed = new Set<Behaviour>()
+  const activeSeriousKeys = new Set<string>()
   const ledger: LedgerEntry[] = []
   let total = 0
   let minScore = 0
@@ -363,6 +407,10 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
       idx, obsId: o.id, code: o.code, at: o.at, quote, source: o.source, state, points,
       debug: { ...o.debug, ...debug },
       retracted: o.retracted,
+      ...(o.retracted ? { retractedAt: o.retractedAt, retractedBy: o.retractedBy, retractReason: o.retractReason } : {}),
+      ...(o.resolvedAt ? { resolved: true, resolvedAt: o.resolvedAt, resolvedBy: o.resolvedBy } : {}),
+      ...(o.disputedAt ? { disputed: true } : {}),
+      serious: isSerious(o.code),
     })
     const reject = (state: EvidenceState, why: string) => { ledger.push(entry(state, 0, { why })) }
 
@@ -376,7 +424,11 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
     const isResolved = !!o.resolvedAt
 
     if (o.state === 'uncertain') {
-      if (rule.uncertainFloor) uncertainCodes.add(o.code)
+      // An uncertain physical or threat event is serious and stays active until a helper resolves it.
+      if (rule.uncertainFloor && !isResolved) {
+        uncertainCodes.add(o.code)
+        activeSeriousKeys.add(o.id ?? `idx-${idx}`)
+      }
       return reject('uncertain', 'marked_uncertain')
     }
 
@@ -420,6 +472,10 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
     seen.add(key)
 
     confirmed.add(o.code)
+    if (!isResolved) {
+      activeConfirmed.add(o.code)
+      if (isSerious(o.code)) activeSeriousKeys.add(o.id ?? `idx-${idx}`)
+    }
 
     // P9: Resolved events don't set minScore
     if (rule.minScore !== undefined && !isResolved) {
@@ -439,26 +495,18 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
   })
 
   let minMode: ControlMode = 'ai_leads'
-  // P9: Resolved events keep their points but no longer set floors or minimum scores
-  const resolvedCodes = new Set<Behaviour>()
-  for (const o of observations) {
-    if (o.resolvedAt && o.state === 'confirmed') {
-      resolvedCodes.add(o.code)
-    }
-  }
-  for (const b of confirmed) {
-    // Skip resolved events for floor calculation
-    if (resolvedCodes.has(b)) continue
+  // Section 8.2: only ACTIVE (unresolved) confirmed events set a floor.
+  for (const b of activeConfirmed) {
     const f = RISK_RULES[b].floor
     if (f) minMode = maxMode(minMode, f)
   }
   // An event that is not yet confirmed still raises the mode when it is physical or a threat. It never lowers one.
   for (const b of uncertainCodes) { const f = RISK_RULES[b].uncertainFloor; if (f) minMode = maxMode(minMode, f) }
-  for (const c of COMBO_FLOORS) if (c.all.every(b => confirmed.has(b))) minMode = maxMode(minMode, c.floor)
+  for (const c of COMBO_FLOORS) if (c.all.every(b => activeConfirmed.has(b))) minMode = maxMode(minMode, c.floor)
 
   // 100 is reserved for a confirmed forced entry or assault. Ordinary points stop at 99.
   const score = minScore >= 100 ? 100 : Math.min(99, Math.max(minScore, total))
-  return { score, ledger, minMode }
+  return { score, ledger, minMode, activeSerious: activeSeriousKeys.size }
 }
 
 /** Stored riskLevel label. Takes the EFFECTIVE score (spec 5), so an event floor shows up even when the confirmed total is low. */
@@ -550,4 +598,96 @@ export function createInterviewStamp(type: keyof InterviewState, timestamp?: str
     at: timestamp ?? new Date().toISOString(),
     isStamp: true,
   }
+}
+
+// ── Section 8: case lifecycle (pure) ─────────────────────────────────────────
+
+export const LIFECYCLE_STATES = ['open', 'helper_review', 'visitor_left', 'closed'] as const
+export type LifecycleState = (typeof LIFECYCLE_STATES)[number]
+
+/** Outcomes a helper records when closing a case (section 8.2). */
+export const CASE_OUTCOMES = ['resolved_safe', 'resolved_incident', 'false_alarm'] as const
+export type CaseOutcome = (typeof CASE_OUTCOMES)[number]
+
+/** Score under which a quiet case may close without a helper (section 8.2). */
+export const AUTO_CLOSE_BELOW = 20
+
+export interface LifecycleInput {
+  closedAt?: Date | string | null
+  visitorLeftAt?: Date | string | null
+  /** Serious events still active (RiskScore.activeSerious). */
+  activeSerious: number
+  /** A helper request for this case is pending (sent, delivered or acked but not answered). */
+  helperRequestPending?: boolean
+  /** The effective control mode is helper-led or higher. */
+  helperLedMode?: boolean
+}
+
+/**
+ * Section 8.1: which of the four states a case is in.
+ *   closed        final score and outcome recorded
+ *   helper_review a helper request is pending, the effective mode is helper-led, or a serious event is unresolved
+ *                 (a serious event keeps the case here even after the visitor leaves)
+ *   visitor_left  departure is supported and nothing needs the helper; the score is frozen
+ *   open          everything else
+ */
+export function deriveLifecycleState(i: LifecycleInput): LifecycleState {
+  if (i.closedAt) return 'closed'
+  if (i.activeSerious > 0 || i.helperRequestPending) return 'helper_review'
+  if (i.visitorLeftAt) return 'visitor_left'
+  if (i.helperLedMode) return 'helper_review'
+  return 'open'
+}
+
+export interface QuietCloseInput {
+  lifecycle: LifecycleState
+  /** The CONFIRMED score S, not S_eff, so a minor event's floor cannot block closing. */
+  score: number
+  activeSerious: number
+  emergency: boolean
+  helperRequestPending?: boolean
+  /** The doorbell answer flow (Case.status) is still running. */
+  answerFlowRunning?: boolean
+  visitorLeftAt?: Date | string | null
+  lastActivityAt?: Date | string | null
+  quietMinutes: number
+  now?: number
+}
+
+/** Section 8.2 Closing: score under 20, no serious event, never emergency, and the quiet period has passed. */
+export function quietCloseDue(i: QuietCloseInput): boolean {
+  if (i.lifecycle === 'closed' || i.emergency) return false
+  if (i.score >= AUTO_CLOSE_BELOW || i.activeSerious > 0) return false
+  if (i.helperRequestPending || i.answerFlowRunning) return false
+  const start = i.visitorLeftAt ?? i.lastActivityAt
+  if (!start) return false
+  const startMs = new Date(start).getTime()
+  if (Number.isNaN(startMs)) return false
+  return (i.now ?? Date.now()) - startMs >= i.quietMinutes * 60_000
+}
+
+export interface PriorSeriousEvent { caseId: string; code: Behaviour; at: string; state: EvidenceState; closedAt: string | null }
+
+/**
+ * Section 8.2: the helper sees earlier serious events within a resident-set window as INFORMATION ONLY.
+ * Nothing carries into the score, and nothing is matched by face or appearance.
+ */
+export function seriousFromLedger(
+  cases: { id: string; closedAt?: Date | string | null; riskLedger?: unknown }[],
+  windowHours: number,
+  now: number = Date.now(),
+): PriorSeriousEvent[] {
+  const out: PriorSeriousEvent[] = []
+  const since = now - windowHours * 3_600_000
+  for (const c of cases) {
+    const ledger = Array.isArray(c.riskLedger) ? (c.riskLedger as LedgerEntry[]) : []
+    for (const e of ledger) {
+      if (!e || e.retracted || !isBehaviour(e.code) || !isSerious(e.code)) continue
+      if (e.state !== 'confirmed' && !(e.state === 'uncertain' && RISK_RULES[e.code].uncertainFloor)) continue
+      const t = new Date(e.at).getTime()
+      if (Number.isNaN(t) || t < since || t > now) continue
+      out.push({ caseId: c.id, code: e.code, at: e.at, state: e.state, closedAt: c.closedAt ? new Date(c.closedAt).toISOString() : null })
+    }
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at))
 }

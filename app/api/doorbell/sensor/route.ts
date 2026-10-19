@@ -30,6 +30,7 @@ import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
 import { resolveSensorHousehold } from '@/lib/doorstep/sensorRouting'
 import { ingestEvent } from '@/lib/doorbell/store'
 import { newObsId } from '@/lib/doorstep/riskRules'
+import { markVisitorLeft } from '@/lib/doorstep/caseLifecycle'
 import type { Observation } from '@/lib/doorstep/riskRules'
 
 export const dynamic = 'force-dynamic'
@@ -115,7 +116,8 @@ export async function POST(request: NextRequest) {
 
   // 7. Find or open an active case for this household
   const openCases = await db.case.findMany({
-    where: { householdId, status: 'waiting' },
+    // Section 8: the case is the visitor episode, so any case that is not closed is active (not only one still waiting).
+    where: { householdId, closedAt: null },
     orderBy: { createdAt: 'desc' },
     take: 1,
     select: { id: true },
@@ -153,6 +155,12 @@ export async function POST(request: NextRequest) {
 
 async function applySensorEvent(caseId: string, type: SensorEventType, at: string, eventId: string) {
   switch (type) {
+    case 'visitor_left': {
+      // Door evidence of departure (section 8.1). Writes no points. Serious events stay active.
+      await markVisitorLeft(caseId, { role: 'sensor' }, new Date(at))
+      return { behaviour: 'visitor_left' }
+    }
+
     case 'knock': {
       // Routes through the existing knock edit (enforces 30 s window + cap of 5)
       await applyRiskEdit(caseId, { kind: 'knock', at })

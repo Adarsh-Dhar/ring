@@ -6,6 +6,7 @@
 import { initQueue, stopQueue } from '@/lib/queue'
 import { JOB_NAMES, type WebhookProcessJob, type DeviceOfflineJob, type DeviceOnlineJob } from '@/lib/queue/jobs'
 import { ingestEvent, setDeviceOnline, sweepOverdueCases } from '@/lib/doorbell/store'
+import { sweepQuietCases } from '@/lib/doorstep/caseLifecycle'
 
 async function main() {
   console.log('[WORKER] Starting timer worker...')
@@ -113,10 +114,29 @@ async function main() {
     }
   }, SWEEP_MS)
 
+  // Section 8.2: quiet-period sweep. Closes idle cases whose quiet period has passed.
+  // Runs on a separate interval (default 30 seconds). The web server's tick() also runs this,
+  // but the worker ensures it keeps running if the web process is down.
+  const QUIET_SWEEP_MS = Number(process.env.QUIET_SWEEP_MS || 30_000)
+  let quietSweeping = false
+  const quietTimer = setInterval(async () => {
+    if (quietSweeping) return
+    quietSweeping = true
+    try {
+      const closed = await sweepQuietCases()
+      if (closed.length > 0) console.log(`[WORKER] Quiet sweep closed ${closed.length} case(s)`)
+    } catch (error) {
+      console.error('[WORKER] Quiet sweep failed:', error)
+    } finally {
+      quietSweeping = false
+    }
+  }, QUIET_SWEEP_MS)
+
   // Handle graceful shutdown
   const shutdown = async () => {
     console.log('[WORKER] Shutting down...')
     clearInterval(sweepTimer)
+    clearInterval(quietTimer)
     await stopQueue()
     process.exit(0)
   }

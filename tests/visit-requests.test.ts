@@ -114,6 +114,7 @@ vi.mock('@/lib/db/cases', () => ({
   deleteOldCases:        () => Promise.resolve({}),
   getCase:               () => Promise.resolve(null),
   getOpenCasesForHousehold: () => Promise.resolve([]),
+  getActiveLifecycleCase: () => Promise.resolve(null),
 }))
 
 vi.mock('@/lib/db/visits', () => ({

@@ -7,6 +7,7 @@ import LiveView from '../helper/LiveView'
 import RegularApprovals from './RegularApprovals'
 import ApprovedNote from './ApprovedNote'
 import DelegationSettings from './DelegationSettings'
+import ResidentCaseNotes from './ResidentCaseNotes'
 
 // calm = no vibration and no beep. Used while a helper is checking, so a visitor never startles the resident.
 type Screen = { icon: string; title: string; sub?: string; bg: string; alarm?: boolean; calm?: boolean }
@@ -137,6 +138,9 @@ export default function ResidentPage() {
       // "Help is coming" is NOT shown until a helper has really seen it.
       screen = { icon: '🆘', title: `Telling ${currentHelper?.name ?? 'a helper'}…`, sub: `Stay here. If you are in danger call ${emergency}.`, bg: 'bg-rose-800', alarm: true }
     }
+  } else if (c.kind === 'visitor' && c.visitorLeftAt && c.status !== 'waiting' && (c.riskScore ?? 0) < 100 && c.controlMode !== 'emergency') {
+    // Section 8.2: the visitor has left. The score is frozen; a serious event keeps the case with the helper.
+    screen = { icon: '👋', title: 'The visitor has left', sub: c.lifecycle === 'helper_review' ? 'Your helper is still looking at this.' : undefined, bg: 'bg-slate-700', calm: true }
   } else if (snap?.quietNow && (c.status === 'waiting' || (c.status === 'answered' && c.answer === 'safe'))) {
     screen = { icon: '🌙', title: 'Night lock is on', sub: 'Do not open the door', bg: 'bg-indigo-900' }
   } else if (c.lane === 'expected' && c.status === 'waiting' && (c.checkMode === 'code' || c.checkWord)) {
@@ -280,6 +284,9 @@ export default function ResidentPage() {
 
       <div className="w-full max-w-md flex flex-col gap-4">
         {trusted && !c && <RegularApprovals />}
+        {trusted && c && c.kind === 'visitor' && (
+          <ResidentCaseNotes caseId={c.id} info={snap?.lifecycleInfo ?? null} possibleNewVisitor={!!c.possibleNewVisitorAt} onChanged={refresh} />
+        )}
         {showCheck && (
           <div className="grid grid-cols-2 gap-4">
             <button onClick={() => post('/api/doorbell/verify', { caseId: c!.id, ok: true })} className="rounded-3xl bg-white py-6 text-2xl font-bold text-emerald-900">

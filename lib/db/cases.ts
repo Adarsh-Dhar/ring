@@ -41,6 +41,8 @@ export async function createCase(data: DoorCase & { householdId: string }) {
       selfVerifiedAt: data.selfVerifiedAt ? new Date(data.selfVerifiedAt) : null,
       regularId: data.regularId ?? null,
       noticeStatus: data.noticeStatus ?? null,
+      lastActivityAt: new Date(data.createdAt),
+      splitFromId: data.splitFromId ?? null,
     }
   })
 }
@@ -78,6 +80,30 @@ export async function getOpenCasesForHousehold(householdId: string) {
       status: 'waiting'
     },
     orderBy: { createdAt: 'desc' }
+  })
+}
+
+/**
+ * Section 8: the case a new door event attaches to, if any: the newest case for this household that is not closed.
+ * Replaces the old "newest WAITING case" lookup, because a case whose answer flow has finished still belongs to the
+ * same visitor episode until its quiet period ends or a helper closes it.
+ */
+export async function getActiveLifecycleCase(householdId: string) {
+  return getDb().case.findFirst({
+    where: { householdId, closedAt: null },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+/**
+ * Section 8: the case a new door event attaches to, if any: the newest case for this household that is not closed.
+ * Replaces the old "newest WAITING case" lookup, because a case whose answer flow has finished still belongs to the
+ * same visitor episode until its quiet period ends or a helper closes it.
+ */
+export async function getActiveLifecycleCase(householdId: string) {
+  return getDb().case.findFirst({
+    where: { householdId, closedAt: null },
+    orderBy: { createdAt: 'desc' },
   })
 }
 
@@ -147,6 +173,7 @@ export async function claimEscalationStep(
     where: {
       id:          caseId,
       status:      'waiting',
+      closedAt:    null,   // section 8: a closed case never escalates
       helperIndex: expect.helperIndex,
       deadlineAt:  new Date(expect.deadlineAt),
       lane:        expect.lane ?? null,
@@ -173,6 +200,7 @@ export async function getOverdueCases(graceMs: number, limit = 100) {
   const APPROVAL_RETRY_WINDOW_MS = 24 * 3_600_000
   return getDb().case.findMany({
     where: {
+      closedAt: null, // section 8: a closed case is out of the sweep
       OR: [
         { status: 'waiting', deadlineAt: { lt: new Date(now - graceMs) } },
         { status: 'no_response', noticeStatus: 'short_notice', resolvedAt: { gte: new Date(now - APPROVAL_RETRY_WINDOW_MS) } },

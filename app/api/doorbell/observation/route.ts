@@ -15,9 +15,9 @@ export const runtime = 'nodejs'
  *       OR { caseId, action: 'reset', reason }
  *
  * - Confirm: changes uncertain observation to confirmed with source 'helper'
- * - Reject: records a correction, marks observation as retracted
+ * - Reject (retract): marks the observation retracted and records who, when and why (requires a reason)
  * - Restore: removes a rejection (requires reason)
- * - Resolve: marks observation as resolved (keeps points, removes floor/minScore; requires reason)
+ * - Resolve: serious events only. Keeps points, removes floor/minScore (requires reason)
  * - Reset: soft-retracts ALL observations (requires reason; caller must be a household helper)
  * - obsId is preferred over idx; pass both for one-release backward compat
  * - Cross-household requests are rejected
@@ -47,7 +47,8 @@ export async function POST(req: NextRequest) {
       }
       // P5: Restore requires a reason
       // P9: Resolve requires a reason
-      if ((action === 'restore' || action === 'resolve') && !reason) {
+      // Section 8.2: a retraction records who, when and why, so a reason is required.
+      if ((action === 'restore' || action === 'resolve' || action === 'reject') && !reason) {
         return fail(`${action} action requires a reason`, 400)
       }
     }

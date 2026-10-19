@@ -4,7 +4,7 @@ import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfigure
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
-import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
+import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
@@ -17,6 +17,10 @@ import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
+import { attachEvent, sweepQuietCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
+import { readStored } from '../doorstep/caseRisk'
+import { RISK_RULES } from '../doorstep/riskRules'
+import type { LifecycleState } from '../doorstep/riskRules'
 import { contactHelper } from '../doorstep/contactLog'
 import { createHelperRequest, markAcked, type HelperRequestKind } from '../doorstep/helperRequests'
 import { chainFrom } from '../doorstep/chainOrder'
@@ -72,6 +76,14 @@ export interface RecurringVisit {
 /** What a screen needs; the resident never gets the full schedule. */
 export interface RecurringNow { id: string; icon: string; label: string; endsAt: number }
 
+/** Section 8: extra case information for the screens (see getState). */
+export interface LifecycleInfo {
+  statements: { id: string; kind: 'expected' | 'known'; at: string; who: string; note?: string }[]
+  disputed: { obsId: string; note?: string; at: string }[]
+  prior: import('../doorstep/riskRules').PriorSeriousEvent[]
+  notes: { id: string; label: string; disputed: boolean }[]
+}
+
 export interface DoorCase {
   id:            string
   kind:          CaseKind
@@ -110,6 +122,13 @@ export interface DoorCase {
   /** Spec 4.3: set when an uncertain forced_entry_or_assault was observed (camera description alone).
    *  Used by the resident view to show the keep-closed message before confirmation arrives. */
   unconfirmedAlertedAt?: number | null
+  /** Section 8.1 lifecycle (open, helper_review, visitor_left, closed). `status` above is the doorbell answer flow. */
+  lifecycle?:    LifecycleState
+  visitorLeftAt?: number
+  closedAt?:     number
+  outcome?:      string
+  possibleNewVisitorAt?: number
+  splitFromId?:  string
   /** Section 7: Helper requests for this case (sent, delivered, acked, accepted, declined, timed_out) */
   helperRequests?: { id: string; kind: string; state: string; membershipId: string; createdAt: number }[]
   /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed) */
@@ -208,6 +227,12 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       regularId:     (c as any).regularId     || undefined,
       noticeStatus:  ((c as any).noticeStatus as NoticeStatus) || undefined,
       riskScore:     (c as any).riskScore ?? undefined,
+      lifecycle: ((c as any).lifecycle as LifecycleState) || 'open',
+      visitorLeftAt: (c as any).visitorLeftAt ? new Date((c as any).visitorLeftAt).getTime() : undefined,
+      closedAt: (c as any).closedAt ? new Date((c as any).closedAt).getTime() : undefined,
+      outcome: (c as any).outcome || undefined,
+      possibleNewVisitorAt: (c as any).possibleNewVisitorAt ? new Date((c as any).possibleNewVisitorAt).getTime() : undefined,
+      splitFromId: (c as any).splitFromId || undefined,
       controlMode:   (c as any).controlMode || undefined,
       unconfirmedAlertedAt: (c as any).unconfirmedAlertedAt ? new Date((c as any).unconfirmedAlertedAt).getTime() : null,
     }))
@@ -360,6 +385,12 @@ async function refreshCasesFromDB(
     regularId: (row as any).regularId || undefined,
     noticeStatus: ((row as any).noticeStatus as NoticeStatus) || undefined,
     riskScore: row.riskScore, // P11: Include for emergency detection
+    lifecycle: ((row as any).lifecycle as LifecycleState) || 'open',
+    visitorLeftAt: (row as any).visitorLeftAt ? new Date((row as any).visitorLeftAt).getTime() : undefined,
+    closedAt: (row as any).closedAt ? new Date((row as any).closedAt).getTime() : undefined,
+    outcome: (row as any).outcome || undefined,
+    possibleNewVisitorAt: (row as any).possibleNewVisitorAt ? new Date((row as any).possibleNewVisitorAt).getTime() : undefined,
+    splitFromId: (row as any).splitFromId || undefined,
     controlMode: row.controlMode, // P11: Include for emergency detection
     unconfirmedAlertedAt: (row as any).unconfirmedAlertedAt ? new Date((row as any).unconfirmedAlertedAt).getTime() : null,
     // Section 7: Include helper requests
@@ -688,8 +719,33 @@ export async function getState(householdId: string, view: 'resident' | 'helper' 
     return base
   })() : null
 
+  // Section 8: what the screens need to show beyond the case row.
+  //  helper:   resident statements, observations the resident disputed, and earlier serious events (information only)
+  //  resident: what was noted (so a wrong one can be flagged for the helper); the resident can flag, never retract
+  let lifecycleInfo: LifecycleInfo | null = null
+  if (cur) {
+    try {
+      const row = await getCase(cur.id)
+      const st = readStored((row as any)?.riskObservations)
+      const live = st.observations.filter(o => o.id && !o.retracted && o.source !== 'resident')
+      if (resident) {
+        lifecycleInfo = { statements: st.statements ?? [], disputed: [], prior: [], notes: live.map(o => ({ id: o.id!, label: RISK_RULES[o.code]?.label ?? o.code, disputed: !!o.disputedAt })) }
+      } else {
+        lifecycleInfo = {
+          statements: st.statements ?? [],
+          disputed: st.observations.filter(o => o.disputedAt && !o.retracted).map(o => ({ obsId: o.id!, note: o.disputeNote, at: o.disputedAt! })),
+          prior: await getPriorSeriousEvents(householdId, cur.id),
+          notes: [],
+        }
+      }
+    } catch (e) {
+      reportError(e, { householdId, fn: 'getState/lifecycleInfo' })
+    }
+  }
+
   return {
     now,
+    lifecycleInfo,
     me:     membershipId ?? null,
     ready:  memberships.length > 0,
     emergencyNumber: household.emergencyNumber,
@@ -755,7 +811,7 @@ export async function getSetup(householdId: string) {
 // ── Case lifecycle ────────────────────────────────────────────────────────────
 
 function activeCase(state: HouseholdState, now = Date.now()): DoorCase | null {
-  const c = state.cases[0]
+  const c = state.cases.find(x => x.lifecycle !== 'closed')
   if (!c) return null
   if (c.status === 'waiting') return c
   const awaitingConfirm = c.status === 'answered' && c.answer === 'safe' && !c.confirmedAt && !c.declinedAt
@@ -880,21 +936,22 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 
   await tick(householdId)
 
-  // Check database for open waiting cases to prevent duplicates across instances
-  const openCases = await getOpenCasesForHousehold(householdId)
-  if (openCases.length > 0) {
-    // Merge the event into the most recent waiting case
-    const existingId = openCases[0].id
-    const existing = state.cases.find(c => c.id === existingId)
-    if (existing && existing.status === 'waiting') {
-      // P9: Count repeated button_press events as extra_knock within 30s window
-      if (event.event_type === 'button_press') {
-        await handleExtraKnock(householdId, existingId, event.device_id)
-      }
-      addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
-      await updateCase(existing.id, existing)
-      return null  // Return null to indicate the event was merged into an existing case
+  // Section 8.2: a new event attaches to the newest case that is not closed, because the system cannot reliably tell
+  // visitors apart. Only a closed case lets the event open a new case (starting at 0, nothing carried over).
+  const active = await getActiveLifecycleCase(householdId)
+  if (active) {
+    const existing = state.cases.find(c => c.id === active.id)
+    // P9: Count repeated button_press events as extra_knock within 30s window
+    if (event.event_type === 'button_press') {
+      await handleExtraKnock(householdId, active.id, event.device_id)
     }
+    const attached = await attachEvent(active.id)
+    if (existing) {
+      addLog(existing, `Another ${event.event_type} event merged into this case (no second alert).`)
+      if (attached.ok && attached.possibleNewVisitor) addLog(existing, 'Possible new visitor: this event came after the earlier visit was dealt with. A helper can split it into a new case.')
+      await updateCase(existing.id, existing)
+    }
+    return null  // Return null to indicate the event was merged into an existing case
   }
 
   const c = await openCase(state, 'visitor', event.event_type, `Ring sent ${event.event_type}.`, event.device_id ?? null, null)
@@ -915,6 +972,15 @@ async function handleExtraKnock(householdId: string, caseId: string, _deviceId: 
   } catch (e) {
     console.error('[G2] Failed to handle extra_knock:', e)
   }
+}
+
+/**
+ * Section 8.2: open the new case for a split "possible new visitor". Goes through openCase, so the normal alert path
+ * runs (the first helper is notified) and the new case starts at 0 with a fresh answer timer.
+ */
+export async function openSplitCase(householdId: string, from: { id: string; eventType: string; deviceId: string | null }): Promise<DoorCase> {
+  const state = await getOrCreateState(householdId)
+  return openCase(state, 'visitor', from.eventType, `Split from case ${from.id}: a possible new visitor.`, from.deviceId, null)
 }
 
 /**
@@ -1627,7 +1693,7 @@ export async function tick(householdId?: string) {
     warnIfAlertsFailing(state, now)
 
     for (const c of state.cases) {
-      if (c.status !== 'waiting' || now < c.deadlineAt) continue
+      if (c.status !== 'waiting' || c.lifecycle === 'closed' || now < c.deadlineAt) continue
       try {
         const timeoutSec = await caseTimeoutSec(c.id, state.timeoutSec)
         const deps = escalationDeps(householdId, household.residentName, timeoutSec)
@@ -1644,6 +1710,8 @@ export async function tick(householdId?: string) {
     if (now - state.lastRequestSweepAt > 30_000) {
       state.lastRequestSweepAt = now
       sweepRequests(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepRequests' }))
+      // Section 8.2: close idle cases whose quiet period has passed.
+      sweepQuietCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepQuietCases' }))
     }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }
