@@ -77,13 +77,17 @@ async function controlFor(householdId: string, a: { score: number; minMode: any 
   return computeControl({ score: a.score, minMode: a.minMode, prefs: await getPreferences(householdId) })
 }
 /** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone.
- *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used. */
+ *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used.
+ *  Section 7.2: holdOnly remains true even after status flips to no_response (until a helper accepts). */
 async function gateFor(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
   const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
   const stored = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
   const sEff = Math.max(stored, o.sEff ?? 0)
+  // Section 7.2: holdOnly stays true for short_notice even after no_response
+  const isShortNotice = row?.noticeStatus === 'short_notice'
+  const holdOnly = isShortNotice && (row?.status === 'waiting' || row?.status === 'no_response')
   return gateAction(tool, sEff, await getPreferences(householdId), {
-    holdOnly: row?.noticeStatus === 'short_notice' && row?.status === 'waiting',
+    holdOnly,
     decision: o.decision,
   })
 }

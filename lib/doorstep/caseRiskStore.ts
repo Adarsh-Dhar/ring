@@ -10,12 +10,19 @@
  *
  * Timers follow spec 5.3: risk-decision 120 - S_eff, takeover min(120 - S_eff, 60), approval set by the resident.
  * Only the section 7.2 no-response timer keeps its own curve (NO_RESPONSE_CURVE).
+ *
+ * Section 7.4: mode-rise notifications create risk-decision or takeover requests when S_eff rises.
  */
 import { getDb } from '@/lib/db/client'
 import { scoreObservations, riskLabelFor, modeRank, newObsId, type Observation, type RiskScore, type InterviewState, type InterviewStamp, type ControlMode } from './riskRules'
 import { readStored, mergeFresh, applyHelperAction, type StoredRisk, type Correction } from './caseRisk'
 import { createInterviewStamp } from './riskRules'
 import { effectiveScore, MODE_FLOOR_SCORE, activeTimer, timersFor, riskDecisionNeeded } from './collaborationController'
+import { createHelperRequest, getLatestRequest, type HelperRequestKind } from './helperRequests'
+import { getApprovedMemberships } from '@/lib/db/memberships'
+import { buildHelperRequest, formatPushNotification, formatSms } from './requestContent'
+import { contactHelper } from './contactLog'
+import { getPreferences } from '@/lib/db/preferences'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -218,6 +225,49 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
           where: { id: caseId, deadlineAt: c.deadlineAt },
           data: { deadlineAt: new Date(target) },
         })
+      }
+
+      // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)
+      // Create risk-decision or takeover requests, deduplicated per (caseId, modeRank)
+      if (rose) {
+        const newModeRank = modeRank(risk.minMode)
+        const oldModeRank = modeRank(prevMode ?? 'ai_leads')
+        // Trigger on 0 → 20 (M1 → M2) or reaching M2/M3
+        if ((prevEff < 20 && eff >= 20) || (newModeRank >= 2 && oldModeRank < 2) || (newModeRank >= 3 && oldModeRank < 3)) {
+          const kind: HelperRequestKind = newModeRank >= 3 ? 'takeover' : 'risk_decision'
+          const memberships = await getApprovedMemberships(c.householdId)
+          const prefs = await getPreferences(c.householdId)
+          const observations = newStored.observations
+
+          for (const m of memberships) {
+            // Deduplicate: check if a request of this kind already exists for this membership
+            const existing = await getLatestRequest(caseId, m.id, kind)
+            if (existing && existing.state !== 'timed_out' && existing.state !== 'declined') {
+              continue // Skip if a non-terminal request already exists
+            }
+
+            // Create the request
+            const requestId = await createHelperRequest({
+              caseId,
+              membershipId: m.id,
+              kind,
+              snapshot: { effectiveScore: eff, mode: risk.minMode },
+            })
+
+            // Build and send notification
+            const content = buildHelperRequest(
+              observations,
+              risk.minMode,
+              eff,
+              undefined, // noticeStatus
+              prefs
+            )
+            const pushNotif = formatPushNotification(content)
+            const smsBody = formatSms(content)
+
+            await contactHelper(caseId, m.id, { push: pushNotif, sms: smsBody }, requestId)
+          }
+        }
       }
     }
 

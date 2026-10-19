@@ -19,12 +19,13 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinit
 
 /** `holdOnly`: an approval is pending (spec 5.3), so the AI may use only its holding script and other zero-cost tools.
  *  `decision`: the resident delegation this action exercises when the tool alone is ambiguous (ask_for_id, accept_parcel,
- *  tell_visitor_to_leave). Spec 5.4: a resident restriction always overrides the number. */
-export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean; decision?: Decision } = {}): GateResult {
+ *  tell_visitor_to_leave). Spec 5.4: a resident restriction always overrides the number.
+ *  `safetyOnly`: Section 7.2 - when helper-led with no helper answering, AI is limited to safety scripts. */
+export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean; decision?: Decision; safetyOnly?: boolean } = {}): GateResult {
   const budget = 100 - clamp(sEff)
   if ((PROHIBITED_TOOLS as readonly string[]).includes(tool)) return { decision: 'deny', reason: 'prohibited', cost: null, budget }
   if ((HELPER_ONLY_TOOLS as readonly string[]).includes(tool)) return { decision: 'ask_helper', reason: 'helper_only', cost: null, budget }
-  if (!(tool in AUTHORITY_COST)) return { decision: 'deny', reason: 'unknown_tool', cost: null, budget }
+  if (!(tool in AUTHORITY_COST)) return { decision: 'deny', reason: 'unknown_tool', cost, null, budget }
   const cost = AUTHORITY_COST[tool as GatedTool]
   // Emergency-only tools: allowed only at S_eff 100
   if ((EMERGENCY_ONLY_TOOLS as readonly string[]).includes(tool)) {
@@ -32,6 +33,7 @@ export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts
   }
   const d = opts.decision ?? RESIDENT_DECISION[tool as GatedTool]
   if (opts.holdOnly && cost > 0) return { decision: 'ask_helper', reason: 'approval_pending', cost, budget }
+  if (opts.safetyOnly && cost > 0) return { decision: 'ask_helper', reason: 'safety_only', cost, budget }
   if (prefs && d && prefs.delegation[d] !== 'ai') return { decision: 'ask_helper', reason: `resident_restriction:${d}`, cost, budget }
   if (cost > budget) return { decision: 'ask_helper', reason: 'over_budget', cost, budget }
   return { decision: 'allow', reason: 'within_budget', cost, budget }

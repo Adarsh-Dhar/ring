@@ -28,6 +28,8 @@ export interface Preferences {
   entryWithoutApproval: 'never'
   /** Approved alternative for pressure_after_rule: a safe place the visitor can go (e.g., "go to the police station"). */
   approvedAlternative?: string
+  /** Section 7.3: what a helper may approve when the resident is unavailable. Default false. */
+  helperMayApprove?: Record<Decision, boolean>
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -47,6 +49,13 @@ export function parsePreferences(raw: unknown): Preferences {
   const delegation = { ...DEFAULT_PREFERENCES.delegation }
   for (const d of DECISIONS) if (isDelegate(o.delegation?.[d])) delegation[d] = o.delegation[d]
   const c = o.communication ?? {}
+
+  // Parse helperMayApprove
+  const helperMayApprove: Record<Decision, boolean> = {}
+  for (const d of DECISIONS) {
+    helperMayApprove[d] = typeof o.helperMayApprove?.[d] === 'boolean' ? o.helperMayApprove[d] : false
+  }
+
   return {
     delegation,
     communication: {
@@ -57,6 +66,7 @@ export function parsePreferences(raw: unknown): Preferences {
     },
     entryWithoutApproval: 'never',
     approvedAlternative: typeof o.approvedAlternative === 'string' ? o.approvedAlternative : undefined,
+    helperMayApprove,
   }
 }
 

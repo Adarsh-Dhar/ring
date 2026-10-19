@@ -45,6 +45,7 @@ model Household {
   minNoticeHours       Int?
   shortNoticePolicy    String             @default("helper_approval")
   approvalTimerSec     Int?
+  approvalRetrySec     Int                @default(300)
   unknownVisitorPolicy String             @default("ai_first_contact")
   preferences          Json?              @db.Json
   AiRun             AiRun[]
@@ -78,15 +79,40 @@ model Membership {
   position          Int
   tokenEpoch        Int                @default(1)
   emoji             String             @default("🙂")
+  tier              String             @default("primary")
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   household         Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   pushSubscriptions PushSubscription[]
   v2Devices         V2Device[]
+  helperRequests    HelperRequest[]
 
   @@unique([userId, householdId])
   @@index([householdId])
+}
+
+model HelperRequest {
+  id            String    @id @default(cuid())
+  caseId        String
+  membershipId  String
+  kind          String
+  round         Int       @default(1)
+  state         String    @default("sent")
+  sentAt        DateTime  @default(now())
+  deliveredAt   DateTime?
+  ackedAt       DateTime?
+  acceptedAt    DateTime?
+  declinedAt    DateTime?
+  timedOutAt    DateTime?
+  channels      Json      @default("{}")
+  snapshot      Json?
+  case          Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  membership    Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([membershipId])
+  @@index([state])
 }
 
 model Notification {
@@ -205,7 +231,10 @@ model Case {
   emergencyAlertedAt   DateTime?
   unconfirmedAlertedAt DateTime?
   urgentAlertedAt      DateTime?
+  conversationOwner    String?       // userId of who owns the conversation (helper or AI)
+  pendingActions       Json?     @default("[]") @db.Json
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  helperRequests       HelperRequest[]
 
   @@index([householdId])
   @@index([createdAt])

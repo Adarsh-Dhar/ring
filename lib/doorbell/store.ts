@@ -17,6 +17,10 @@ import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
+import { contactHelper } from '../doorstep/contactLog'
+import { createHelperRequest, markAcked, type HelperRequestKind } from '../doorstep/helperRequests'
+import { writeAudit, audit } from '../doorstep/audit'
+import { buildHelperRequest, formatPushNotification, formatSms } from '../doorstep/requestContent'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -596,18 +600,22 @@ function checkMissedCheckin(state: HouseholdState, now: number, timezone: string
   smsAll(state, `${residentName} has not checked in today. Please call.`, residentName)
 }
 
-function notifyAll(state: HouseholdState, title: string, body: string, caseId: string) {
-  getApprovedMemberships(state.householdId).then(memberships => {
-    memberships.forEach(m => pushToMembership(m.id, { title, body, tag: caseId, url: '/helper' }).catch(e => console.error('[PUSH]', e)))
-  })
+async function notifyAll(state: HouseholdState, title: string, body: string, caseId: string) {
+  const memberships = await getApprovedMemberships(state.householdId)
+  await Promise.all(
+    memberships.map(m =>
+      contactHelper(caseId, m.id, { push: { title, body, tag: caseId, url: '/helper' }, sms: body })
+    )
+  )
 }
 
-function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, residentName: string, urgent = true) {
-  getApprovedMemberships(state.householdId).then(memberships => {
-    memberships.forEach(m => {
-      if (m.user.phone) sendSms(m.user.phone, body, { urgent }).catch(e => console.error('[SMS]', e))
-    })
-  })
+async function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, residentName: string, urgent = true, caseId?: string) {
+  const memberships = await getApprovedMemberships(state.householdId)
+  await Promise.all(
+    memberships.map(m =>
+      contactHelper(caseId || 'system', m.id, { push: { title: residentName, body }, sms: body })
+    )
+  )
 }
 
 
