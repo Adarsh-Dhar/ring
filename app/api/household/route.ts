@@ -46,8 +46,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ...setup,
     requireResidentOk: !!(hh as any)?.requireResidentOk,
-    aiEnabled: !!(hh as any)?.aiEnabled,
-    aiInterrogator: !!(hh as any)?.aiInterrogator,
     googleCalendarConnected: hasGoogleCalendar,
     visitLink: link
       ? { active: true,  createdAt: link.createdAt.getTime() }
@@ -78,7 +76,6 @@ const Body = z.discriminatedUnion('action', [
     mode:   z.enum([...PLANNED_MODES] as [string, ...string[]]),
   }),
   z.object({ action: z.literal('requireResidentOk'), value: z.boolean() }),
-  z.object({ action: z.literal('aiSettings'), aiEnabled: z.boolean(), aiInterrogator: z.boolean() }),
 ])
 
 export async function POST(req: NextRequest) {
@@ -243,10 +240,6 @@ export async function POST(req: NextRequest) {
 
       case 'requireResidentOk':
         await updateHousehold(householdId, { requireResidentOk: b.value })
-        return NextResponse.json({ ok: true })
-
-      case 'aiSettings':
-        await updateHousehold(householdId, { aiEnabled: b.aiEnabled, aiInterrogator: b.aiInterrogator })
         return NextResponse.json({ ok: true })
     }
   } catch (e) {

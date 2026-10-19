@@ -197,7 +197,7 @@ export async function startInterrogator(householdId: string, caseId: string, dev
  */
 export async function processAnswer(
   householdId: string, caseId: string, answer: Buffer | string, mimeType?: string
-): Promise<{ question: string | null; final: boolean; close: string | null }> {
+): Promise<{ question: string | null; final: boolean; close: string | null; error?: string }> {
   try {
     const c = await getDb().case.findUnique({
       where: { id: caseId },
@@ -239,6 +239,10 @@ export async function processAnswer(
       .map(([k, v]) => `${k}: ${v} (asked ${state.asks[k as Slot]} times)`)
       .join(', ')
 
+    // Build history from previous turns
+    const history = turns.map(t => `Q: ${t.question}\nA: ${t.transcript || '(no transcript)'}`).join('\n\n')
+
+    // The client now handles model fallbacks automatically for 503 errors
     const out = await generateJson({
       agent: 'interrogator', householdId, caseId, role: 'workhorse', schema: InterrogatorTurnOut, maxOutputTokens: 600,
       system: INTERROGATOR_SYSTEM,
@@ -270,6 +274,11 @@ export async function processAnswer(
         riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
         // riskScore, riskLedger, controlMode are now written by applyRiskEdit
       })
+      // If we got here due to 503 retries failing, return error instead of question
+      const is503 = lastError?.message.includes('503') || lastError?.message.includes('high demand') || lastError?.message.includes('UNAVAILABLE')
+      if (is503) {
+        return { question: null, final: false, close: null, error: 'AI service is busy (503). Please try again.' }
+      }
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
 
@@ -418,7 +427,15 @@ export async function processAnswer(
     return { question: nextQuestion, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
-    return { question: null, final: true, close: null }
+    let errorMessage = 'AI service error. Please try again.'
+    if (e instanceof Error) {
+      if (e.message.includes('503') || e.message.includes('high demand') || e.message.includes('UNAVAILABLE')) {
+        errorMessage = 'AI service is temporarily unavailable due to high demand. Please try again in a moment.'
+      } else if (e.message.includes('history')) {
+        errorMessage = 'Internal error: missing history. Please try again.'
+      }
+    }
+    return { question: null, final: false, close: null, error: errorMessage }
   }
 }
 

@@ -51,8 +51,11 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
       const res = await fetch('/api/notifications')
       if (res.ok) {
         const data = await res.json()
+        console.log('Loaded notifications:', data.notifications)
+        const unread = data.notifications?.filter((n: Notification) => !n.read).length || 0
+        console.log('Unread count:', unread)
         setNotifications(data.notifications || [])
-        setUnreadCount(data.notifications?.filter((n: Notification) => !n.read).length || 0)
+        setUnreadCount(unread)
       }
     } catch (e) {
       console.error('Failed to load notifications', e)
@@ -76,11 +79,13 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   const markAsRead = async (notificationId: string) => {
     try {
-      await fetch(`/api/notifications/${notificationId}`, {
+      console.log('Marking notification as read:', notificationId)
+      const res = await fetch(`/api/notifications/${notificationId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'mark_read' }),
       })
+      console.log('Mark as read response:', res.status, await res.text())
       loadNotifications()
     } catch (e) {
       console.error('Failed to mark notification as read', e)
@@ -265,9 +270,16 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                 {/* Notification Bell */}
                 <div className="relative">
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       setShowNotifications(!showNotifications)
-                      if (!showNotifications) loadNotifications()
+                      if (!showNotifications) {
+                        await loadNotifications()
+                        // Mark all unread notifications as read when opening the dropdown
+                        const unreadIds = notifications.filter(n => !n.read).map(n => n.id)
+                        for (const id of unreadIds) {
+                          await markAsRead(id)
+                        }
+                      }
                     }}
                     className="text-gray-700 hover:text-gray-900 p-2 rounded-md relative"
                   >
@@ -295,7 +307,8 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                           {notifications.map((notification) => (
                             <div
                               key={notification.id}
-                              className={`p-4 ${!notification.read ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                              className={`p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700/50 ${!notification.read ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                              onClick={() => !notification.read && markAsRead(notification.id)}
                             >
                               <div className="flex items-start justify-between">
                                 <div className="flex-1">

@@ -17,10 +17,9 @@ import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
-import { attachEvent, sweepQuietCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
+import { attachEvent, sweepQuietCases, sweepStaleCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
 import { readStored } from '../doorstep/caseRisk'
-import { RISK_RULES } from '../doorstep/riskRules'
-import type { LifecycleState } from '../doorstep/riskRules'
+import { RISK_RULES, type LifecycleState } from '../doorstep/riskRules'
 import { contactHelper } from '../doorstep/contactLog'
 import { createHelperRequest, markAcked, type HelperRequestKind } from '../doorstep/helperRequests'
 import { chainFrom } from '../doorstep/chainOrder'
@@ -130,7 +129,7 @@ export interface DoorCase {
   possibleNewVisitorAt?: number
   splitFromId?:  string
   /** Section 7: Helper requests for this case (sent, delivered, acked, accepted, declined, timed_out) */
-  helperRequests?: { id: string; kind: string; state: string; membershipId: string; createdAt: number }[]
+  helperRequests?: { id: string; kind: string; state: string; membershipId: string; sentAt: number }[]
   /** Section 7: Pending actions awaiting helper approval (pending, approved, rejected, consumed) */
   pendingActions?: { id: string; tool: string; state: string; approvedBy?: string; createdAt: number }[]
 }
@@ -235,6 +234,14 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       splitFromId: (c as any).splitFromId || undefined,
       controlMode:   (c as any).controlMode || undefined,
       unconfirmedAlertedAt: (c as any).unconfirmedAlertedAt ? new Date((c as any).unconfirmedAlertedAt).getTime() : null,
+      // Section 7: Include helper requests
+      helperRequests: (c as any).helperRequests?.map((hr: any) => ({
+        id: hr.id,
+        kind: hr.kind,
+        state: hr.state,
+        membershipId: hr.membershipId,
+        sentAt: hr.sentAt.getTime(),
+      })) || [],
     }))
 
     const approved = await getApprovedMemberships(householdId)
@@ -399,7 +406,7 @@ async function refreshCasesFromDB(
       kind: hr.kind,
       state: hr.state,
       membershipId: hr.membershipId,
-      createdAt: hr.createdAt.getTime(),
+      sentAt: hr.sentAt.getTime(),
     })) || [],
     // Section 7: Include pending actions from DB
     pendingActions: ((row as any).pendingActions as any)?.map((pa: any) => ({
@@ -935,6 +942,9 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   if (!TRIGGER_EVENTS.has(event.event_type)) return null
 
   await tick(householdId)
+
+  // Security: run stale case sweep before checking for active case
+  await sweepStaleCases(householdId, Date.now())
 
   // Section 8.2: a new event attaches to the newest case that is not closed, because the system cannot reliably tell
   // visitors apart. Only a closed case lets the event open a new case (starting at 0, nothing carried over).
@@ -1712,6 +1722,8 @@ export async function tick(householdId?: string) {
       sweepRequests(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepRequests' }))
       // Section 8.2: close idle cases whose quiet period has passed.
       sweepQuietCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepQuietCases' }))
+      // Security: close any case that has been open for more than 1 hour
+      sweepStaleCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepStaleCases' }))
     }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }

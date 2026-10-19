@@ -16,6 +16,17 @@ export const MODEL_IDS: Record<ModelRole, () => string> = {
   tts:       () => env('GEMINI_MODEL_TTS',       'gemini-3.1-flash-tts'),
 }
 
+/** Fallback models for 503/unavailable errors, in order of preference */
+export const FALLBACK_MODELS: string[] = [
+  'gemini-3.6-flash',
+  'gemini-3.7-flash',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2-flash',
+]
+
 /** Free-tier defaults from the quota table. Override per role: GEMINI_LIMIT_<ROLE>_RPM / _RPD. */
 const DEFAULT_LIMITS: Record<ModelRole, ModelLimits> = {
   workhorse: { rpm: 15,  rpd: 500 },

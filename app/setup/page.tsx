@@ -38,8 +38,6 @@ interface HouseholdData {
   plannedMode?: 'helper' | 'resident' | 'all-helper'
   requireResidentOk?: boolean
   visitLink?: { active: boolean; createdAt: number | null }
-  aiEnabled?: boolean
-  aiInterrogator?: boolean
   googleCalendarConnected?: boolean
 }
 
@@ -77,9 +75,6 @@ function SetupPage() {
   const [quiet,              setQuietForm]          = useState({ enabled: false, startHour: 22, endHour: 6 })
   const [plannedMode,        setPlannedModeLocal]   = useState<'helper' | 'resident' | 'all-helper'>('helper')
   const [requireResidentOk,  setRequireResidentOk]  = useState(false)
-  const [aiEnabled,         setAiEnabled]           = useState(false)
-  const [aiInterrogator,    setAiInterrogator]      = useState(false)
-  const [aiConsent,          setAiConsent]            = useState(false)
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
   const [digests,           setDigests]             = useState<any[]>([])
   const [visitLinkUrl,       setVisitLinkUrl]       = useState('')
@@ -131,8 +126,6 @@ function SetupPage() {
     setQuietForm(d.quiet)
     setPlannedModeLocal(d.plannedMode ?? 'helper')
     setRequireResidentOk(d.requireResidentOk ?? false)
-    setAiEnabled(d.aiEnabled ?? false)
-    setAiInterrogator(d.aiInterrogator ?? false)
     setVisitLinkActive(d.visitLink?.active ?? false)
     setVisitLinkCreatedAt(d.visitLink?.createdAt ?? null)
 
@@ -555,51 +548,17 @@ function SetupPage() {
       <h2 className="mt-8 mb-2 text-sm uppercase tracking-wide text-slate-400">AI Helpers</h2>
       <div className="mb-6 rounded-2xl bg-slate-800 p-4 space-y-3">
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={aiEnabled} onChange={e => setAiEnabled(e.target.checked)} disabled={loading} />
-            <span className="text-sm">Enable AI features</span>
-          </label>
+          <div className="w-4 h-4 rounded bg-emerald-500"></div>
+          <span className="text-sm text-emerald-300">AI features are enabled</span>
         </div>
-        {aiEnabled && (
-          <>
-            <p className="text-xs text-slate-400">
-              ⚠️ Audio and camera pictures are sent to Google Gemini for processing. Visitor answers are transcribed and stored. Enable only if you consent to this.
-            </p>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={aiConsent}
-                  onChange={e => setAiConsent(e.target.checked)}
-                  disabled={loading}
-                />
-                <span className="text-sm">I consent to sending audio/camera data and storing transcripts</span>
-              </label>
-            </div>
-            {aiConsent && (
-              <>
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={aiInterrogator} onChange={e => setAiInterrogator(e.target.checked)} disabled={loading} />
-                    <span className="text-sm">Enable AI interrogator (unplanned visits only)</span>
-                  </label>
-                </div>
-                {!googleCalendarConnected && (
-                  <p className="text-xs text-amber-400">
-                    ℹ️ Connect Google Calendar for better visit request verification. Without it, AI intake can only match against planned visits.
-                  </p>
-                )}
-              </>
-            )}
-          </>
+        <p className="text-xs text-slate-400">
+          AI interrogator is active for unplanned visits. Audio and camera pictures are sent to Google Gemini for processing.
+        </p>
+        {!googleCalendarConnected && (
+          <p className="text-xs text-amber-400">
+            ℹ️ Connect Google Calendar for better visit request verification. Without it, AI intake can only match against planned visits.
+          </p>
         )}
-        <button
-          onClick={() => act('/api/household', { action: 'aiSettings', aiEnabled: aiEnabled && aiConsent, aiInterrogator: aiEnabled && aiConsent && aiInterrogator })}
-          disabled={loading || (aiEnabled && !aiConsent)}
-          className={btn}
-        >
-          Save AI settings
-        </button>
       </div>
 
       {/* ── Weekly Digests ───────────────────────────────────────────── */}

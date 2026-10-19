@@ -172,9 +172,17 @@ function DoorbellSim() {
     setPhase('waiting')
   }
 
-  async function handleReply(r: { ok: boolean; data: any }) {
-    if (!r.ok) { setPhase('waiting'); return setNotice(r.data.error || 'The answer could not be processed.') }
+  async function handleReply(r: { ok: boolean; data: any }, originalText: string) {
+    if (!r.ok) { setPhase('waiting'); setText(originalText); return setNotice(r.data.error || 'The answer could not be processed.') }
     const j = r.data
+    if (j.error) {
+      setPhase('waiting')
+      setText(originalText)  // Restore text on error so user can retry
+      setNotice(j.error)
+      // Also add the error to the chat for visibility
+      setChat((c) => [...c, { from: 'system', text: `⚠️ ${j.error}` }])
+      return
+    }
     if (j.final) {
       if (j.close) await say(j.close)
       setChat((c) => [...c, { from: 'system', text: '✅ Interrogation finished. Scroll down to see what helpers see.' }])
@@ -190,7 +198,7 @@ function DoorbellSim() {
     if (!t || phase !== 'waiting') return
     setText(''); setNotice(''); setPhase('thinking')
     setChat((c) => [...c, { from: 'visitor', text: t }])
-    await handleReply(await postJson('/api/sim/interrogator/answer', { caseId, text: t }))
+    await handleReply(await postJson('/api/sim/interrogator/answer', { caseId, text: t }), t)
   }
 
   async function speakReply() {
@@ -358,7 +366,14 @@ function DoorbellSim() {
               ? <button className={BTN_GHOST} onClick={() => recRef.current?.state !== 'inactive' && recRef.current?.stop()}>⏹ Stop</button>
               : <button className={BTN_GHOST} disabled={phase !== 'waiting'} onClick={speakReply} title="Speak your reply (10 s max)">🎙️</button>}
           </div>
-          {notice && <p className="mt-2 text-sm text-amber-700" role="status">{notice}</p>}
+          {notice && (
+            <div className="mt-2">
+              <p className="text-sm text-amber-700" role="status">{notice}</p>
+              {(notice.includes('unavailable') || notice.includes('try again')) && (
+                <button className={BTN} onClick={sendText} style={{ marginTop: '8px' }}>Try Again</button>
+              )}
+            </div>
+          )}
           <p className="mt-2 text-xs text-gray-500">The visitor side only ever hears the next question. The summary, verdict and risk level are shown to helpers below, never to you-as-visitor.</p>
         </div>
 

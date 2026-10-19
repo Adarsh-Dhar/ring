@@ -39,9 +39,9 @@ model Household {
   plannedMode       String             @default("helper")
   requireResidentOk Boolean            @default(false)
   preset            String             @default("standard")
-  aiEnabled         Boolean            @default(false)
-  aiGreeter         Boolean            @default(false)
-  aiInterrogator    Boolean?           @default(false)
+  aiEnabled         Boolean            @default(true)
+  aiGreeter         Boolean            @default(true)
+  aiInterrogator    Boolean?           @default(true)
   minNoticeHours       Int?
   shortNoticePolicy    String             @default("helper_approval")
   approvalTimerSec     Int?

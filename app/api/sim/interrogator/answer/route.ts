@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
     question: r.question,
     final:    r.final,
     close:    r.final ? interrogatorLines(f.residentName).close : null,
+    error:    r.error,
     // Like the audio route: transcript, claims, verdict and risk are NOT returned to the visitor side.
   })
 }

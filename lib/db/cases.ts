@@ -65,9 +65,9 @@ export async function getCasesForHousehold(householdId: string, limit = 10) {
           kind: true,
           state: true,
           membershipId: true,
-          createdAt: true,
+          sentAt: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { sentAt: 'desc' },
       },
     },
   })
