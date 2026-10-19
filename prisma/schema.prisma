@@ -232,7 +232,7 @@ model Case {
   unconfirmedAlertedAt DateTime?
   urgentAlertedAt      DateTime?
   conversationOwner    String?       // userId of who owns the conversation (helper or AI)
-  pendingActions       Json?     @default("[]") @db.Json
+  pendingActions       Json?
   household            Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   helperRequests       HelperRequest[]
 

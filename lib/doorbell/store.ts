@@ -997,11 +997,13 @@ export async function ackCase(householdId: string, caseId: string, membershipId:
     addLog(c, `${membership.user.name} saw the alert.`)
     await updateCase(c.id, c)
 
-    // Section 7: Mark helper request as acknowledged
-    const { getLatestRequest, markAcked } = await import('@/lib/doorstep/helperRequests')
-    const request = await getLatestRequest(caseId, membershipId, 'approval')
-    if (request) {
-      await markAcked(request.id)
+    // Section 7: Mark all pending requests for this membership as acknowledged
+    const { getRequestsForCase, markAcked } = await import('@/lib/doorstep/helperRequests')
+    const requests = await getRequestsForCase(caseId)
+    for (const request of requests) {
+      if (request.membershipId === membershipId && (request.state === 'sent' || request.state === 'delivered')) {
+        await markAcked(request.id)
+      }
     }
   }
   return { ok: true, case: c }
@@ -1158,16 +1160,9 @@ export async function answerCase(
   if (answer === 'safe') await markUsed(state, c)
   await updateCase(c.id, c)
 
-  // Section 7: Mark helper request as accepted or declined
-  const { getLatestRequest, markAccepted, markDeclined } = await import('@/lib/doorstep/helperRequests')
-  const request = await getLatestRequest(caseId, membershipId, 'approval')
-  if (request) {
-    if (answer === 'safe') {
-      await markAccepted(request.id)
-    } else {
-      await markDeclined(request.id)
-    }
-  }
+  // Section 7: accepted/declined describe the helper's response to the request, not the visitor verdict
+  // These should be set via separate endpoints when the helper accepts/declines to handle the case
+  // NOT tied to the answerCase verdict
 
   return { ok: true, case: c }
 }
@@ -1536,7 +1531,8 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
       steps += await escalateDueCase(c, Date.now(), { timeoutSec, decisionSec: DEFAULT_DECISION_SECONDS, noResponseSec: DEFAULT_NO_RESPONSE_SECONDS, expectedTimeoutSec: EXPECTED_TIMEOUT_SECONDS }, escalationDeps(row.householdId, household.residentName, timeoutSec))
 
       // Section 7: Approval retry for no_response cases
-      if (c.status === 'no_response' && c.noticeStatus === 'short_notice') {
+      const noticeStatus = (row as any).noticeStatus as string | undefined
+      if (c.status === 'no_response' && noticeStatus === 'short_notice') {
         const approvalRetrySec = household.approvalRetrySec || 300
         const timeSinceDeadline = Date.now() - c.deadlineAt
         // Retry if we're at a retry interval boundary
@@ -1550,23 +1546,38 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
           // Check if we already sent a retry request for this interval
           const existing = await getLatestRequest(c.id, chain[0], 'approval')
           if (!existing || existing.round !== retryInterval) {
-            // Send new round of requests
-            const prefs = await getPreferences(c.householdId)
+            // Send new round of requests to the next helper in chain, not everyone
+            const nextIndex = c.helperIndex % chain.length
+            const nextMembershipId = chain[nextIndex]
             const memberships = await getApprovedMemberships(c.householdId)
+            const membership = memberships.find(m => m.id === nextMembershipId)
 
-            for (const m of memberships) {
+            if (membership) {
               const requestId = await createHelperRequest({
                 caseId: c.id,
-                membershipId: m.id,
+                membershipId: membership.id,
                 kind: 'approval',
                 round: retryInterval,
               })
 
-              const content = buildHelperRequest([], 'ai_leads', 0, c.noticeStatus, prefs)
+              // Build request with real case data
+              const riskScore = (row as any).riskScore as number | undefined
+              const controlMode = (row as any).controlMode as string | undefined
+              const riskObservations = (row as any).riskObservations as any
+              const observations = (riskObservations?.observations as any[]) || []
+
+              const prefs = await getPreferences(c.householdId)
+              const content = buildHelperRequest(
+                observations,
+                (controlMode as any) || 'ai_leads',
+                riskScore || 0,
+                noticeStatus,
+                prefs
+              )
               const pushNotif = formatPushNotification(content)
               const smsBody = formatSms(content)
 
-              await contactHelper(c.id, m.id, { push: pushNotif, sms: smsBody }, requestId)
+              await contactHelper(c.id, membership.id, { push: pushNotif, sms: smsBody }, requestId.id)
             }
           }
         }

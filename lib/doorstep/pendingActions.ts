@@ -22,14 +22,26 @@ export interface PendingAction {
 
 /**
  * Create a pending action for a case.
+ * Deduplicates: only creates if no pending action for this tool already exists.
  */
 export async function createPendingAction(
   caseId: string,
   tool: string,
   text: string,
   reason?: string
-): Promise<PendingAction> {
+): Promise<PendingAction | null> {
   const db = getDb()
+  const c = await db.case.findUnique({ where: { id: caseId }, select: { pendingActions: true } })
+  if (!c) throw new Error('Case not found')
+
+  const actions = (c.pendingActions as any) || []
+
+  // Deduplication: check if a pending action for this tool already exists
+  const existing = actions.find((a: PendingAction) => a.tool === tool && a.state === 'pending')
+  if (existing) {
+    return null // Don't create duplicate
+  }
+
   const action: PendingAction = {
     id: `action_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     tool,
@@ -39,10 +51,6 @@ export async function createPendingAction(
     createdAt: new Date().toISOString(),
   }
 
-  const c = await db.case.findUnique({ where: { id: caseId }, select: { pendingActions: true } })
-  if (!c) throw new Error('Case not found')
-
-  const actions = (c.pendingActions as any) || []
   actions.push(action)
 
   await db.case.update({

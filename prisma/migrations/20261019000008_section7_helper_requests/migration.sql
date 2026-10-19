@@ -28,7 +28,7 @@ ALTER TABLE "Membership" ADD COLUMN "tier" TEXT NOT NULL DEFAULT 'primary';
 
 -- Add conversationOwner and pendingActions to Case
 ALTER TABLE "Case" ADD COLUMN "conversationOwner" TEXT;
-ALTER TABLE "Case" ADD COLUMN "pendingActions" JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE "Case" ADD COLUMN "pendingActions" JSONB;
 
 -- Add approvalRetrySec to Household
 ALTER TABLE "Household" ADD COLUMN "approvalRetrySec" INTEGER NOT NULL DEFAULT 300;

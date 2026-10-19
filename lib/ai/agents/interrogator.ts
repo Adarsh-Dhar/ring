@@ -87,10 +87,9 @@ async function gateFor(householdId: string, caseId: string, tool: string, o: { d
   // Section 7.2: holdOnly stays true for short_notice even after no_response
   const isShortNotice = row?.noticeStatus === 'short_notice'
   const holdOnly = isShortNotice && (row?.status === 'waiting' || row?.status === 'no_response')
-  // Section 7.2: safetyOnly when helper-led (M3+) and no_response
+  // Section 7.2: safetyOnly when helper-led (M3+: helper_only and above) and no_response
   const minMode = (row?.controlMode as any) || 'ai_leads'
-  const modeRank = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(minMode)
-  const safetyOnly = modeRank >= 3 && row?.status === 'no_response'
+  const safetyOnly = modeRank(minMode) >= modeRank('helper_only') && row?.status === 'no_response'
   return gateAction(tool, sEff, await getPreferences(householdId), {
     holdOnly,
     safetyOnly,
@@ -107,7 +106,8 @@ async function gateOrAsk(householdId: string, caseId: string, tool: string, o: {
   // Section 7: Create pending action when helper approval is needed
   if (g.decision === 'ask_helper') {
     const { createPendingAction } = await import('@/lib/doorstep/pendingActions')
-    await createPendingAction(caseId, tool, `Action requires helper approval: ${g.reason}`)
+    // Use the tool name directly as the action text for clarity
+    await createPendingAction(caseId, tool, tool, g.reason)
   }
   return g
 }
