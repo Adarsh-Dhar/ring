@@ -39,6 +39,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   },
   communication: { sensory: 'low', plainWordsOnly: true, textOnly: false, speakingPace: 'slow' },
   entryWithoutApproval: 'never',
+  // Section 7.3: helpers may approve nothing on the resident's behalf until the resident says so.
+  helperMayApprove: { greet_visitor: false, ask_purpose: false, ask_for_id: false, tell_visitor_to_leave: false, accept_parcel: false, approve_short_notice: false },
 }
 
 const isDelegate = (v: unknown): v is Delegate => v === 'ai' || v === 'helper' || v === 'resident_only'
@@ -51,7 +53,7 @@ export function parsePreferences(raw: unknown): Preferences {
   const c = o.communication ?? {}
 
   // Parse helperMayApprove
-  const helperMayApprove: Record<Decision, boolean> = {}
+  const helperMayApprove = {} as Record<Decision, boolean>
   for (const d of DECISIONS) {
     helperMayApprove[d] = typeof o.helperMayApprove?.[d] === 'boolean' ? o.helperMayApprove[d] : false
   }

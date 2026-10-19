@@ -1,120 +1,113 @@
 /**
  * AI recommendation engine (Section 7).
  *
- * Returns a structured recommendation based on the highest risk code in the ledger.
- * Includes: what to say, why, what tool to use, whether it's within authority, and the gate result.
+ * Returns a structured recommendation based on the highest-scoring confirmed risk code in the ledger.
+ * Includes: what to say, why, which tool it would use, and the gate result for that tool.
+ * The gate runs in code (gateAction), so the recommendation can never claim more authority than the AI has.
  */
-import { riskLabelFor, type Observation, type ControlMode } from './riskRules'
+import { type Observation, type ControlMode, type Behaviour } from './riskRules'
 import { gateAction, type GateResult } from './actionGate'
-import { AUTHORITY_COST } from './authorityCosts'
+import { type GatedTool } from './authorityCosts'
+import type { Preferences } from './residentPreferences'
 
 export interface Recommendation {
   say: string // What the AI would say
   why: string // Why this recommendation
-  tool?: string // The action tool, if applicable
-  gate: GateResult // The gate result (execute, ask_helper, block)
-  withinAuthority: boolean // Whether the action is within the AI's authority
+  tool?: GatedTool // The action tool, if applicable
+  gate: GateResult // The gate result (allow, ask_helper, deny)
+  withinAuthority: boolean // True only when the gate lets the AI act alone
+}
+
+interface Plan { say: string; why: string; tool: GatedTool }
+
+/** One plan per behaviour code. Every tool named here exists in AUTHORITY_COST. */
+const PLAN: Record<Behaviour, Plan> = {
+  forced_entry_or_assault: {
+    say: 'EMERGENCY: Keep the door closed and move away from it.',
+    why: 'Forced entry or assault was confirmed.',
+    tool: 'emergency_guidance',
+  },
+  immediate_threat: {
+    say: 'URGENT: Keep the door closed. This may be a threat.',
+    why: 'An immediate threat was confirmed.',
+    tool: 'safety_script',
+  },
+  door_wedge_or_follow_in: {
+    say: 'Please step back from the door. I cannot let anyone in.',
+    why: 'The visitor tried to wedge the door or follow someone in.',
+    tool: 'boundary_statement',
+  },
+  lock_manipulation: {
+    say: 'Please step away from the lock. The door will stay closed.',
+    why: 'The visitor tested or tampered with the lock.',
+    tool: 'boundary_statement',
+  },
+  refuse_to_leave: {
+    say: 'The conversation is over. Please leave the property.',
+    why: 'The visitor was asked to leave and has not.',
+    tool: 'end_conversation',
+  },
+  credential_request: {
+    say: 'I cannot share access details with anyone.',
+    why: 'The visitor asked for a code, key or other credential.',
+    tool: 'restate_rule_refuse',
+  },
+  hide_from_helper: {
+    say: 'I am letting the helper know you are here.',
+    why: 'The visitor asked that the helper not be told.',
+    tool: 'alert_helper',
+  },
+  purpose_contradiction: {
+    say: 'Can you tell me again why you are here?',
+    why: 'The visitor gave answers that do not match.',
+    tool: 'neutral_verification_question',
+  },
+  pressure_after_rule: {
+    say: 'The rule has not changed. Is there a safe place I can suggest?',
+    why: 'The visitor kept pushing after the house rule was explained.',
+    tool: 'offer_approved_alternative',
+  },
+  pressure_after_boundary: {
+    say: 'I have said what I can do. The door will stay closed.',
+    why: 'The visitor kept pushing after a boundary was stated.',
+    tool: 'boundary_statement',
+  },
+  extra_knock: {
+    say: 'Someone is at the door. Can you tell me why you are here?',
+    why: 'Repeated knocking.',
+    tool: 'neutral_verification_question',
+  },
 }
 
 /**
  * Get a recommendation based on the risk observations and current mode.
+ * `prefs` lets the gate apply the resident's delegation settings.
  */
 export function getRecommendation(
   observations: Observation[],
   mode: ControlMode,
-  effectiveScore: number
+  effectiveScore: number,
+  prefs?: Preferences,
 ): Recommendation {
-  // Find the highest-point confirmed observation
-  const confirmed = observations.filter(o => o.state === 'confirmed')
-  const highest = confirmed.length > 0
-    ? confirmed.reduce((a, b) => (b.points > a.points ? b : a))
-    : null
+  // Retracted observations never count; only confirmed evidence drives a recommendation.
+  const confirmed = observations.filter((o) => o.state === 'confirmed' && !o.retracted)
+  const highest = confirmed.length > 0 ? confirmed.reduce((a, b) => (b.points > a.points ? b : a)) : null
 
   if (!highest) {
+    const gate = gateAction('update_status', effectiveScore, prefs)
     return {
       say: 'No significant risk detected. I can handle this routine visit.',
       why: 'No confirmed risk observations.',
-      gate: { result: 'execute' },
-      withinAuthority: true,
+      gate,
+      withinAuthority: gate.decision === 'allow',
     }
   }
 
-  const code = highest.code
-  const points = highest.points
-  const budget = 100 - effectiveScore
-
-  // Map codes to recommendations
-  switch (code) {
-    case 'forced_entry_or_assault':
-      return {
-        say: 'EMERGENCY: Do not open the door. Keep the door closed and move away.',
-        why: 'Confirmed forced entry or assault detected.',
-        tool: 'emergency_alert',
-        gate: gateAction('emergency_alert', budget),
-        withinAuthority: budget >= AUTHORITY_COST.emergency_alert,
-      }
-
-    case 'immediate_threat':
-      return {
-        say: 'URGENT: Keep the door closed. This may be a threat.',
-        why: 'Immediate threat detected.',
-        tool: 'urgent_alert',
-        gate: gateAction('urgent_alert', budget),
-        withinAuthority: budget >= AUTHORITY_COST.urgent_alert,
-      }
-
-    case 'weapon_present':
-      return {
-        say: 'A weapon may be present. Keep the door closed.',
-        why: 'Weapon detected in the scene.',
-        tool: 'hold_only',
-        gate: gateAction('hold_only', budget),
-        withinAuthority: budget >= AUTHORITY_COST.hold_only,
-      }
-
-    case 'unfamiliar_person':
-      return {
-        say: 'I don\'t recognize this person. I\'ll ask them to identify themselves.',
-        why: 'Unfamiliar person at the door.',
-        tool: 'ask_identity',
-        gate: gateAction('ask_identity', budget),
-        withinAuthority: budget >= AUTHORITY_COST.ask_identity,
-      }
-
-    case 'suspicious_behavior':
-      return {
-        say: 'The behavior seems suspicious. I\'ll ask more questions.',
-        why: 'Suspicious behavior detected.',
-        tool: 'ask_questions',
-        gate: gateAction('ask_questions', budget),
-        withinAuthority: budget >= AUTHORITY_COST.ask_questions,
-      }
-
-    case 'delivery':
-      return {
-        say: 'This appears to be a delivery. I can handle this.',
-        why: 'Delivery person detected.',
-        tool: 'greet_routine',
-        gate: gateAction('greet_routine', budget),
-        withinAuthority: budget >= AUTHORITY_COST.greet_routine,
-      }
-
-    case 'known_visitor':
-      return {
-        say: 'I recognize this visitor. I can greet them.',
-        why: 'Known visitor detected.',
-        tool: 'greet_routine',
-        gate: gateAction('greet_routine', budget),
-        withinAuthority: budget >= AUTHORITY_COST.greet_routine,
-      }
-
-    default:
-      return {
-        say: 'I\'ll proceed with standard greeting.',
-        why: `Observation: ${code}`,
-        tool: 'greet_routine',
-        gate: gateAction('greet_routine', budget),
-        withinAuthority: budget >= AUTHORITY_COST.greet_routine,
-      }
-  }
+  // A code with no confirmed-points tie-break (0-point codes such as immediate_threat) still wins by being the only one confirmed;
+  // when a 0-point emergency code is confirmed alongside scored codes, it must still be the one the helper sees first.
+  const urgent = confirmed.find((o) => o.code === 'forced_entry_or_assault') ?? confirmed.find((o) => o.code === 'immediate_threat')
+  const code = (urgent ?? highest).code
+  const plan = PLAN[code]
+  const gate = gateAction(plan.tool, effectiveScore, prefs)
+  return { say: plan.say, why: plan.why, tool: plan.tool, gate, withinAuthority: gate.decision === 'allow' }
 }

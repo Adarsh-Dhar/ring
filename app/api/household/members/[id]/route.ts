@@ -2,6 +2,7 @@
  * PATCH /api/household/members/[id]
  *
  * Update membership settings including tier (Section 7).
+ * Contact order is a resident setting: only the guardian or the resident may change it, never a helper.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -20,7 +21,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const a = await authorize(req, 'helper')
+  const a = await authorize(req, 'guardian', 'resident')
   if (a.ok === false) return a.res
 
   const p = await parse(req, Body)
@@ -29,6 +30,7 @@ export async function PATCH(
   const { tier } = p.data
 
   const householdId = a.session!.householdId
+  if (!householdId) return fail('No household selected', 400)
 
   const membership = await getMembership(params.id)
   if (!membership) {

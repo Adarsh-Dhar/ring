@@ -23,6 +23,7 @@ import { getApprovedMemberships } from '@/lib/db/memberships'
 import { buildHelperRequest, formatPushNotification, formatSms } from './requestContent'
 import { contactHelper } from './contactLog'
 import { getPreferences } from '@/lib/db/preferences'
+import { reportError } from '@/lib/errors'
 
 /** The kinds of edits that can be applied to a case's risk observations. */
 export type RiskEdit =
@@ -33,6 +34,64 @@ export type RiskEdit =
   | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore' | 'resolve'; who: string; reason?: string }
   | { kind: 'availability'; device: 'camera' | 'mic'; available: boolean; since: string; reason?: string }
   | { kind: 'reset'; who: string; reason: string }
+
+interface RiseCtx {
+  caseId: string
+  householdId: string
+  prevMode: ControlMode | null
+  prevEff: number
+  eff: number
+  minMode: ControlMode
+  observations: Observation[]
+}
+
+/**
+ * Section 7.4 step 4: notify helpers when the mode rises (any mode change, or reaching M2/M3).
+ * Creates risk-decision or takeover requests. createHelperRequest deduplicates, so a helper with a live request
+ * of the same kind is not asked twice.
+ */
+export async function notifyModeRise({ caseId, householdId, prevMode, prevEff, eff, minMode, observations }: RiseCtx): Promise<void> {
+  const newModeRank = modeRank(minMode)
+  const oldModeRank = modeRank(prevMode ?? 'ai_leads')
+  // Trigger on any mode rise, or when reaching M2/M3 from below
+  if (newModeRank > oldModeRank || (newModeRank >= 2 && oldModeRank < 2) || (newModeRank >= 3 && oldModeRank < 3)) {
+    const kind: HelperRequestKind = newModeRank >= 3 ? 'takeover' : 'risk_decision'
+    const memberships = await getApprovedMemberships(householdId)
+    const prefs = await getPreferences(householdId)
+
+    for (const m of memberships) {
+      // Deduplicate: check if a request of this kind already exists for this membership
+      const existing = await getLatestRequest(caseId, m.id, kind)
+      if (existing && existing.state !== 'timed_out' && existing.state !== 'declined') {
+        continue // Skip if a non-terminal request already exists
+      }
+
+      // Create the request
+      const created = await createHelperRequest({
+        caseId,
+        membershipId: m.id,
+        kind,
+        snapshot: { effectiveScore: eff, mode: minMode },
+      })
+      if (!created) continue // lost a race with another writer: the request already exists
+
+      // Build and send notification
+      const content = buildHelperRequest(
+        observations,
+        minMode,
+        eff,
+        undefined, // noticeStatus
+        prefs,
+        undefined,
+        caseId
+      )
+      const pushNotif = formatPushNotification(content)
+      const smsBody = formatSms(content)
+
+      await contactHelper(caseId, m.id, { push: pushNotif, sms: smsBody }, created.id)
+    }
+  }
+}
 
 /**
  * Apply a single edit to a case's risk observations and re-score.
@@ -230,44 +289,9 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
       // Section 7.4 step 4: notify helpers when mode rises (0 → 20, or reaches M2/M3)
       // Create risk-decision or takeover requests, deduplicated per (caseId, modeRank)
       if (rose) {
-        const newModeRank = modeRank(risk.minMode)
-        const oldModeRank = modeRank(prevMode ?? 'ai_leads')
-        // Trigger on 0 → 20 (M1 → M2) or reaching M2/M3
-        if ((prevEff < 20 && eff >= 20) || (newModeRank >= 2 && oldModeRank < 2) || (newModeRank >= 3 && oldModeRank < 3)) {
-          const kind: HelperRequestKind = newModeRank >= 3 ? 'takeover' : 'risk_decision'
-          const memberships = await getApprovedMemberships(c.householdId)
-          const prefs = await getPreferences(c.householdId)
-          const observations = newStored.observations
-
-          for (const m of memberships) {
-            // Deduplicate: check if a request of this kind already exists for this membership
-            const existing = await getLatestRequest(caseId, m.id, kind)
-            if (existing && existing.state !== 'timed_out' && existing.state !== 'declined') {
-              continue // Skip if a non-terminal request already exists
-            }
-
-            // Create the request
-            const requestId = await createHelperRequest({
-              caseId,
-              membershipId: m.id,
-              kind,
-              snapshot: { effectiveScore: eff, mode: risk.minMode },
-            })
-
-            // Build and send notification
-            const content = buildHelperRequest(
-              observations,
-              risk.minMode,
-              eff,
-              undefined, // noticeStatus
-              prefs
-            )
-            const pushNotif = formatPushNotification(content)
-            const smsBody = formatSms(content)
-
-            await contactHelper(caseId, m.id, { push: pushNotif, sms: smsBody }, requestId)
-          }
-        }
+        // Best-effort: the score is already saved, so a failed notification must never fail the edit.
+        await notifyModeRise({ caseId, householdId: c.householdId, prevMode, prevEff, eff, minMode: risk.minMode, observations: newStored.observations })
+          .catch(e => reportError(e, { fn: 'notifyModeRise', caseId }))
       }
     }
 

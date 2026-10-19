@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { getLatestRequest, markAccepted, markDeclined } from '@/lib/doorstep/helperRequests'
+import { getLatestRequest, markAcked, markAccepted, markDeclined } from '@/lib/doorstep/helperRequests'
 import { writeAudit, audit } from '@/lib/doorstep/audit'
 import { authorize, fail, parse } from '@/lib/guard'
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   }
 
   const db = getDb()
-  const c = await db.case.findUnique({
+  const c = await db.case.findFirst({
     where: { id: caseId, householdId },
     select: { householdId: true, status: true },
   })
@@ -47,8 +47,9 @@ export async function POST(req: NextRequest) {
     return fail('Case not found', 404)
   }
 
-  if (c.status !== 'waiting') {
-    return fail('Case is not waiting', 400)
+  // 'no_response' cases can still be picked up: that is exactly when a late helper steps in.
+  if (c.status !== 'waiting' && c.status !== 'no_response') {
+    return fail('Case is closed', 400)
   }
 
   // Get the latest request for this membership
@@ -58,17 +59,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Mark as accepted or declined
+  // Answering a request implies the helper has seen it. markAcked is compare-and-set and a no-op if already acked.
+  await markAcked(request.id)
+
   let success = false
   if (accept) {
     success = await markAccepted(request.id)
-    if (success) {
-      await writeAudit(caseId, audit.contactAttempt('accept', membershipId, 'sent'))
-    }
+    if (success) await writeAudit(caseId, audit.helperResponse(membershipId, request.id, 'accepted'))
   } else {
     success = await markDeclined(request.id)
-    if (success) {
-      await writeAudit(caseId, audit.contactAttempt('decline', membershipId, 'sent'))
-    }
+    if (success) await writeAudit(caseId, audit.helperResponse(membershipId, request.id, 'declined'))
   }
 
   if (!success) {

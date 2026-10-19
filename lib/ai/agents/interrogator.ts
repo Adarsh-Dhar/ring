@@ -100,14 +100,24 @@ async function gateFor(householdId: string, caseId: string, tool: string, o: { d
 /** Gate, and when the AI is over budget start the risk-decision timer (spec 5.3) so a helper is asked. */
 async function gateOrAsk(householdId: string, caseId: string, tool: string, o: { decision?: Decision; sEff?: number } = {}) {
   const g = await gateFor(householdId, caseId, tool, o)
+  // Section 7.3: a helper's single-use approval lets this one action through. A prohibited tool is never unlocked.
+  if (g.decision === 'ask_helper') {
+    const { consumeApprovedForTool } = await import('@/lib/doorstep/pendingActions')
+    const spent = await consumeApprovedForTool(caseId, tool).catch(() => null)
+    if (spent) return { ...g, decision: 'allow' as const, reason: 'helper_approved' }
+  }
   if (g.decision === 'ask_helper' && g.reason === 'over_budget') {
     await requestHelperDecision(caseId).catch(e => console.error('[AI interrogator] requestHelperDecision', e))
   }
   // Section 7: Create pending action when helper approval is needed
   if (g.decision === 'ask_helper') {
-    const { createPendingAction } = await import('@/lib/doorstep/pendingActions')
-    // Use the tool name directly as the action text for clarity
-    await createPendingAction(caseId, tool, tool, g.reason)
+    // Best-effort: failing to record the request must not change the gate's answer or stop the AI turn.
+    try {
+      const { createPendingAction } = await import('@/lib/doorstep/pendingActions')
+      await createPendingAction(caseId, tool, tool, g.reason)
+    } catch (e) {
+      console.error('[AI interrogator] createPendingAction', e)
+    }
   }
   return g
 }

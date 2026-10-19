@@ -15,6 +15,11 @@ const RESIDENT_DECISION: Partial<Record<GatedTool, Decision>> = {
   neutral_verification_question: 'ask_purpose',
 }
 
+/** The resident delegation a tool exercises, or null when no resident setting governs it (used to check helperMayApprove). */
+export function decisionForTool(tool: string): Decision | null {
+  return RESIDENT_DECISION[tool as GatedTool] ?? null
+}
+
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : 0)))
 
 /** `holdOnly`: an approval is pending (spec 5.3), so the AI may use only its holding script and other zero-cost tools.
@@ -25,7 +30,7 @@ export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts
   const budget = 100 - clamp(sEff)
   if ((PROHIBITED_TOOLS as readonly string[]).includes(tool)) return { decision: 'deny', reason: 'prohibited', cost: null, budget }
   if ((HELPER_ONLY_TOOLS as readonly string[]).includes(tool)) return { decision: 'ask_helper', reason: 'helper_only', cost: null, budget }
-  if (!(tool in AUTHORITY_COST)) return { decision: 'deny', reason: 'unknown_tool', cost, null, budget }
+  if (!(tool in AUTHORITY_COST)) return { decision: 'deny', reason: 'unknown_tool', cost: null, budget }
   const cost = AUTHORITY_COST[tool as GatedTool]
   // Emergency-only tools: allowed only at S_eff 100
   if ((EMERGENCY_ONLY_TOOLS as readonly string[]).includes(tool)) {

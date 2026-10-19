@@ -19,6 +19,7 @@ import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
 import { contactHelper } from '../doorstep/contactLog'
 import { createHelperRequest, markAcked, type HelperRequestKind } from '../doorstep/helperRequests'
+import { chainFrom } from '../doorstep/chainOrder'
 import { writeAudit, audit } from '../doorstep/audit'
 import { buildHelperRequest, formatPushNotification, formatSms } from '../doorstep/requestContent'
 
@@ -226,20 +227,7 @@ async function loadStateFromDB(householdId: string): Promise<void> {
         }
       }
       // Section 7: Build chain sorted by tier (primary, backup, third) then by position
-      // Need to read tier from database since it's not in the in-memory membership structure
-      const db = getDb()
-      const membershipsWithTier = await db.membership.findMany({
-        where: { householdId, consent: 'approved' },
-        select: { id: true, tier: true, position: true },
-      })
-      const tierOrder = { primary: 0, backup: 1, third: 2 }
-      const sortedMemberships = membershipsWithTier.sort((a, b) => {
-        const tierA = tierOrder[(a.tier as any) || 'primary']
-        const tierB = tierOrder[(b.tier as any) || 'primary']
-        if (tierA !== tierB) return tierA - tierB
-        return a.position - b.position
-      })
-      c.chain = c.chain.length ? c.chain : sortedMemberships.map(m => m.id)
+      if (!c.chain.length) c.chain = chainFrom(await getApprovedMemberships(householdId))
     }
 
     const dbExpected  = await getExpectedVisitsForHousehold(householdId)
@@ -794,19 +782,7 @@ async function openCase(
   }
 
   // Section 7: Sort chain by tier (primary, backup, third) then by position
-  const db = getDb()
-  const membershipsWithTier = await db.membership.findMany({
-    where: { householdId: state.householdId, consent: 'approved' },
-    select: { id: true, tier: true, position: true },
-  })
-  const tierOrder = { primary: 0, backup: 1, third: 2 }
-  const sortedMemberships = membershipsWithTier.sort((a, b) => {
-    const tierA = tierOrder[(a.tier as any) || 'primary']
-    const tierB = tierOrder[(b.tier as any) || 'primary']
-    if (tierA !== tierB) return tierA - tierB
-    return a.position - b.position
-  })
-  c.chain = sortedMemberships.map(m => m.id)
+  c.chain = chainFrom(await getApprovedMemberships(state.householdId))
 
   // Minimum-notice policy. Separate from risk: it can require approval, it never adds points.
   const planned = m && !m.recurring ? state.expected.find(x => x.id === m.id) : undefined
@@ -1494,15 +1470,10 @@ function escalationDeps(householdId: string, residentName: string, timeoutSec: n
       }
     },
     onTimeout: async (caseId, membershipId) => {
-      // Section 7: Mark helper request as timed out for all request kinds
-      const { getLatestRequest, markTimedOut, type HelperRequestKind } = await import('@/lib/doorstep/helperRequests')
-      const kinds: HelperRequestKind[] = ['approval', 'risk_decision', 'takeover', 'emergency']
-      for (const kind of kinds) {
-        const request = await getLatestRequest(caseId, membershipId, kind)
-        if (request) {
-          await markTimedOut(request.id)
-        }
-      }
+      // Section 7: the helper missed their answer window, so expire their open requests for THIS case.
+      // 'emergency' requests are never expired by this timer (see TIMER_EXPIRABLE_KINDS).
+      const { expireHelperRequests } = await import('@/lib/doorstep/helperRequests')
+      await expireHelperRequests(caseId, membershipId)
     },
   }
 }
@@ -1547,21 +1518,24 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
           const { getPreferences } = await import('@/lib/db/preferences')
 
           // Send to the next helper in chain (circular, not everyone at once)
-          const nextIndex = c.helperIndex % chain.length
+          // Round 1 asks the primary again, round 2 the backup, and so on around the chain.
+          if (chain.length === 0) continue
+          const nextIndex = (retryInterval - 1) % chain.length
           const nextMembershipId = chain[nextIndex]
-          const memberships = await getApprovedMemberships(c.householdId)
+          const memberships = await getApprovedMemberships(row.householdId)
           const membership = memberships.find(m => m.id === nextMembershipId)
 
           if (membership) {
             // Check if we already sent a retry request for this interval to THIS membership
             const existing = await getLatestRequest(c.id, nextMembershipId, 'approval')
             if (!existing || existing.round !== retryInterval) {
-              const requestId = await createHelperRequest({
+              const created = await createHelperRequest({
                 caseId: c.id,
                 membershipId: membership.id,
                 kind: 'approval',
                 round: retryInterval,
               })
+              if (!created) continue // a live approval request already exists for this helper
 
               // Build request with real case data
               const riskScore = (row as any).riskScore as number | undefined
@@ -1569,18 +1543,20 @@ export async function sweepOverdueCases(graceMs = 3_000): Promise<number> {
               const riskObservations = (row as any).riskObservations as any
               const observations = (riskObservations?.observations as any[]) || []
 
-              const prefs = await getPreferences(c.householdId)
+              const prefs = await getPreferences(row.householdId)
               const content = buildHelperRequest(
                 observations,
                 (controlMode as any) || 'ai_leads',
                 riskScore || 0,
                 noticeStatus,
-                prefs
+                prefs,
+                undefined,
+                c.id
               )
               const pushNotif = formatPushNotification(content)
               const smsBody = formatSms(content)
 
-              await contactHelper(c.id, membership.id, { push: pushNotif, sms: smsBody }, requestId.id)
+              await contactHelper(c.id, membership.id, { push: pushNotif, sms: smsBody }, created.id)
             }
           }
         }

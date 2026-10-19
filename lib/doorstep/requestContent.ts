@@ -43,7 +43,8 @@ export function buildHelperRequest(
   effectiveScore: number,
   noticeStatus: NoticeStatus | undefined,
   prefs: Preferences,
-  actionNeeded?: { tool: string; text: string; reason?: string }
+  actionNeeded?: { tool: string; text: string; reason?: string },
+  caseId?: string
 ): HelperRequestContent {
   // Top 5 confirmed observations by points
   const confirmed = observations.filter(o => o.state === 'confirmed')
@@ -58,15 +59,16 @@ export function buildHelperRequest(
     }))
 
   // Delegation status
-  const delegation = prefs.delegations?.length > 0
-    ? `Delegated to: ${prefs.delegations.map(d => d.to).join(', ')}`
-    : 'No active delegations'
+  const toAi = (Object.keys(prefs.delegation) as Array<keyof Preferences['delegation']>).filter((d) => prefs.delegation[d] === 'ai')
+  const delegation = toAi.length > 0
+    ? `AI handles: ${toAi.map((d) => d.replace(/_/g, ' ')).join(', ')}`
+    : 'No decisions delegated to the AI'
 
   // AI recommendation
-  const recommendation = getRecommendation(observations, mode, effectiveScore)
+  const recommendation = getRecommendation(observations, mode, effectiveScore, prefs)
 
   // Case URL
-  const caseUrl = `/helper?case=${actionNeeded?.caseId || ''}`
+  const caseUrl = `/helper?case=${caseId ?? ''}`
 
   return {
     effectiveScore,

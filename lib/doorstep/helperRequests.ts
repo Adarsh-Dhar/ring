@@ -35,23 +35,41 @@ export interface CreateHelperRequest {
   snapshot?: any
 }
 
+/** States in which a request is still live (the helper has not yet answered or run out of time). */
+export const OPEN_REQUEST_STATES: HelperRequestState[] = ['sent', 'delivered', 'acked']
+
 /**
  * Create a new helper request in the 'sent' state.
+ *
+ * Deduplicates: returns null when this helper already has a live (sent/delivered/acked) request of the
+ * same kind for the same case. A finished request (accepted, declined, timed_out) does not block a new one,
+ * so retries after a timeout still work. A partial unique index in the database enforces the same rule
+ * under concurrency; the P2002 it raises is treated as "already exists".
  */
-export async function createHelperRequest(input: CreateHelperRequest): Promise<HelperRequest> {
+export async function createHelperRequest(input: CreateHelperRequest): Promise<HelperRequest | null> {
   const db = getDb()
-  const request = await db.helperRequest.create({
-    data: {
-      caseId: input.caseId,
-      membershipId: input.membershipId,
-      kind: input.kind,
-      round: input.round ?? 1,
-      state: 'sent',
-      channels: input.channels ?? {},
-      snapshot: input.snapshot,
-    },
+  const open = await db.helperRequest.findFirst({
+    where: { caseId: input.caseId, membershipId: input.membershipId, kind: input.kind, state: { in: OPEN_REQUEST_STATES } },
+    select: { id: true },
   })
-  return request as HelperRequest
+  if (open) return null
+  try {
+    const request = await db.helperRequest.create({
+      data: {
+        caseId: input.caseId,
+        membershipId: input.membershipId,
+        kind: input.kind,
+        round: input.round ?? 1,
+        state: 'sent',
+        channels: input.channels ?? {},
+        snapshot: input.snapshot,
+      },
+    })
+    return request as HelperRequest
+  } catch (e: any) {
+    if (e?.code === 'P2002') return null
+    throw e
+  }
 }
 
 /**
@@ -151,4 +169,21 @@ export async function updateChannels(requestId: string, channels: Record<string,
     where: { id: requestId },
     data: { channels },
   })
+}
+
+/** Request kinds an ordinary acknowledgement/decision timer may expire. 'emergency' is excluded on purpose:
+ *  an expired approval must never close a live emergency request. */
+export const TIMER_EXPIRABLE_KINDS: HelperRequestKind[] = ['approval', 'risk_decision', 'takeover']
+
+/**
+ * The helper missed their answer window for this case: expire their open requests of the timer-expirable kinds.
+ * Compare-and-set per request, so requests that are already finished are left alone. Returns how many expired.
+ */
+export async function expireHelperRequests(caseId: string, membershipId: string): Promise<number> {
+  let n = 0
+  for (const kind of TIMER_EXPIRABLE_KINDS) {
+    const request = await getLatestRequest(caseId, membershipId, kind)
+    if (request && (await markTimedOut(request.id))) n++
+  }
+  return n
 }

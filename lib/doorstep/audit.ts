@@ -93,6 +93,9 @@ export const audit = {
   ): AuditEvent =>
     createAuditEvent('system', 'contact_attempt', { channel, result, reason }, membershipId),
 
+  helperResponse: (actorId: string, requestId: string, response: 'accepted' | 'declined'): AuditEvent =>
+    createAuditEvent('helper', `request_${response}`, { response }, requestId, actorId),
+
   aiAction: (tool: string, decision: 'executed' | 'blocked'): AuditEvent =>
     createAuditEvent('ai', 'ai_action', { tool, decision }),
 
