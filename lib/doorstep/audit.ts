@@ -22,21 +22,28 @@ export interface AuditEvent {
  */
 export async function writeAudit(caseId: string, event: AuditEvent): Promise<void> {
   const db = getDb()
-  if (!db?.case?.findUnique || !db?.case?.update) return
-  const c = await db.case.findUnique({ where: { id: caseId }, select: { log: true } })
-  if (!c) return
-
-  const log = (c.log as any) || []
-  log.push({
+  const entry = {
     t: new Date(event.at).getTime(),
     msg: `[${event.actor.toUpperCase()}] ${event.kind}${event.ref ? `: ${event.ref}` : ''}`,
     audit: event,
-  })
+  }
+  // Atomic append: one UPDATE, so two concurrent writers can never overwrite each other's entry.
+  if (typeof (db as any)?.$executeRaw === 'function') {
+    await (db as any).$executeRaw`UPDATE "Case" SET "log" = COALESCE("log", '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb WHERE "id" = ${caseId}`
+    return
+  }
+  // Fallback for test doubles without raw SQL.
+  if (!db?.case?.findUnique || !db?.case?.update) return
+  const c = await db.case.findUnique({ where: { id: caseId }, select: { log: true } })
+  if (!c) return
+  await db.case.update({ where: { id: caseId }, data: { log: [...((c.log as any) || []), entry] } })
+}
 
-  await db.case.update({
-    where: { id: caseId },
-    data: { log },
-  })
+/** Structured audit rows for the helper's audit panel (actor, action, time, reference, outcome). */
+export function auditRows(log: unknown): { at: string; actor: string; kind: string; ref?: string; detail?: any }[] {
+  return (Array.isArray(log) ? log : [])
+    .filter((e: any) => e && e.audit)
+    .map((e: any) => ({ at: e.audit.at, actor: e.audit.actor, kind: e.audit.kind, ref: e.audit.ref, detail: e.audit.detail }))
 }
 
 /**

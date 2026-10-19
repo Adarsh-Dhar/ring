@@ -354,6 +354,13 @@ async function loadStateFromDB(householdId: string): Promise<void> {
 // Reusable function to reload cases from PostgreSQL and sync with in-memory state.
 // This ensures that events created by webhooks or other server instances are visible.
 
+/** Spec 5.3: another module shortened the database deadline, so move the cached copy earlier too (never later). */
+export function syncCaseDeadline(householdId: string, caseId: string, deadlineMs: number): void {
+  const state = householdStates.get(householdId)
+  const c = state?.cases.find((x) => x.id === caseId)
+  if (c && deadlineMs < c.deadlineAt) c.deadlineAt = deadlineMs
+}
+
 async function refreshCasesFromDB(
   householdId: string,
   state: HouseholdState

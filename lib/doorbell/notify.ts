@@ -48,46 +48,59 @@ const smsLastSent = new Map<string, number>()
 const SMS_RATE_LIMIT_MS = 60_000 // 1 minute
 
 /** Sends to every subscription. Returns endpoints that are gone (404/410) so the caller can delete them. */
-export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise<string[]> {
-  if (!subs.length) return []
+export interface PushOutcome { dead: string[]; sent: number; failed: number }
+
+/** Like pushToSubs but reports how many sends the push service ACCEPTED. Accepted is not the same as seen on a device. */
+export async function pushToSubsDetailed(subs: PushSub[], payload: PushPayload): Promise<PushOutcome> {
+  if (!subs.length) return { dead: [], sent: 0, failed: 0 }
   try {
-    if (!init()) return []
+    if (!init()) return { dead: [], sent: 0, failed: subs.length }
   } catch (e) {
     console.error('[PUSH] not configured', (e as Error).message)
     subs.forEach(() => recordFailure('push'))
-    return []
+    return { dead: [], sent: 0, failed: subs.length }
   }
   const dead: string[] = []
+  let sent = 0
+  let failed = 0
   await Promise.all(
     subs.map(async (s) => {
       try {
         await webpush.sendNotification(s, JSON.stringify(payload), { TTL: 60, urgency: 'high' })
+        sent++
       } catch (e: any) {
+        failed++
         if (e?.statusCode === 404 || e?.statusCode === 410) dead.push(s.endpoint)
         else { console.error('[PUSH] failed', e?.statusCode ?? e); recordFailure('push') }
       }
     })
   )
-  return dead
+  return { dead, sent, failed }
+}
+
+/** Sends to every subscription. Returns endpoints that are gone (404/410) so the caller can delete them. */
+export async function pushToSubs(subs: PushSub[], payload: PushPayload): Promise<string[]> {
+  return (await pushToSubsDetailed(subs, payload)).dead
 }
 
 /**
  * Send push notifications to a specific membership.
  * Automatically cleans up dead subscriptions.
  */
-export async function pushToMembership(membershipId: string, payload: PushPayload): Promise<void> {
+export async function pushToMembership(membershipId: string, payload: PushPayload): Promise<{ sent: number; failed: number }> {
   const subs = await getPushSubscriptionsForMembership(membershipId)
   const pushSubs: PushSub[] = subs.map((s) => ({
     endpoint: s.endpoint,
     keys: s.keys as { p256dh: string; auth: string },
   }))
 
-  const dead = await pushToSubs(pushSubs, payload)
+  const out = await pushToSubsDetailed(pushSubs, payload)
 
   // Clean up dead subscriptions
-  for (const endpoint of dead) {
+  for (const endpoint of out.dead) {
     await deletePushSubscriptionByEndpoint(membershipId, endpoint)
   }
+  return { sent: out.sent, failed: out.failed }
 }
 
 export async function sendSms(to: string, body: string, opts: { urgent?: boolean } = {}): Promise<boolean> {

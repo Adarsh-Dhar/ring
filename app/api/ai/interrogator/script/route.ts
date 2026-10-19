@@ -9,7 +9,7 @@ export const runtime = 'nodejs'
 import { interrogatorScript } from '@/lib/ai/agents/interrogator'
 import { aiFlags } from '@/lib/ai/caseAi'
 import { isUnplannedVisit } from '@/lib/ai/interrogation/gate'
-import { isHoldingCase } from '@/lib/doorstep/noticePolicy'
+import { isHoldingCaseFor } from '@/lib/doorstep/holdState'
 import { getDb } from '@/lib/db/client'
 
 const Query = z.object({ caseId: z.string() })
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
     if (c && !isUnplannedVisit(c)) {
       // Spec 5.3: a short-notice visit waiting for approval gets the holding line only. The gate already
       // limits `allowed` to zero-cost lines while the approval is pending, so greet and questions stay false.
-      if (isHoldingCase(c)) {
+      if (await isHoldingCaseFor(householdId, c)) {
         return NextResponse.json({ enabled: true, holdingOnly: true, ...(await interrogatorScript(householdId, f.residentName, caseId)) })
       }
       return NextResponse.json({ enabled: false })

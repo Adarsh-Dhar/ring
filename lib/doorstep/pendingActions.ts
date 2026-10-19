@@ -15,6 +15,10 @@ export interface PendingAction {
   text: string
   reason?: string
   state: PendingActionState
+  /** Who must approve: a helper (default) or the resident (short-notice resident_approval). */
+  approver?: 'helper' | 'resident'
+  /** 'ai_action' = an AI tool awaiting a helper; 'visit_approval' = a short-notice visit awaiting approval. */
+  kind?: 'ai_action' | 'visit_approval'
   decidedBy?: string // userId
   decidedAt?: string // ISO timestamp
   createdAt: string // ISO timestamp
@@ -48,7 +52,8 @@ export async function createPendingAction(
   caseId: string,
   tool: string,
   text: string,
-  reason?: string
+  reason?: string,
+  opts: { approver?: 'helper' | 'resident'; kind?: 'ai_action' | 'visit_approval' } = {}
 ): Promise<PendingAction | null> {
   const created = await withActions(caseId, (actions) => {
     if (actions.some((a) => a.tool === tool && (a.state === 'pending' || a.state === 'approved'))) return null
@@ -57,6 +62,8 @@ export async function createPendingAction(
       tool,
       text,
       reason,
+      approver: opts.approver ?? 'helper',
+      kind: opts.kind ?? 'ai_action',
       state: 'pending',
       createdAt: new Date().toISOString(),
     }
@@ -128,4 +135,15 @@ export async function getPendingActions(caseId: string): Promise<PendingAction[]
   const c = await db.case.findUnique({ where: { id: caseId }, select: { pendingActions: true } })
   if (!c) return []
   return (c.pendingActions as any) || []
+}
+
+/** Give a reserved approval back after the action failed to run, so a failed playback does not burn the approval. */
+export async function restoreApproval(caseId: string, actionId: string): Promise<boolean> {
+  const ok = await withActions(caseId, (actions) => {
+    const action = actions.find((a) => a.id === actionId)
+    if (!action || action.state !== 'consumed') return false
+    action.state = 'approved'
+    return true
+  })
+  return ok === true
 }

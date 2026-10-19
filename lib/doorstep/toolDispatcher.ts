@@ -46,17 +46,29 @@ export const PRECONDITION_LINE: Record<string, LineId> = {
   not_asked_to_leave_yet: 'asked_to_leave',
 }
 
-interface GateOpts { decision?: Decision; sEff?: number }
+interface GateOpts { decision?: Decision; sEff?: number; text?: string }
 
 /** Spec 5.4: the backend, not the prompt, decides whether the AI may take an action alone.
  *  `sEff` lets a caller pass a fresher live score than the one stored; the higher of the two is used.
  *  Section 7.2: holdOnly stays true after status flips to no_response (until a helper accepts).
  *  Section 7.2: safetyOnly when helper-led with no helper answering. */
 export async function gateFor(householdId: string, caseId: string, tool: string, o: GateOpts = {}): Promise<GateResult> {
-  const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true } })
+  const row = await getDb().case.findUnique({ where: { id: caseId }, select: { riskScore: true, controlMode: true, noticeStatus: true, status: true, conversationOwner: true, pendingActions: true } })
+  // Spec 7: while a helper owns the conversation the AI is silent. Enforced here, at the central gate, not only at the start of one agent.
+  if (row?.conversationOwner) return { decision: 'deny', reason: 'helper_owns_conversation', cost: null, budget: 0 }
   const stored = Math.max(row?.riskScore ?? 0, MODE_FLOOR_SCORE[(row?.controlMode as keyof typeof MODE_FLOOR_SCORE) ?? 'ai_leads'] ?? 0)
   const sEff = Math.max(stored, o.sEff ?? 0)
-  const isShortNotice = row?.noticeStatus === 'short_notice'
+  // Spec 7.2: a short-notice label alone is not proof that anyone must approve. Hold only when the household policy
+  // requires approval (not `ai_handles`); the hold lifts once the visit is answered/approved (status leaves waiting/no_response).
+  let policyNeedsApproval = true
+  if (row?.noticeStatus === 'short_notice') {
+    try {
+      const hh = await getDb().household.findUnique({ where: { id: householdId }, select: { shortNoticePolicy: true } })
+      policyNeedsApproval = (hh?.shortNoticePolicy ?? 'helper_approval') !== 'ai_handles'
+    } catch { /* unknown policy: stay safe and hold */ }
+  }
+  const visitApproved = (Array.isArray(row?.pendingActions) ? (row!.pendingActions as any[]) : []).some((a) => a?.kind === 'visit_approval' && (a.state === 'approved' || a.state === 'consumed'))
+  const isShortNotice = row?.noticeStatus === 'short_notice' && policyNeedsApproval && !visitApproved
   const holdOnly = isShortNotice && (row?.status === 'waiting' || row?.status === 'no_response')
   const minMode = (row?.controlMode as any) || 'ai_leads'
   const safetyOnly = modeRank(minMode) >= modeRank('helper_only') && row?.status === 'no_response'
@@ -64,13 +76,14 @@ export async function gateFor(householdId: string, caseId: string, tool: string,
 }
 
 /** Gate, and when the AI is over budget start the risk-decision timer (spec 5.3) so a helper is asked. */
-export async function gateOrAsk(householdId: string, caseId: string, tool: string, o: GateOpts = {}): Promise<GateResult> {
+export async function gateOrAsk(householdId: string, caseId: string, tool: string, o: GateOpts = {}): Promise<GateResult & { approvalId?: string }> {
   const g = await gateFor(householdId, caseId, tool, o)
   // Section 7.3: a helper's single-use approval lets this one action through. A prohibited tool is never unlocked.
+  // The approval is RESERVED here; dispatchAiAction hands it back if the action then fails to run.
   if (g.decision === 'ask_helper') {
     const { consumeApprovedForTool } = await import('./pendingActions')
     const spent = await consumeApprovedForTool(caseId, tool).catch(() => null)
-    if (spent) return { ...g, decision: 'allow' as const, reason: 'helper_approved' }
+    if (spent) return { ...g, decision: 'allow' as const, reason: 'helper_approved', approvalId: spent.id }
   }
   if (g.decision === 'ask_helper' && g.reason === 'over_budget') {
     await requestHelperDecision(caseId).catch(e => console.error('[dispatcher] requestHelperDecision', e))
@@ -79,7 +92,14 @@ export async function gateOrAsk(householdId: string, caseId: string, tool: strin
     // Best-effort: failing to record the request must not change the gate's answer or stop the AI turn.
     try {
       const { createPendingAction } = await import('./pendingActions')
-      await createPendingAction(caseId, tool, tool, g.reason)
+      // Store the exact words proposed (not the tool id) so the approver reviews what would actually be said.
+      const created = await createPendingAction(caseId, tool, o.text ?? tool, g.reason)
+      // A NEW pending action must reach the right helper; a duplicate (null) already did. Spec 7.2.
+      if (created) {
+        const { notifyPendingAction } = await import('./approvalNotify')
+        await notifyPendingAction({ householdId, caseId, action: created })
+          .catch(e => console.error('[dispatcher] notifyPendingAction', e))
+      }
     } catch (e) {
       console.error('[dispatcher] createPendingAction', e)
     }
@@ -127,8 +147,14 @@ export async function dispatchAiAction(i: DispatchInput): Promise<DispatchResult
     return r
   }
 
-  const g = await gateOrAsk(i.householdId, i.caseId, tool, { sEff: i.sEff, decision: i.decision })
+  const g = await gateOrAsk(i.householdId, i.caseId, tool, { sEff: i.sEff, decision: i.decision, text: i.text ?? (line ? interrogatorLines(i.residentName)[line] : undefined) })
   const line = i.line ?? null
+  // Hand a reserved approval back when the action does not go out, so a failure never burns it.
+  const giveBack = async () => {
+    if (!g.approvalId) return
+    try { const { restoreApproval } = await import('./pendingActions'); await restoreApproval(i.caseId, g.approvalId) }
+    catch (e) { console.error('[dispatcher] restoreApproval', e) }
+  }
   if (g.decision !== 'allow') {
     await audit(i.caseId, { tool, line, decision: 'blocked', gate: g.decision, reason: g.reason, cost: g.cost, budget: g.budget })
     return { allowed: false, decision: g.decision, reason: g.reason, tool, line, text: null }
@@ -136,11 +162,13 @@ export async function dispatchAiAction(i: DispatchInput): Promise<DispatchResult
 
   const text = i.text ?? (line ? interrogatorLines(i.residentName)[line] : null)
   if (!text) {
+    await giveBack()
     await audit(i.caseId, { tool, line, decision: 'blocked', reason: 'no_text' })
     return { allowed: false, decision: 'deny', reason: 'no_text', tool, line, text: null }
   }
 
   if (i.play && !(await i.play(text))) {
+    await giveBack()
     await audit(i.caseId, { tool, line, decision: 'blocked', reason: 'playback_failed', cost: g.cost, budget: g.budget })
     return { allowed: false, decision: 'allow', reason: 'playback_failed', tool, line, text: null }
   }

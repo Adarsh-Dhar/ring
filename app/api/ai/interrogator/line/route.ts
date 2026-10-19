@@ -9,7 +9,7 @@ export const runtime = 'nodejs'
 import { getDb } from '@/lib/db/client'
 import { aiFlags } from '@/lib/ai/caseAi'
 import { isUnplannedVisit } from '@/lib/ai/interrogation/gate'
-import { isHoldingCase } from '@/lib/doorstep/noticePolicy'
+import { isHoldingCaseFor } from '@/lib/doorstep/holdState'
 import { dispatchAiAction } from '@/lib/doorstep/toolDispatcher'
 import { cachedLineAudio } from '@/lib/ai/tts'
 
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
   })
   if (!c) return fail('Case not found', 404)
   // Only unplanned visits are interviewed. A short-notice case waiting for approval may still get its (zero-cost) holding line.
-  if (!isUnplannedVisit(c) && !isHoldingCase(c)) return fail('The AI does not speak on planned visits', 409)
+  if (!isUnplannedVisit(c) && !(await isHoldingCaseFor(householdId, c))) return fail('The AI does not speak on planned visits', 409)
 
   const d = await dispatchAiAction({ householdId, caseId: c.id, line: p.data.line, residentName: f.residentName })
   const audio = d.allowed && d.text ? await cachedLineAudio(householdId, p.data.line, d.text).catch(() => null) : null
