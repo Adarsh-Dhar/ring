@@ -63,11 +63,13 @@ const VERDICT_BADGE: Record<string, string> = {
 
 const LABEL_BY_CAT: Record<string, string> = {
   urgency_pressure: 'Pressure to act quickly', payment_request: 'Money or card details',
+  credential_request: 'Asked for PIN, OTP, password or access code',
   official_impersonation: 'Claims to be an official', entry_request: 'Wants to come inside',
   home_probing: 'Asked who else is at home', unsolicited_work: 'Selling or offering work nobody asked for',
   story_mismatch: 'Answers do not add up', evasive_answers: 'Avoided answering',
   manipulation_attempt: 'Tried to steer the assistant', known_scam_wording: 'Matches known tricks',
   vague_purpose: 'Reason stayed vague', unverifiable_claims: 'Could not back up claims', other: 'Other',
+  immediate_threat: 'Made an immediate threat',
 }
 const RISK_BOX: Record<RiskLevel, string> = {
   none: 'bg-emerald-900/40 text-emerald-100',
@@ -81,6 +83,8 @@ const RISK_HEADLINE: Record<RiskLevel, string> = {
   medium: '⚠️ Check this visitor',
   high: '🚨 High risk: classic doorstep-scam signs',
 }
+
+const HEADLINE_INSUFFICIENT = 'ℹ️ Insufficient evidence for a risk score'
 
 
 const PILL: Record<RiskLevel, string> = {
@@ -259,7 +263,11 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
       {(hasRisk || ai?.interrogationState === 'done') && (
         <div className={`rounded-lg p-3 ${RISK_BOX[riskLevel]}`}>
           <div className="flex items-center justify-between gap-2">
-            <p className="font-semibold">{RISK_HEADLINE[riskLevel]}</p>
+            <p className="font-semibold">
+              {riskLevel === 'none' && risk?.score === 0 && Array.isArray(risk?.observations) && risk.observations.length > 0
+                ? HEADLINE_INSUFFICIENT
+                : RISK_HEADLINE[riskLevel]}
+            </p>
             {risk?.source === 'live' && <span className="text-xs opacity-80">still talking…</span>}
           </div>
           {/* P17: Show S, S_eff, and mode label */}

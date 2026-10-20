@@ -6,11 +6,13 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Claims urgency',            re: /\b(urgent(ly)?|immediately|right now|emergency|last chance|final notice)\b/i },
   { flag: 'Mentions bank or payment',  re: /\b(bank|card|pin number|cash|payment|transfer|refund|invoice)\b/i },
   { flag: 'Claims to be officials',    re: /\b(council|police|inspector|inspection|government|tax office|hmrc|irs|social services)\b/i },
-  { flag: 'Wants to enter or check inside', re: /\b(check (the )?(meter|boiler|pipes|roof|wiring)|come inside|let me in|look around|survey)\b/i },
+  { flag: 'Wants to enter or check inside', re: /\b(check (the )?(meter|boiler|pipes|roof|wiring)|come inside|let me in|lemme in|look around|survey)\b/i },
   { flag: 'Asks who is home',          re: /\b(anyone (home|in)|who('s| is) (home|in)|alone|are you on your own)\b/i },
   { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote|sample)|sell(ing|er|s)?|sales ?(man|woman|person|rep|pitch)|salesm[ae]n|door[- ]to[- ]door|discount|brochure|leaflet|subscription)\b/i },
   { flag: 'Refuses to leave',          re: /\b(not leaving|i('m| am) staying|i won'?t leave|let me talk to them|get (the )?(owner|resident)|i know (them|him|her))\b/i },
   { flag: 'Hides from helper',         re: /\b(tell (them|him|her) (i am )?(not )?(here|gone|busy|sleeping)|(don'?t|do not) (call|tell|answer)|(just|only) me|(go away|leave) (me|us) alone)\b/i },
+  { flag: 'Credential request',        re: /\b(pin|otp|password|access code|verification code|security code|account number)\b/i },
+  { flag: 'Immediate threat',          re: /\b(i('ll| will) (hurt|kill|break|smash|beat)|you('re| are) dead|shut (your )?mouth|or (i|you)('ll| will) (make you|pay for this)|watch (your )?back)\b/i },
 ]
 
 export function riskFlagsFor(transcript: string): string[] {
@@ -19,10 +21,15 @@ export function riskFlagsFor(transcript: string): string[] {
   return [...flags]
 }
 
-/** Same rules, but keeps the exact words that matched so the score can be checked against the transcript. */
+/** Same rules, but keeps the exact words that matched so the score can be checked against the transcript. Captures all occurrences, not just the first. */
 export function riskMatchesFor(transcript: string): RuleMatch[] {
   const out: RuleMatch[] = []
-  for (const r of RULES) { const m = transcript.match(r.re); if (m) out.push({ flag: r.flag, quote: m[0] }) }
+  for (const r of RULES) {
+    const matches = transcript.matchAll(r.re)
+    for (const m of matches) {
+      out.push({ flag: r.flag, quote: m[0] })
+    }
+  }
   return out
 }
 

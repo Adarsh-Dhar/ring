@@ -130,13 +130,13 @@ export function requiredSlots(s: PlanState, answered: number): Slot[] {
 }
 
 /**
- * State-based stall detection: interview is stalled if the same slot has been asked 3+ times
+ * State-based stall detection: interview is stalled if a core slot has been asked 5+ times
  * and the visitor keeps giving vague or refused answers.
  */
 export function isStalled(s: PlanState, answered: number): boolean {
   if (answered < 5) return false  // Not enough data to detect stall
   for (const slot of PRESS_FIRST) {
-    if (s.asks[slot] >= 3 && (s.status[slot] === 'vague' || s.status[slot] === 'refused')) {
+    if (s.asks[slot] >= 5 && (s.status[slot] === 'vague' || s.status[slot] === 'refused')) {
       return true
     }
   }
@@ -150,16 +150,33 @@ export function isSatisfied(s: PlanState, answered: number): boolean {
 
 /**
  * What to ask next, or null when nothing is open.
- * Core slots (reason, organisation, proof) are pressed until specific. Otherwise fewest-asks-first.
+ * Core slots (reason, organisation, proof) are pressed until specific, but skip stalled slots
+ * (asked 3+ times with vague/refused) to avoid repetitive questioning. Otherwise fewest-asks-first.
  * Pure and deterministic: the model cannot end the interview early.
  * WP4: Removed max parameter - no arbitrary total-question cap.
  */
 export function nextFocus(s: PlanState, answered: number): Slot | null {
   const open = requiredSlots(s, answered).filter(k => s.status[k] !== 'specific')
   if (!open.length) return null
-  const press = PRESS_FIRST.find(k => open.includes(k) && s.asks[k] > 0)
+
+  // Skip PRESS_FIRST slots that are stalled (asked 3+ times with vague/refused)
+  const stalled = new Set<Slot>()
+  for (const slot of PRESS_FIRST) {
+    if (s.asks[slot] >= 3 && (s.status[slot] === 'vague' || s.status[slot] === 'refused')) {
+      stalled.add(slot)
+    }
+  }
+
+  // First try a non-stalled PRESS_FIRST slot that has been asked
+  const press = PRESS_FIRST.find(k => open.includes(k) && s.asks[k] > 0 && !stalled.has(k))
   if (press) return press
-  return open.sort((a, b) => s.asks[a] - s.asks[b] || ORDER.indexOf(a) - ORDER.indexOf(b))[0]
+
+  // Then try any non-stalled PRESS_FIRST slot (even if not asked yet)
+  const anyPress = PRESS_FIRST.find(k => open.includes(k) && !stalled.has(k))
+  if (anyPress) return anyPress
+
+  // Finally, fall back to fewest-asks-first among remaining open slots
+  return open.filter(k => !stalled.has(k)).sort((a, b) => s.asks[a] - s.asks[b] || ORDER.indexOf(a) - ORDER.indexOf(b))[0]
 }
 
 /**

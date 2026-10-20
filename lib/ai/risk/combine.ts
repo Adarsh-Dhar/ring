@@ -25,8 +25,10 @@ export const RISK_CATEGORIES = [
   'purpose_contradiction',
   'hide_from_helper',
   'payment_request',
+  'credential_request',
   'refuse_to_leave',
   'spoken_threat',
+  'immediate_threat',
   'entry_request',
   'home_probing',
   'official_impersonation',
@@ -49,8 +51,10 @@ export const CATEGORY_LABEL: Record<RiskCategory, string> = {
   purpose_contradiction:   'Contradicted their stated purpose',
   hide_from_helper:        'Tried to hide from the helper',
   payment_request:         'Asked for PIN, OTP, password or access code',
+  credential_request:      'Asked for PIN, OTP, password or access code',
   refuse_to_leave:         'Refused to leave when asked',
   spoken_threat:           'Made a threat',
+  immediate_threat:        'Made an immediate threat',
   entry_request:           'Wants to come inside',
   home_probing:            'Asked who else is at home',
   official_impersonation:  'Claims to be an official',
@@ -76,6 +80,8 @@ export const RULE_FLAG_CATEGORY: Record<string, RiskCategory> = {
   'Similar to known scam wording':    'known_scam_wording',
   'Refuses to leave':                 'refuse_to_leave',
   'Hides from helper':                'hide_from_helper',
+  'Credential request':               'credential_request',
+  'Immediate threat':                 'immediate_threat',
 }
 
 /** Fixed helper-facing advice per level. Not model-written. */
@@ -169,18 +175,24 @@ const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
   'Claims urgency':                 'pressure_after_boundary',
   'Refuses to leave':               'refuse_to_leave',
   'Hides from helper':              'hide_from_helper',
+  'Credential request':             'credential_request',
+  'Immediate threat':               'immediate_threat',
 }
 
 export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQuality?: 'high' | 'medium' | 'low'): Observation[] {
   const out: Observation[] = []
-  for (const m of matches) {
+  const now = new Date().toISOString()
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i]
     const b = RULE_FLAG_BEHAVIOUR[m.flag]
     if (b) {
       // WP2: Pass through transcription quality; default to 'medium' if not provided
       const quality = transcriptQuality || 'medium'
+      // Add a unique suffix to timestamp to distinguish multiple occurrences in the same turn
+      const at = `${now}-${i}`
       out.push({
         code: b,
-        at: new Date().toISOString(),
+        at,
         quotes: [m.quote],
         source: 'transcript',
         state: 'uncertain',
@@ -237,9 +249,9 @@ export function liveAssessment(
   if (extra?.evasive) cats.add('evasive_answers')
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
-  // WP2: Pass transcript quality to observation creation
+  // WP2: Pass transcript quality to observation creation, and pass observations to assemble
   const observations = observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
-  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState })
+  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations })
 }
 
 export function buildAssessment(a: {

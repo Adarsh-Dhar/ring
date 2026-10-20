@@ -383,9 +383,9 @@ export function phraseMatches(code: Behaviour, quote: string): boolean {
   return !(neg && neg.test(quote))
 }
 
-/** Identity of an event. Speech events with the same words are one event. Sensor and report events are told apart by time. */
+/** Identity of an event. Speech events with the same words at different times are distinct events. Sensor and report events are told apart by time. */
 export function observationKey(o: Pick<Observation, 'code' | 'quotes' | 'source' | 'at' | 'debug'>): string {
-  return o.source === 'transcript' ? `${o.code}|${o.quotes.map(norm).join('|')}` : `${o.code}|${o.source}|${o.debug?.eventId ?? o.at}`
+  return o.source === 'transcript' ? `${o.code}|${o.quotes.map(norm).join('|')}|${o.at}` : `${o.code}|${o.source}|${o.debug?.eventId ?? o.at}`
 }
 
 export function scoreObservations(observations: Observation[], ctx: { transcript: string; interviewState?: InterviewState }): RiskScore {
@@ -582,22 +582,23 @@ export function observationsFromEvidence(
   const observations: Observation[] = []
   const notes: string[] = []
   const contradictionQuotes: string[] = []
-  const base = (code: Behaviour, quotes: string[]): Observation => ({
+  const base = (code: Behaviour, quotes: string[], idx: number): Observation => ({
     id: newObsId(),
-    code, at: new Date().toISOString(), quotes, source: 'transcript',
+    code, at: `${new Date().toISOString()}-${idx}`, quotes, source: 'transcript',
     // The model only EXTRACTS. State here is the claim; scoreObservations applies the real checks (quote in transcript,
     // quality, wording, interview state) and records 'uncertain' in the ledger when one fails.
     state: 'confirmed', points: 0, segment: opts?.segment, transcriptQuality: opts?.transcriptQuality,
   })
+  let idx = 0
   for (const e of evidence) {
     const b = CATEGORY_TO_BEHAVIOUR[e.category]
     if (!b) { if (!notes.includes(e.category)) notes.push(e.category); continue }
     if (b === 'purpose_contradiction') { contradictionQuotes.push(e.quote); continue }
-    observations.push(base(b, [e.quote]))
+    observations.push(base(b, [e.quote], idx++))
   }
   // Spec 4.3: a contradiction needs BOTH quotes. Quotes are paired in the order the model found them.
   for (let i = 0; i < contradictionQuotes.length; i += 2) {
-    observations.push(base('purpose_contradiction', contradictionQuotes.slice(i, i + 2)))
+    observations.push(base('purpose_contradiction', contradictionQuotes.slice(i, i + 2), idx++))
   }
   return { observations, notes }
 }

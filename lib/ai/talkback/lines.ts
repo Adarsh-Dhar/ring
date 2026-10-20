@@ -4,7 +4,7 @@ import type { LineId } from './types'
 export function interrogatorLines(residentName?: string | null): Record<LineId, string> {
   // WP5: Privacy fix - do not include resident name in greeting
   return {
-    greet:              'Hello, this is the doorbell. Who are you, and what is the reason for your visit?',
+    greet:              'Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?',
     reprompt:           'Sorry, could you say that again?',
     close:              'Thank you. Please wait a moment.',
     // P7: Interview state stamps for conditional codes
