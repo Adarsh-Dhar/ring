@@ -30,8 +30,9 @@ export async function POST(req: NextRequest) {
   if (!householdId) return fail('No household', 400)
   const { caseId, actionId, decision } = p.data
 
-  const c = await getDb().case.findFirst({ where: { id: caseId, householdId }, select: { status: true } })
+  const c = await getDb().case.findFirst({ where: { id: caseId, householdId }, select: { status: true, closedAt: true } })
   if (!c) return fail('Case not found', 404)
+  if (c.closedAt) return fail('Case is closed', 400)
   if (c.status !== 'waiting' && c.status !== 'no_response') return fail('Case is closed', 400)
 
   const pending = (await getPendingActions(caseId)).find((x) => x.id === actionId)

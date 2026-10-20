@@ -8,7 +8,7 @@ import { getDb } from '@/lib/db/client'
 export async function claimConversation(caseId: string, householdId: string, membershipId: string): Promise<{ ok: boolean; owner: string | null }> {
   const db = getDb()
   const r = await db.case.updateMany({
-    where: { id: caseId, householdId, status: 'waiting', conversationOwner: null },
+    where: { id: caseId, householdId, status: 'waiting', closedAt: null, conversationOwner: null },
     data: { conversationOwner: membershipId },
   })
   if (r.count === 1) return { ok: true, owner: membershipId }

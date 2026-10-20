@@ -79,7 +79,8 @@ export async function getOpenCasesForHousehold(householdId: string) {
   return getDb().case.findMany({
     where: {
       householdId,
-      status: 'waiting'
+      status: 'waiting',
+      closedAt: null
     },
     orderBy: { createdAt: 'desc' }
   })

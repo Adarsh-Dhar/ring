@@ -109,12 +109,12 @@ export async function clearAllTimerDeadlines(
   for (let attempt = 0; attempt < 3; attempt++) {
     const row = await db.case.findUnique({
       where: { id: caseId },
-      select: { status: true, deadlineAt: true }
+      select: { status: true, deadlineAt: true, closedAt: true }
     })
-    if (!row || row.status !== 'waiting') return
+    if (!row || row.status !== 'waiting' || row.closedAt) return
 
     const r = await db.case.updateMany({
-      where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt },
+      where: { id: caseId, status: 'waiting', closedAt: null, deadlineAt: row.deadlineAt },
       data: {
         deadlineAt: new Date(targetDeadline),
         deadlineKind: kind,
@@ -143,8 +143,8 @@ export async function recordTimerDeadline(
 ): Promise<void> {
   const db = getDb()
   for (let attempt = 0; attempt < 3; attempt++) {
-    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true, timerDeadlines: true } })
-    if (!row || row.status !== 'waiting') return
+    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true, timerDeadlines: true, closedAt: true } })
+    if (!row || row.status !== 'waiting' || row.closedAt) return
 
     const currentDeadlines = row.timerDeadlines ?? {}
     // Only update if this timer is not already set to an earlier time
@@ -154,7 +154,7 @@ export async function recordTimerDeadline(
     const newGoverning = Math.min(...Object.values(newDeadlines).map(Number), row.deadlineAt.getTime())
 
     const r = await db.case.updateMany({
-      where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt },
+      where: { id: caseId, status: 'waiting', closedAt: null, deadlineAt: row.deadlineAt },
       data: {
         deadlineAt: new Date(newGoverning),
         deadlineKind: kind, // The timer that set the new governing deadline
@@ -177,14 +177,14 @@ export async function recordTimerDeadline(
 export async function shortenDeadline(householdId: string, caseId: string, targetMs: number, kind: TimerKind, reason: string): Promise<boolean> {
   const db = getDb()
   for (let attempt = 0; attempt < 3; attempt++) {
-    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true, timerDeadlines: true } })
-    if (!row || row.status !== 'waiting') return false
+    const row = await db.case.findUnique({ where: { id: caseId }, select: { deadlineAt: true, status: true, timerDeadlines: true, closedAt: true } })
+    if (!row || row.status !== 'waiting' || row.closedAt) return false
     const current = row.deadlineAt.getTime()
     if (!(targetMs < current)) return false
 
     const newDeadlines = { ...(row.timerDeadlines ?? {}), [kind]: targetMs }
     const r = await db.case.updateMany({
-      where: { id: caseId, status: 'waiting', deadlineAt: row.deadlineAt },
+      where: { id: caseId, status: 'waiting', closedAt: null, deadlineAt: row.deadlineAt },
       data: {
         deadlineAt: new Date(targetMs),
         deadlineKind: kind,

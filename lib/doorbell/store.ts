@@ -577,7 +577,7 @@ export async function alertEmergency(householdId: string, caseId: string): Promi
   // as a separate idempotent update ensures even a case whose emergency was already alerted cannot
   // retain a stale approval/risk/takeover deadline.
   await db.case.updateMany({
-    where: { id: caseId, status: 'waiting' },
+    where: { id: caseId, status: 'waiting', closedAt: null },
     data: {
       deadlineAt: new Date(now + NO_ACTIVE_TIMER_SENTINEL_MS),
       deadlineKind: 'emergency',

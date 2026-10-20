@@ -71,6 +71,7 @@ export async function GET(
       where: {
         householdId,
         status: 'waiting',
+        closedAt: null,
       },
     })
 
@@ -79,6 +80,7 @@ export async function GET(
       where: {
         householdId,
         status: 'waiting',
+        closedAt: null,
       },
       orderBy: { createdAt: 'desc' },
       take: 10,

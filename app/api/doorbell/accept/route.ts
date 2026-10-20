@@ -40,11 +40,15 @@ export async function POST(req: NextRequest) {
   const db = getDb()
   const c = await db.case.findFirst({
     where: { id: caseId, householdId },
-    select: { householdId: true, status: true },
+    select: { householdId: true, status: true, closedAt: true },
   })
 
   if (!c) {
     return fail('Case not found', 404)
+  }
+
+  if (c.closedAt) {
+    return fail('Case is closed', 400)
   }
 
   // 'no_response' cases can still be picked up: that is exactly when a late helper steps in.

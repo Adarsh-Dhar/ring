@@ -44,11 +44,15 @@ export async function POST(req: NextRequest) {
   const db = getDb()
   const c = await db.case.findFirst({
     where: { id: caseId, householdId },
-    select: { id: true, householdId: true, kind: true, status: true, helperIndex: true, chain: true, deadlineAt: true, deadlineKind: true, timerDeadlines: true, lane: true, log: true, riskScore: true, controlMode: true, riskObservations: true, noticeStatus: true },
+    select: { id: true, householdId: true, kind: true, status: true, helperIndex: true, chain: true, deadlineAt: true, deadlineKind: true, timerDeadlines: true, lane: true, log: true, riskScore: true, controlMode: true, riskObservations: true, noticeStatus: true, closedAt: true },
   })
 
   if (!c) {
     return fail('Case not found', 404)
+  }
+
+  if (c.closedAt) {
+    return fail('Case is closed', 400)
   }
 
   if (c.status !== 'waiting') {

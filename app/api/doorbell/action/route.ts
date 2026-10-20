@@ -43,9 +43,11 @@ export async function POST(req: NextRequest) {
   const db = getDb()
   const c = await db.case.findFirst({
     where: { id: caseId, householdId },
-    select: { status: true, chain: true },
+    select: { status: true, chain: true, closedAt: true },
   })
   if (!c) return fail('Case not found', 404)
+
+  if (c.closedAt) return fail('Case is closed', 400)
 
   // A short-notice case that nobody answered is 'no_response' but still needs a decision, so both are open.
   if (c.status !== 'waiting' && c.status !== 'no_response') return fail('Case is closed', 400)
