@@ -31,6 +31,7 @@ import {
   coverageSummary,
   coverageFacts,
   coverageLines,
+  isStalled,
   type Slot,
 } from '@/lib/ai/interrogation/plan'
 
@@ -128,10 +129,10 @@ export async function startInterrogator(householdId: string, caseId: string, dev
 
     // Server-driven (Ring, once supported): ask → listen → up to MAX_TURNS turns
     const householdData = await aiFlags(householdId)
-    await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS, residentName: householdData.residentName })
+    await setCaseAi(caseId, { interrogationState: 'asking', maxTurns: MAX_TURNS })
     // Spec 9: the greeting goes through the dispatcher. It gates, audits, plays it, and only then stamps respondingAt.
     const d = await dispatchAiAction({
-      householdId, caseId, line: 'greet', residentName: householdData.residentName,
+      householdId, caseId, line: 'greet',
       play: (t) => tb.say(householdId, deviceId!, t),
     })
     if (!d.allowed) {
@@ -233,11 +234,6 @@ export async function processAnswer(
         riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
         // riskScore, riskLedger, controlMode are now written by applyRiskEdit
       })
-      // If we got here due to 503 retries failing, return error instead of question
-      const is503 = lastError?.message.includes('503') || lastError?.message.includes('high demand') || lastError?.message.includes('UNAVAILABLE')
-      if (is503) {
-        return { question: null, final: false, close: null, error: 'AI service is busy (503). Please try again.' }
-      }
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
 
@@ -251,28 +247,14 @@ export async function processAnswer(
     const answeredCount = turns.length + 1
     const after = foldPlan([...planTurns, thisTurn])
 
-    const modelQ = (() => {
-      const q = out.nextQuestion
-      if (!q) return null
-      if (!validQuestion(q, residentName ?? undefined) || hasBannedPhrase(q)) {
-        console.warn('[AI interrogator] Model question rejected:', q)
-        return null
-      }
-      if (q.trim().toLowerCase() === asked.trim().toLowerCase()) return null   // never repeat word for word
-      return q
-    })()
-
+    // WP3: Use deterministic planner instead of model-generated questions
     const satisfied = isSatisfied(after, answeredCount) && out.satisfied && !out.evasive && out.inconsistencies.length === 0
-    const modelFocus: Slot | null = isSlot(out.nextFocus) ? out.nextFocus : null
+    const focus = nextFocus(after, answeredCount, MAX_TURNS)
 
     let nextQuestion: string | null = null
-    let focus: Slot | null = null
-    if (!satisfied && answeredCount < MAX_TURNS) {
-      // Only use AI-generated questions, no scripted fallbacks
-      if (modelQ) {
-        nextQuestion = modelQ
-        focus = modelFocus
-      }
+    if (!satisfied && focus) {
+      // Use scripted question bank for the chosen focus slot
+      nextQuestion = bankQuestion(focus, after.asks[focus])
     }
 
     const newTurn: InterrogationTurn = {
@@ -281,8 +263,16 @@ export async function processAnswer(
     }
     const updatedTurns = [...turns, newTurn]
 
+    // WP3: Check for stall detection before continuing
+    if (isStalled(after, answeredCount)) {
+      await finishInterrogation(householdId, caseId, updatedTurns, 'evasive', out)
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
+    }
+
     if (!nextQuestion) {
-      await finishInterrogation(householdId, caseId, updatedTurns, satisfied ? 'done' : 'max_turns', out)
+      // WP3: Explicit unverified finish outcome when not satisfied
+      const finishReason = satisfied ? 'done' : 'evasive'
+      await finishInterrogation(householdId, caseId, updatedTurns, finishReason, out)
       return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
 
@@ -293,6 +283,14 @@ export async function processAnswer(
       interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState,
     })
     const control = await controlFor(householdId, live)
+
+    // WP2: Update authoritative risk score, ledger, and control mode BEFORE selecting next question
+    const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
+    await applyRiskEdit(caseId, {
+      kind: 'fresh',
+      observations: live.observations,
+      interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState ?? {},
+    })
 
     // P16: M4 - stop greeter conversation if continuing could raise risk. No negotiating or exceptions.
     // If mode is M4 or higher and we have any confirmed risk events, stop the conversation.

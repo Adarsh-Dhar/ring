@@ -37,13 +37,15 @@ export const ORDER: readonly Slot[] = ['purpose', 'organisation', 'detail', 'pro
  */
 export const PRESS_FIRST: readonly Slot[] = ['purpose', 'organisation', 'proof']
 
-/** Never finish before this many answers, even if everything looks specific. One more look is cheap. */
-export const MIN_TURNS = 4
-
 /**
- * NO per-slot cap and NO default turn cap: the interview runs until the plan AND the model are satisfied.
+ * NO per-slot cap and NO default turn cap: the interview runs until the plan state indicates completion.
  * AI_INTERROGATOR_MAX_TURNS is an optional operator ceiling (a positive number). Unset or 0 = unlimited.
- * The interview still ends if the visitor goes silent (see processAnswer) or the model is down.
+ * The interview ends when:
+ * 1. All required slots are specific (verified)
+ * 2. Visitor goes silent (stall detection in processAnswer)
+ * 3. Model is down (error handling in processAnswer)
+ * 4. Operator ceiling is hit (AI_INTERROGATOR_MAX_TURNS)
+ * 5. Explicit safety condition triggered (threat detection)
  */
 export const clampTurns = (n: number) => (Number.isFinite(n) && n > 0 ? Math.max(3, Math.round(n)) : Infinity)
 export const MAX_TURNS = clampTurns(Number(process.env.AI_INTERROGATOR_MAX_TURNS || 0))
@@ -121,9 +123,22 @@ export function requiredSlots(s: PlanState, answered: number): Slot[] {
   return ORDER.filter(k => need.has(k))
 }
 
-/** Every required slot is specific, nothing was refused, and we have asked enough. Code-side half of "satisfied". */
+/**
+ * State-based stall detection: interview is stalled if the same slot has been asked 3+ times
+ * and the visitor keeps giving vague or refused answers.
+ */
+export function isStalled(s: PlanState, answered: number): boolean {
+  if (answered < 5) return false  // Not enough data to detect stall
+  for (const slot of PRESS_FIRST) {
+    if (s.asks[slot] >= 3 && (s.status[slot] === 'vague' || s.status[slot] === 'refused')) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Every required slot is specific, nothing was refused. Code-side half of "satisfied". */
 export function isSatisfied(s: PlanState, answered: number): boolean {
-  if (answered < MIN_TURNS) return false
   return requiredSlots(s, answered).every(k => s.status[k] === 'specific')
 }
 
