@@ -7,11 +7,12 @@ import { getMembership, getApprovedMemberships } from '../db/memberships'
 import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
-import { effectiveModeFor } from '@/lib/doorstep/collaborationController'
+import { effectiveModeFor, effectiveScore } from '@/lib/doorstep/collaborationController'
 import { residentRequestSummary } from '@/lib/doorstep/residentStatus'
 import { maxMode, modeRank as controlModeRank } from '@/lib/doorstep/riskRules'
 import type { ControlMode } from '@/lib/doorstep/riskRules'
-import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus } from '../doorstep/noticePolicy'
+import { evaluateNotice, parseNoticeSettings, APPROVAL_RETRY_WINDOW_MS, type NoticeStatus, type NoticeSettings } from '../doorstep/noticePolicy'
+import { governingTimer, normalizeTimerDeadlines, NO_ACTIVE_TIMER_SENTINEL_MS, type TimerDeadlineMap, type TimerKind } from '../doorstep/deadline'
 import { getExpectedVisitsForHousehold, getActiveExpectedVisits, deleteExpectedVisit, deleteOldExpectedVisits, createExpectedVisit, getRecurringVisitsForHousehold, updateRecurringVisit, deleteRecurringVisit, createRecurringVisit, markExpectedUsed } from '../db/visits'
 import { getDb } from '../db/client'
 import { sweepRequests, cancelRequestForVisit } from './request-lifecycle'
@@ -20,7 +21,7 @@ import { newSecret } from '../visit-tokens'
 import { PURPOSES, type Purpose } from './purposes'
 import { reportError } from '../errors'
 import { applyRiskEdit } from '../doorstep/caseRiskStore'
-import { attachEvent, sweepQuietCases, sweepStaleCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
+import { attachEvent, sweepQuietCases, getPriorSeriousEvents } from '../doorstep/caseLifecycle'
 import { readStored } from '../doorstep/caseRisk'
 import { RISK_RULES, type LifecycleState } from '../doorstep/riskRules'
 import { contactHelper } from '../doorstep/contactLog'
@@ -126,6 +127,8 @@ export interface DoorCase {
   /** Spec 4.3: set when an uncertain forced_entry_or_assault was observed (camera description alone).
    *  Used by the resident view to show the keep-closed message before confirmation arrives. */
   unconfirmedAlertedAt?: number | null
+  /** C-04: Whether a helper has accepted a request for this case (not just seen it). */
+  helperAccepted?: boolean
   /** Section 8.1 lifecycle (open, helper_review, visitor_left, closed). `status` above is the doorbell answer flow. */
   lifecycle?:    LifecycleState
   visitorLeftAt?: number
@@ -249,6 +252,8 @@ async function loadStateFromDB(householdId: string): Promise<void> {
       splitFromId: (c as any).splitFromId || undefined,
       controlMode:   (c as any).controlMode || undefined,
       unconfirmedAlertedAt: (c as any).unconfirmedAlertedAt ? new Date((c as any).unconfirmedAlertedAt).getTime() : null,
+      // C-04: helperAccepted is computed from HelperRequest state
+      helperAccepted: ((c as any).helperRequests as any[])?.some((hr: any) => hr.state === 'accepted') ?? false,
       // Section 7: Include helper requests
       helperRequests: (c as any).helperRequests?.map((hr: any) => ({
         id: hr.id,
@@ -599,8 +604,9 @@ export async function alertEmergency(householdId: string, caseId: string): Promi
 
   const household = await getHousehold(householdId)
   const name = household?.residentName ?? 'The resident'
-  notifyAll(state, '🆘 EMERGENCY at the door', 'Do not open. Keep the door closed and move away.', c.id)
-  smsAll(state, `EMERGENCY at ${name}'s door: possible threat or forced entry. Do not open the door. Check the app now.`, name, true)
+  const smsBody = `EMERGENCY at ${name}'s door: possible threat or forced entry. Do not open the door. Check the app now.`
+  notifyAll(state, '🆘 EMERGENCY at the door', 'Do not open. Keep the door closed and move away.', c.id, { push: true, sms: true })
+  // N-04: Removed duplicate smsAll call - notifyAll now handles both channels
   addLog(c, 'Emergency: all helpers alerted at once by push and SMS. Resident told to keep the door closed and move away.')
   await updateCase(c.id, c)
   return true
@@ -623,8 +629,9 @@ export async function alertUnconfirmedEmergency(householdId: string, caseId: str
 
   const household = await getHousehold(householdId)
   const name = household?.residentName ?? 'The resident'
-  notifyAll(state, 'Possible emergency at the door (not confirmed)', 'Check the clip now.', c.id)
-  smsAll(state, `Possible emergency at ${name}'s door (not confirmed). Check the clip now.`, name, true)
+  const smsBody = `Possible emergency at ${name}'s door (not confirmed). Check the clip now.`
+  notifyAll(state, 'Possible emergency at the door (not confirmed)', 'Check the clip now.', c.id, { push: true, sms: true })
+  // N-04: Removed duplicate smsAll call - notifyAll now handles both channels
   addLog(c, 'Unconfirmed emergency: model reports possible forced entry. Helpers alerted. Score unchanged until confirmed.')
   await updateCase(c.id, c)
   return true
@@ -656,13 +663,15 @@ export async function alertUrgent(householdId: string, caseId: string, cause: 't
 
   if (isScoreBased) {
     // P8: Generic urgent alert for S_eff 80-99 (not a specific threat)
-    notifyAll(state, '⚠️ Urgent situation at the door', 'Risk score is high. All helpers alerted. Please check the case.', c.id)
-    smsAll(state, `URGENT: high risk score at ${name}'s door. Check the app immediately.`, name, true)
+    const smsBody = `URGENT: high risk score at ${name}'s door. Check the app immediately.`
+    notifyAll(state, '⚠️ Urgent situation at the door', 'Risk score is high. All helpers alerted. Please check the case.', c.id, { push: true, sms: true })
+    // N-04: Removed duplicate smsAll call - notifyAll now handles both channels
     addLog(c, 'Urgent: S_eff in 80-99 range (M4 mode) — all helpers alerted at once.')
   } else {
     // Original threat-based alert
-    notifyAll(state, '⚠️ Threat at the door — urgent', 'A credible threat has been made. All helpers alerted. Resident has been told to stay back.', c.id)
-    smsAll(state, `URGENT: threat reported at ${name}'s door. Check the app immediately.`, name, true)
+    const smsBody = `URGENT: threat reported at ${name}'s door. Check the app immediately.`
+    notifyAll(state, '⚠️ Threat at the door — urgent', 'A credible threat has been made. All helpers alerted. Resident has been told to stay back.', c.id, { push: true, sms: true })
+    // N-04: Removed duplicate smsAll call - notifyAll now handles both channels
     addLog(c, 'Urgent: confirmed immediate threat — all helpers alerted at once. Helper-acknowledgement timer bypassed (spec 4.4 rule 5).')
   }
   await updateCase(c.id, c)
@@ -726,20 +735,27 @@ function checkMissedCheckin(state: HouseholdState, now: number, timezone: string
   smsAll(state, `${residentName} has not checked in today. Please call.`, residentName)
 }
 
-async function notifyAll(state: HouseholdState, title: string, body: string, caseId: string) {
+async function notifyAll(state: HouseholdState, title: string, body: string, caseId: string, channels?: { push?: boolean; sms?: boolean }) {
   const memberships = await getApprovedMemberships(state.householdId)
+  const pushPayload = { title, body, tag: caseId, url: '/helper' }
   await Promise.all(
-    memberships.map(m =>
-      contactHelper(caseId, m.id, { push: { title, body, tag: caseId, url: '/helper' }, sms: body })
-    )
+    memberships.map(m => {
+      const payload: { push?: typeof pushPayload; sms?: string } = {}
+      if (channels?.push !== false) payload.push = pushPayload
+      if (channels?.sms !== false) payload.sms = body
+      if (Object.keys(payload).length > 0) {
+        return contactHelper(caseId, m.id, payload)
+      }
+    })
   )
 }
 
 async function smsAll(state: Pick<HouseholdState, 'householdId'>, body: string, residentName: string, urgent = true, caseId?: string) {
   const memberships = await getApprovedMemberships(state.householdId)
+  const realCaseId = caseId || 'system'
   await Promise.all(
     memberships.map(m =>
-      contactHelper(caseId || 'system', m.id, { push: { title: residentName, body }, sms: body })
+      contactHelper(realCaseId, m.id, { push: { title: residentName, body }, sms: body })
     )
   )
 }
@@ -1039,9 +1055,6 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
 
   await tick(householdId)
 
-  // Security: run stale case sweep before checking for active case
-  await sweepStaleCases(householdId, Date.now())
-
   // Section 8.2: a new event attaches to the newest case that is not closed, because the system cannot reliably tell
   // visitors apart. Only a closed case lets the event open a new case (starting at 0, nothing carried over).
   const active = await getActiveLifecycleCase(householdId)
@@ -1064,6 +1077,34 @@ export async function ingestEvent(householdId: string, event: { event_type: stri
   void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null })).catch(() => {})
   // AI is advisory: fire-and-forget, never awaited, never on the alert path.
   void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId: event.device_id ?? null, kind: c.kind || '', lane: c.lane || null, expectedId: c.expectedId || null, recurringId: c.recurringId || null })).catch(() => {})
+  return c
+}
+
+/**
+ * Open a case for a high-severity sensor event (door_force, tamper, lock_tamper, door_wedge).
+ * This bypasses the TRIGGER_EVENTS filter and creates a case even when no button press occurred.
+ * N-02: Fixes sensor events being dropped when no open case exists.
+ */
+export async function openSensorCase(householdId: string, deviceId: string | null, type: 'door_force' | 'tamper' | 'lock_tamper' | 'door_wedge'): Promise<DoorCase | null> {
+  const state = await getOrCreateState(householdId)
+  if (state.offline) return null
+
+  await tick(householdId)
+
+  // Check if there's already an active case
+  const active = await getActiveLifecycleCase(householdId)
+  if (active) {
+    return active  // Return existing case instead of opening a new one
+  }
+
+  const description = type === 'door_force' ? 'Sensor: door force detected' :
+                      type === 'tamper' ? 'Sensor: tamper detected' :
+                      type === 'lock_tamper' ? 'Sensor: lock tamper detected' :
+                      'Sensor: door wedge detected'
+
+  const c = await openCase(state, 'visitor', type, description, deviceId, null)
+  void import('@/face/camera').then((m) => m.onCameraEvent(householdId, { caseId: c.id, deviceId })).catch(() => {})
+  void import('@/lib/ai/hooks').then((m) => m.onDoorEvent(householdId, { caseId: c.id, deviceId, kind: c.kind || '', lane: c.lane || null, expectedId: c.expectedId || null, recurringId: c.recurringId || null })).catch(() => {})
   return c
 }
 
@@ -1225,6 +1266,28 @@ export async function selfVerify(
   // Only applicable to a waiting expected-visitor case that has a check
   if (c.kind !== 'visitor' || c.status !== 'waiting' || c.lane !== 'expected' || !hasCheck(c)) return null
 
+  // H-30: Refuse when S_eff ≥ 20
+  const sEff = effectiveScore(c.riskScore ?? 0, c.controlMode as ControlMode | null)
+  if (sEff >= 20) {
+    console.log('[selfVerify] Refused: score ≥ 20')
+    return null
+  }
+
+  // H-30: Check for pending approvals
+  const { getPendingActions, approvePendingAction } = await import('./pendingActions')
+  const pendingActions = await getPendingActions(caseId)
+  const pendingApproval = pendingActions.find(a => a.state === 'pending' && a.kind === 'visit_approval')
+  if (pendingApproval) {
+    // If it's a resident approval, approve it
+    if (pendingApproval.approver === 'resident') {
+      await approvePendingAction(caseId, pendingApproval.id, 'resident')
+    } else {
+      // Helper approval pending - refuse
+      console.log('[selfVerify] Refused: helper approval pending')
+      return null
+    }
+  }
+
   const household = await getHousehold(householdId)
   if (!household) return null
   const now      = Date.now()
@@ -1289,6 +1352,29 @@ export async function answerCase(
   const membership = await getMembership(membershipId)
   if (!membership || membership.consent !== 'approved' || !c.chain.includes(membershipId)) {
     return { ok: false, error: 'You are not allowed to answer this case', status: 403 }
+  }
+
+  // H-27: Refuse safe when kind === 'sos', S_eff ≥ 20, activeSerious > 0 or emergencyAlertedAt is set
+  const sEff = effectiveScore(c.riskScore ?? 0, c.controlMode as ControlMode | null)
+  const activeSerious = (c as any).activeSerious as number | undefined
+  if (answer === 'safe') {
+    if (c.kind === 'sos') {
+      return { ok: false, error: 'Cannot mark SOS case as safe - close the case instead', status: 409 }
+    }
+    if (sEff >= 20) {
+      return { ok: false, error: 'Cannot mark as safe with score ≥ 20', status: 409 }
+    }
+    if (activeSerious && activeSerious > 0) {
+      return { ok: false, error: 'Cannot mark as safe with active serious events', status: 409 }
+    }
+    if (c.emergencyAlertedAt) {
+      return { ok: false, error: 'Cannot mark as safe when emergency has been alerted', status: 409 }
+    }
+  }
+
+  // H-27: call_me must not set status = 'answered' while S_eff ≥ 20
+  if (answer === 'call_me' && sEff >= 20) {
+    return { ok: false, error: 'Cannot set "call me" with score ≥ 20', status: 409 }
   }
 
   // Special case: resident self-verified safe but a helper overrides to not_safe within 5 min
@@ -1830,8 +1916,6 @@ export async function tick(householdId?: string) {
       sweepRequests(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepRequests' }))
       // Section 8.2: close idle cases whose quiet period has passed.
       sweepQuietCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepQuietCases' }))
-      // Security: close any case that has been open for more than 1 hour
-      sweepStaleCases(householdId, now).catch(e => reportError(e, { householdId, fn: 'sweepStaleCases' }))
     }
   } else {
     for (const [hid] of householdStates) { await tick(hid) }

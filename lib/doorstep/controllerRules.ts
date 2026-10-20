@@ -17,19 +17,19 @@ export interface ControllerToolCheck {
 }
 
 /**
- * Check if a controller tool is allowed to be executed by the AI.
+ * Check if a controller tool is allowed to be executed.
  *
  * Rule-only tools (escalate_to_backup, enforce_entry_policy, trigger_emergency_workflow)
- * return false when the AI asks. They can only be executed by the controller rules.
+ * return false when the AI asks. They can only be executed by the controller rules when caller is 'controller'.
  */
-export function controllerToolAllowed(toolName: string): ControllerToolCheck {
+export function controllerToolAllowed(toolName: string, caller: 'ai' | 'controller' = 'ai'): ControllerToolCheck {
   const RULE_ONLY_TOOLS = [
     'escalate_to_backup',
     'enforce_entry_policy',
     'trigger_emergency_workflow',
   ]
 
-  if (RULE_ONLY_TOOLS.includes(toolName)) {
+  if (RULE_ONLY_TOOLS.includes(toolName) && caller === 'ai') {
     return {
       allowed: false,
       reason: `Tool is rule-only and cannot be called by AI: ${toolName}`,

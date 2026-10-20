@@ -28,7 +28,7 @@ import { checkRateLimit } from '@/lib/ratelimit/redis'
 import { SensorEventSchema, type SensorEventType } from '@/lib/schemas/sensor'
 import { applyRiskEdit } from '@/lib/doorstep/caseRiskStore'
 import { resolveSensorHousehold } from '@/lib/doorstep/sensorRouting'
-import { ingestEvent } from '@/lib/doorbell/store'
+import { ingestEvent, openSensorCase } from '@/lib/doorbell/store'
 import { newObsId } from '@/lib/doorstep/riskRules'
 import { markVisitorLeft } from '@/lib/doorstep/caseLifecycle'
 import type { Observation } from '@/lib/doorstep/riskRules'
@@ -97,18 +97,32 @@ export async function POST(request: NextRequest) {
   }
   const householdId = route.householdId
 
-  // 5. Rate limiting
-  const rl = await checkRateLimit({ key: `sensor:${householdId}`, limit: 60, window: 60 })
-  if (!rl.allowed) {
-    console.warn('[SENSOR] Rate limit exceeded for household', householdId)
-    return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
+  // 5. Rate limiting (H-33: key per household and type, exempt door_force and tamper)
+  const isHighSeverity = evt.type === 'door_force' || evt.type === 'tamper'
+  if (!isHighSeverity) {
+    const rl = await checkRateLimit({ key: `sensor:${householdId}:${evt.type}`, limit: 60, window: 60 })
+    if (!rl.allowed) {
+      console.warn('[SENSOR] Rate limit exceeded for household', householdId, 'type', evt.type)
+      return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
+    }
   }
 
   // 6. Idempotency
   try {
-    const existing = await db.webhookEvent.findUnique({ where: { requestId: evt.eventId } })
-    if (existing) return NextResponse.json({ status: 'already_processed' })
-    await db.webhookEvent.create({ data: { requestId: evt.eventId, householdId } })
+    const existing = await db.webhookEvent.findUnique({
+      where: { householdId_requestId: { householdId, requestId: evt.eventId } }
+    })
+    if (existing) {
+      // If the row is stuck in 'processing' for > 60s, allow retry
+      if (existing.status === 'processing' && Date.now() - existing.receivedAt.getTime() > 60_000) {
+        await db.webhookEvent.delete({ where: { id: existing.id } })
+      } else {
+        return NextResponse.json({ status: 'already_processed' })
+      }
+    }
+    await db.webhookEvent.create({
+      data: { requestId: evt.eventId, householdId, status: 'processing' }
+    })
   } catch {
     // Race condition — treat as already processed
     return NextResponse.json({ status: 'already_processed' })
@@ -125,15 +139,24 @@ export async function POST(request: NextRequest) {
 
   let caseId: string | null = openCases[0]?.id ?? null
 
-  // For high-severity events with no open case, open one now
-  const isHighSeverity = evt.type === 'door_force' || evt.type === 'tamper'
+  // For high-severity events with no open case, open one now (N-02)
+  const isHighSeverity = evt.type === 'door_force' || evt.type === 'tamper' || evt.type === 'lock_tamper' || evt.type === 'door_wedge'
   if (!caseId && isHighSeverity) {
-    const c = await ingestEvent(householdId, {
-      event_type: 'door_force',
-      event_id: evt.eventId,
-      device_id: evt.deviceId,
-    }).catch((e) => { console.error('[SENSOR] Failed to open case:', e); return null })
+    const c = await openSensorCase(householdId, evt.deviceId, evt.type as any).catch((e) => {
+      console.error('[SENSOR] Failed to open case for high-severity event:', e)
+      return null
+    })
     caseId = c?.id ?? null
+
+    // High-severity event failed to open a case — return 500 error
+    if (!caseId) {
+      console.error('[SENSOR] Failed to open case for high-severity event', evt.type)
+      // Delete the webhook event row so it can be retried
+      await db.webhookEvent.deleteMany({
+        where: { householdId, requestId: evt.eventId, status: 'processing' }
+      }).catch(() => {})
+      return NextResponse.json({ error: 'Failed to open case for high-severity event' }, { status: 500 })
+    }
   }
 
   if (!caseId) {
@@ -145,10 +168,19 @@ export async function POST(request: NextRequest) {
   // 8. Map sensor event to risk observation
   try {
     const result = await applySensorEvent(caseId, evt.type, evt.at, evt.eventId)
+    // Update webhook event status to done
+    await db.webhookEvent.updateMany({
+      where: { householdId, requestId: evt.eventId, status: 'processing' },
+      data: { status: 'done', processedAt: new Date() }
+    })
     return NextResponse.json({ status: 'processed', caseId, behaviour: result.behaviour })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[SENSOR] Failed to apply sensor event:', e)
+    // Delete the processing row so it can be retried
+    await db.webhookEvent.deleteMany({
+      where: { householdId, requestId: evt.eventId, status: 'processing' }
+    }).catch(() => {})
     return NextResponse.json({ error: `Processing failed: ${msg}` }, { status: 500 })
   }
 }

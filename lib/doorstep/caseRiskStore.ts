@@ -396,8 +396,9 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
 
     // G4: Spec 4.3 – uncertain forced_entry_or_assault (camera model description alone) triggers an unconfirmed alert.
     // immediate_threat at uncertain does NOT trigger G4 — it only raises the floor to helper_leads.
+    // C-06: Ignore retracted observations
     const hasUncertainForcedEntry = risk.ledger.some(
-      e => e.code === 'forced_entry_or_assault' && e.state === 'uncertain'
+      e => e.code === 'forced_entry_or_assault' && e.state === 'uncertain' && !e.retracted && !e.resolved && e.debug?.why === 'marked_uncertain'
     )
     if (hasUncertainForcedEntry && !c.unconfirmedAlertedAt) {
       const { alertUnconfirmedEmergency } = await import('@/lib/doorbell/store')

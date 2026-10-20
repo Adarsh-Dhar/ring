@@ -58,6 +58,12 @@ export async function POST(req: NextRequest) {
   // The tool comes from the stored action, so the caller cannot pick a weaker decision type to get past the check.
   const pending = (await getPendingActions(caseId)).find((x) => x.id === actionId)
   if (!pending) return fail('Action not found', 404)
+
+  // H-28: Check if this approval belongs to the resident
+  if ((pending.approver ?? 'helper') !== 'helper') {
+    return fail('This approval belongs to the resident', 403)
+  }
+
   const decisionType = decisionForTool(pending.tool)
 
   if (decision === 'approve') {

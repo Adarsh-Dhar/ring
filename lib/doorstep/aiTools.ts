@@ -7,7 +7,8 @@
 
 import { canonicalTool, KNOWN_TOOLS } from './toolRegistry'
 import { validateObservationInput, buildEvidenceSummary } from './toolInputs'
-import { controllerToolAllowed, executeControllerTool } from './controllerTools'
+import { controllerToolAllowed } from './controllerRules'
+import { executeControllerTool } from './controllerTools'
 import { PROHIBITED_TOOLS, HELPER_ONLY_TOOLS, EMERGENCY_ONLY_TOOLS } from './authorityCosts'
 import { writeAudit, createAuditEvent } from './audit'
 import { markAiUnavailable } from './analysisAvailability'

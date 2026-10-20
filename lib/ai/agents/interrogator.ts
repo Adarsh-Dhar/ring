@@ -35,6 +35,7 @@ import {
   type Slot,
 } from '@/lib/ai/interrogation/plan'
 import { decideNext, type NextAction, type DecisionContext } from '@/lib/ai/interrogation/respond'
+import { MAX_TURNS } from './intake'
 
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
 
@@ -163,8 +164,8 @@ export async function startInterrogator(householdId: string, caseId: string, dev
     console.error('[AI interrogator]', e)
     await setCaseAi(caseId, { interrogationState: 'failed' })
     // Spec 9.5: say so on the case and tell the helper. No points are added; the door stays closed.
-    const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability')
-    await markAnalysisUnavailable(householdId, caseId, 'AI service error')
+    const { markAiUnavailable } = await import('@/lib/doorstep/analysisAvailability')
+    await markAiUnavailable(caseId, householdId, 'AI service error')
   }
 }
 
@@ -252,7 +253,7 @@ export async function processAnswer(
         // riskScore, riskLedger, controlMode are now written by applyRiskEdit
       })
       // Spec 9.5: the model could not grade this answer (down, busy or invalid). Mark the analysis unavailable, add no points, tell the helper.
-      { const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAnalysisUnavailable(householdId, caseId, 'AI could not grade this answer') }
+      { const { markAiUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAiUnavailable(caseId, householdId, 'AI could not grade this answer') }
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
 
@@ -358,9 +359,10 @@ export async function processAnswer(
           const prefs = await getPreferences(householdId)
           approvedAlternative = prefs.approvedAlternative
         }
+        const matchingBehaviour = newConfirmedBehaviours.find(o => o.code === decision.code)
         const d = await dispatchAiAction({
           householdId, caseId, tool: eventResponse.tool,
-          text: renderEventResponse(eventResponse, newConfirmedBehaviours.find(o => o.code === decision.code)?.quotes ?? [], { approvedAlternative }),
+          text: renderEventResponse(eventResponse, matchingBehaviour?.quotes ?? [], { approvedAlternative }),
           sEff: control.effectiveScore,
         })
         if (d.allowed) {
@@ -421,7 +423,7 @@ export async function processAnswer(
     return { question: dq.text, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
-    { const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAnalysisUnavailable(householdId, caseId, 'AI service error') }
+    { const { markAiUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAiUnavailable(caseId, householdId, 'AI service error') }
     let errorMessage = 'AI service error. Please try again.'
     if (e instanceof Error) {
       if (e.message.includes('503') || e.message.includes('high demand') || e.message.includes('UNAVAILABLE')) {

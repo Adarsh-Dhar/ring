@@ -161,45 +161,6 @@ export async function sweepQuietCases(householdId?: string, now: number = Date.n
 }
 
 /**
- * Security: close any case that has been open for more than the configured threshold.
- * This is a hard limit to prevent cases from staying open indefinitely.
- * In DEMO_MODE, the threshold is 5 minutes for easier testing. In production, it's 1 hour.
- * Returns the ids closed.
- */
-export async function sweepStaleCases(householdId?: string, now: number = Date.now()): Promise<string[]> {
-  const db = getDb()
-  // Use 5 minutes in DEMO_MODE for easier testing, 1 hour in production
-  const STALE_MS = process.env.DEMO_MODE === '1' ? 5 * 60 * 1000 : 60 * 60 * 1000
-  const rows: any[] = await db.case.findMany({
-    where: {
-      closedAt: null,
-      ...(householdId ? { householdId } : {}),
-      createdAt: { lt: new Date(now - STALE_MS) },
-    },
-    select: { id: true, householdId: true, riskScore: true },
-    take: 200,
-  })
-  const closed: string[] = []
-  for (const c of rows) {
-    try {
-      const r = await db.case.updateMany({
-        where: { id: c.id, closedAt: null },
-        data: { lifecycle: 'closed', closedAt: new Date(now), closedBy: 'system', closeReason: 'stale' },
-      })
-      if (r.count === 1) {
-        closed.push(c.id)
-        const thresholdMinutes = STALE_MS / 60_000
-        await logCorrectionLabel({ householdId: c.householdId, caseId: c.id, action: 'close', actorRole: 'system', reason: `stale: case open > ${thresholdMinutes} minutes`, scoreBefore: c.riskScore ?? 0, scoreAfter: c.riskScore ?? 0 })
-        console.log(`[SECURITY] Closed stale case ${c.id} (open > ${thresholdMinutes} minutes)`)
-      }
-    } catch (e) {
-      reportError(e, { fn: 'sweepStaleCases', caseId: c.id })
-    }
-  }
-  return closed
-}
-
-/**
  * Earlier serious events inside the resident-set window, for the helper to read as information only.
  * Nothing carries into the score and nothing is matched by face or appearance: it is simply the same household's
  * recent cases, excluding this one.

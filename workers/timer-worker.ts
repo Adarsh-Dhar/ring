@@ -6,7 +6,7 @@
 import { initQueue, stopQueue } from '@/lib/queue'
 import { JOB_NAMES, type WebhookProcessJob, type DeviceOfflineJob, type DeviceOnlineJob } from '@/lib/queue/jobs'
 import { ingestEvent, setDeviceOnline, sweepOverdueCases } from '@/lib/doorbell/store'
-import { sweepQuietCases, sweepStaleCases } from '@/lib/doorstep/caseLifecycle'
+import { sweepQuietCases } from '@/lib/doorstep/caseLifecycle'
 
 async function main() {
   console.log('[WORKER] Starting timer worker...')
@@ -132,31 +132,11 @@ async function main() {
     }
   }, QUIET_SWEEP_MS)
 
-  // Security: stale case sweep. Closes any case that has been open for more than 1 hour.
-  // Runs on a separate interval (default 60 seconds). This is a hard security limit to prevent
-  // cases from staying open indefinitely. The web server's tick() also runs this on ingestEvent,
-  // but the worker ensures it keeps running if the web process is down.
-  const STALE_SWEEP_MS = Number(process.env.STALE_SWEEP_MS || 60_000)
-  let staleSweeping = false
-  const staleTimer = setInterval(async () => {
-    if (staleSweeping) return
-    staleSweeping = true
-    try {
-      const closed = await sweepStaleCases()
-      if (closed.length > 0) console.log(`[WORKER] Stale sweep closed ${closed.length} case(s) (open > 1 hour)`)
-    } catch (error) {
-      console.error('[WORKER] Stale sweep failed:', error)
-    } finally {
-      staleSweeping = false
-    }
-  }, STALE_SWEEP_MS)
-
   // Handle graceful shutdown
   const shutdown = async () => {
     console.log('[WORKER] Shutting down...')
     clearInterval(sweepTimer)
     clearInterval(quietTimer)
-    clearInterval(staleTimer)
     await stopQueue()
     process.exit(0)
   }

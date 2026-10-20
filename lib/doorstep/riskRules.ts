@@ -23,7 +23,7 @@ export type ControlMode = (typeof CONTROL_MODES)[number]
 export const modeRank = (m: ControlMode) => CONTROL_MODES.indexOf(m)
 export const maxMode = (...ms: ControlMode[]): ControlMode => ms.reduce((a, b) => (modeRank(b) > modeRank(a) ? b : a), 'ai_leads' as ControlMode)
 
-export type Source = 'transcript' | 'sensor' | 'resident' | 'helper'
+export type Source = 'transcript' | 'sensor' | 'camera' | 'resident' | 'helper'
 
 /** Interview state stamps for conditional codes. */
 export interface InterviewState {

@@ -38,10 +38,6 @@ export function validateObservationInput(args: any): ValidationResult {
     return { valid: false, reason: 'Missing or invalid quote' }
   }
 
-  if (!source || typeof source !== 'string') {
-    return { valid: false, reason: 'Missing or invalid source' }
-  }
-
   // Refuse fields AI cannot set
   const forbidden = ['score', 'floor', 'mode', 'timer', 'permission']
   for (const field of forbidden) {
@@ -50,18 +46,10 @@ export function validateObservationInput(args: any): ValidationResult {
     }
   }
 
-  // Determine evidence state
-  let evidenceState: 'confirmed' | 'uncertain' | 'unavailable' = state ?? 'uncertain'
-
-  // Camera reports are never confirmed
-  if (source === 'camera' || source === 'sensor') {
-    evidenceState = 'uncertain'
-  }
-
-  // Ungrounded quotes (no actual transcript reference) are never confirmed
-  if (source === 'transcript' && (!quote || quote.trim().length === 0)) {
-    evidenceState = 'uncertain'
-  }
+  // C-02: Ignore AI-supplied source and state - force transcript source and uncertain state
+  // Only a helper (via the observation route) may confirm
+  const observationSource: 'transcript' | 'camera' = 'transcript'
+  const evidenceState: 'confirmed' | 'uncertain' | 'unavailable' = 'uncertain'
 
   // Build observation
   const observation: Observation = {
@@ -69,7 +57,7 @@ export function validateObservationInput(args: any): ValidationResult {
     code: code as Behaviour,
     at: new Date().toISOString(),
     quotes: [quote],
-    source: source as 'transcript' | 'sensor' | 'camera' | 'resident' | 'helper',
+    source: observationSource,
     state: evidenceState,
     points: 0, // AI never sets points
   }

@@ -22,6 +22,8 @@ export interface PendingAction {
   decidedBy?: string // userId
   decidedAt?: string // ISO timestamp
   createdAt: string // ISO timestamp
+  /** H-29: expiresAt - approvals expire after 10 minutes */
+  expiresAt?: string // ISO timestamp
 }
 
 /**
@@ -66,6 +68,7 @@ export async function createPendingAction(
       kind: opts.kind ?? 'ai_action',
       state: 'pending',
       createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // H-29: 10 minute expiry
     }
     actions.push(action)
     return action
@@ -116,13 +119,21 @@ export async function consumePendingAction(caseId: string, actionId: string): Pr
 
 /**
  * Single-use approval (spec 7.3): if a helper has approved this tool, spend that approval now and return it.
+ * H-29: Consume by action id + hash of text to ensure unique approvals
  * The AI calls this at the moment it wants to act, so an approval covers exactly one use.
  * Returns null when there is no approved action for the tool.
  */
-export async function consumeApprovedForTool(caseId: string, tool: string): Promise<PendingAction | null> {
+export async function consumeApprovedForTool(caseId: string, tool: string, text: string): Promise<PendingAction | null> {
+  // H-29: Create a simple hash of the text for uniqueness
+  const crypto = require('crypto')
+  const textHash = crypto.createHash('sha256').update(text).digest('hex').substring(0, 16)
+
   const found = await withActions(caseId, (actions) => {
-    const action = actions.find((a) => a.tool === tool && a.state === 'approved')
+    const action = actions.find((a) => a.tool === tool && a.state === 'approved' && (!a.expiresAt || new Date(a.expiresAt) > new Date()))
     if (!action) return null
+    // Verify the text matches (simple check via hash comparison)
+    const actionTextHash = crypto.createHash('sha256').update(a.text).digest('hex').substring(0, 16)
+    if (actionTextHash !== textHash) return null
     action.state = 'consumed'
     return { ...action }
   })

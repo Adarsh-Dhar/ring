@@ -88,7 +88,7 @@ export async function gateOrAsk(householdId: string, caseId: string, tool: strin
   // The approval is RESERVED here; dispatchAiAction hands it back if the action then fails to run.
   if (g.decision === 'ask_helper') {
     const { consumeApprovedForTool } = await import('./pendingActions')
-    const spent = await consumeApprovedForTool(caseId, tool).catch(() => null)
+    const spent = await consumeApprovedForTool(caseId, tool, o.text ?? tool).catch(() => null)
     if (spent) return { ...g, decision: 'allow' as const, reason: 'helper_approved', approvalId: spent.id }
   }
   if (g.decision === 'ask_helper' && g.reason === 'over_budget') {

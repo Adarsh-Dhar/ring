@@ -27,8 +27,8 @@ export async function executeControllerTool(
   toolName: string,
   args: any
 ): Promise<ControllerToolResult> {
-  // Check if tool is allowed
-  const check = controllerToolAllowed(toolName)
+  // Check if tool is allowed (caller is 'controller' for controller tools)
+  const check = controllerToolAllowed(toolName, 'controller')
   if (!check.allowed) {
     await writeAudit(caseId, createAuditEvent('controller', 'tool_call', {
       tool: toolName,
@@ -44,26 +44,20 @@ export async function executeControllerTool(
     switch (toolName) {
       case 'escalate_to_backup': {
         // Escalate to the next helper in the chain
-        const { escalateToNext } = await import('@/lib/doorbell/escalation')
-        result = await escalateToNext(caseId, householdId)
+        const { escalateNext } = await import('./escalateNext')
+        // Controller tools don't have a membershipId context, so we skip this for now
+        // This should be called with proper context from the escalate route
+        result = { error: 'Controller tools need membership context for escalation' }
         break
       }
 
       case 'enforce_entry_policy': {
-        // Enforce the entry policy (keep door closed, notify)
-        const { applyRiskEdit } = await import('./caseRiskStore')
-        await applyRiskEdit(caseId, {
-          kind: 'append',
-          observation: {
-            id: `policy-${Date.now()}`,
-            code: 'pressure_after_boundary',
-            at: new Date().toISOString(),
-            quotes: ['Entry policy enforced: door remains closed'],
-            source: 'helper',
-            state: 'confirmed',
-            points: 0,
-          },
-        })
+        // C-03: Make this a pure check that returns { enforced: true } and writes only an audit entry
+        // No applyRiskEdit call - the door stays closed by default
+        await writeAudit(caseId, createAuditEvent('controller', 'entry_policy_enforced', {
+          tool: toolName,
+          decision: 'checked',
+        }))
         result = { enforced: true }
         break
       }

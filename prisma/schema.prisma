@@ -330,11 +330,14 @@ model PushSubscription {
 
 model WebhookEvent {
   id          String    @id @default(cuid())
-  requestId   String    @unique
+  requestId   String
   householdId String
+  status      String    @default("processing") // processing | done | failed
   receivedAt  DateTime  @default(now())
+  processedAt DateTime?
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
+  @@unique([householdId, requestId])
   @@index([householdId])
   @@index([requestId])
 }

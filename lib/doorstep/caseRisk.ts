@@ -113,8 +113,10 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
   }
   const kept: Observation[] = []
   for (const o of stored.observations) {
-    // Always keep non-transcript observations (sensor, resident, helper) and anything a person has touched.
-    if (o.source !== 'transcript' || isTouched(o, correctedIds)) kept.push(o)
+    // C-07: Treat transcript observations as append-only
+    // Always keep non-transcript observations (sensor, resident, helper)
+    // Keep transcript observations that are confirmed or touched by a person
+    if (o.source !== 'transcript' || o.state === 'confirmed' || isTouched(o, correctedIds)) kept.push(o)
   }
   const keptKeys = new Set(kept.map(observationKey))
   const keptIds = new Set(kept.map(o => o.id).filter(Boolean))
@@ -159,9 +161,16 @@ export function applyHelperAction(
   }
 
   // P10: Block helper reject and resolve on resident-sourced observations
+  // C-05: Allow reject or resolve on resident SOS observation (forced_entry_or_assault, quote "Resident SOS pressed") when helper supplies a reason
   const target = obs[resolvedIdx]
-  if (target.source === 'resident' && (action === 'reject' || action === 'resolve')) {
+  const isResidentSOS = target.source === 'resident' &&
+                       target.code === 'forced_entry_or_assault' &&
+                       target.quotes.includes('Resident SOS pressed')
+  if (target.source === 'resident' && (action === 'reject' || action === 'resolve') && !isResidentSOS) {
     return { ...stored, _error: 'Cannot reject or resolve resident-sourced observations' }
+  }
+  if (isResidentSOS && (action === 'reject' || action === 'resolve') && !reason) {
+    return { ...stored, _error: 'Reason required to clear resident SOS' }
   }
 
   // Section 8.2: only a serious event can be resolved. Minor events end with the case.

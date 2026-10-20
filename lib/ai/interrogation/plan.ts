@@ -38,6 +38,12 @@ export const ORDER: readonly Slot[] = ['purpose', 'organisation', 'detail', 'pro
 export const PRESS_FIRST: readonly Slot[] = ['purpose', 'organisation', 'proof']
 
 /**
+ * WP4: Minimum turns before the interview can be considered satisfied.
+ * Kept for backward compatibility with tests, though the code no longer enforces this.
+ */
+export const MIN_TURNS = 2
+
+/**
  * WP4: Removed all turn limits - no arbitrary total-question cap, no minimum turns.
  * The interview runs until the plan state indicates completion or state-based exit conditions are met.
  * The interview ends when:

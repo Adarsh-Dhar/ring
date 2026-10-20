@@ -57,6 +57,12 @@ export interface CaseInfo {
   /** Spec 4.3: set when an uncertain forced_entry_or_assault has been observed (camera description alone).
    *  The resident must be shown the keep-closed message even before confirmation arrives. */
   unconfirmedAlertedAt?: Date | null
+  /** C-04: Whether a helper has accepted a request for this case (not just seen it). */
+  helperAccepted?: boolean
+  /** Spec 6.2: Visitor left marker. */
+  visitorLeftAt?: Date | null
+  /** H-39: When the visitor left (door evidence or helper marked). */
+  visitorLeftAt?: Date | null
 }
 
 export interface StateInfo {
@@ -78,16 +84,42 @@ export function computeResidentView(state: StateInfo, household: Household): Res
   const now = new Date()
   const householdTime = getHouseholdTime(now, household.timezone)
 
-  // Active cases are looked at first, because an emergency outranks every other state (spec 6.1 step 1).
+  // H-39: Active cases are looked at first, because an emergency outranks every other state (spec 6.1 step 1).
+  // Remove dead statuses 'open' and 'helper_checking'
   const activeCases = state.cases.filter(c =>
-    c.status === 'waiting' || c.status === 'open' || c.status === 'helper_checking' ||
-    c.status === 'answered' || c.status === 'no_response'
+    c.status === 'waiting' || c.status === 'answered' || c.status === 'no_response'
   )
   const activeCase = activeCases.length > 0
     ? [...activeCases].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0]
     : null
 
-  // Priority 1: Emergency. P11 / Spec 4.3: confirmed (riskScore 100 or emergency mode) OR unconfirmed forced entry
+  // H-39: Priority 1: Night lock - M4 and M5 outrank night lock, connection lost, and offline
+  if (state.nightLockActive) {
+    return {
+      state: 'CLOSED_KEEP_SHUT',
+      message: 'Night lock is on. The door stays closed.',
+      backgroundColor: '#2d1b1b',
+      textColor: '#ffffff',
+      showVideo: false,
+      showFaces: false,
+      canOpen: false,
+    }
+  }
+
+  // H-39: Priority 2: Connection lost or offline - M4 and M5 outrank these
+  if (!state.deviceOnline || (state.lastHeartbeat && (now.getTime() - state.lastHeartbeat.getTime() > 5 * 60 * 1000))) {
+    return {
+      state: 'CLOSED_KEEP_SHUT',
+      message: 'Doorbell offline. Keep door closed and call your helper.',
+      backgroundColor: '#2d1b1b',
+      textColor: '#ffffff',
+      showVideo: false,
+      showFaces: false,
+      canOpen: false,
+    }
+  }
+
+  // Priority 4: Emergency. P11 / Spec 4.3: confirmed (riskScore 100 or emergency mode) OR unconfirmed forced entry
   // (unconfirmedAlertedAt) both mean keep closed and move away. This outranks night lock, a lost connection and an
   // offline device, because "Night lock is on" must never hide a forced entry. canOpen is always false.
   if (activeCase && (activeCase.riskScore === 100 || activeCase.controlMode === 'emergency' || activeCase.unconfirmedAlertedAt)) {
@@ -110,49 +142,22 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     }
   }
 
-  // Priority 2: Night lock (keeps door closed)
-  if (state.nightLockActive || (household.quietEnabled &&
-    isInQuietHours(householdTime, household.quietStartHour, household.quietEndHour))) {
-    return {
-      state: 'CLOSED_KEEP_SHUT',
-      message: 'Night lock active - keep door closed',
-      backgroundColor: '#1a1a2e',
-      textColor: '#ffffff',
-      showVideo: false,
-      showFaces: false,
-      canOpen: false,
-    }
-  }
-
-  // Priority 3: Connection lost (no heartbeat in 30 seconds)
-  const HEARTBEAT_TIMEOUT_MS = 30 * 1000
-  if (!state.lastHeartbeat || now.getTime() - state.lastHeartbeat.getTime() > HEARTBEAT_TIMEOUT_MS) {
-    return {
-      state: 'CLOSED_KEEP_SHUT',
-      message: 'Connection lost - keep door closed',
-      backgroundColor: '#2d1b1b',
-      textColor: '#ffffff',
-      showVideo: false,
-      showFaces: false,
-      canOpen: false,
-    }
-  }
-
-  // Priority 4: Device offline
-  if (!state.deviceOnline) {
-    return {
-      state: 'CLOSED_KEEP_SHUT',
-      message: 'Device offline - keep door closed',
-      backgroundColor: '#2d1b1b',
-      textColor: '#ffffff',
-      showVideo: false,
-      showFaces: false,
-      canOpen: false,
-    }
-  }
-
   // Priority 5: Active cases (an emergency was already handled above)
   if (activeCase) {
+    // H-39: Check if visitor has left (unless serious event still active)
+    const isUrgent = modeRank(effectiveModeFor(activeCase.riskScore, activeCase.controlMode as ControlMode | null | undefined)) >= modeRank('helper_urgent')
+    if (activeCase.visitorLeftAt && !isUrgent) {
+      return {
+        state: 'ALL_CLEAR',
+        message: 'The visitor has left',
+        backgroundColor: '#1a1a2e',
+        textColor: '#ffffff',
+        showVideo: false,
+        showFaces: false,
+        canOpen: false,
+      }
+    }
+
     // Case-specific states - explicit answer wins
     // P12: Never set canOpen or show "OK to open" while the mode is M1 or higher
     // Spec 6.1: never lower than the band of the score. case.controlMode is only the event minimum, so a caller that passes it
@@ -163,14 +168,15 @@ export function computeResidentView(state: StateInfo, household: Household): Res
     )
     const modeRankVal = ['ai_leads', 'ai_assisted', 'helper_leads', 'helper_only', 'helper_urgent', 'emergency'].indexOf(effectiveMode)
     const isM1OrHigher = modeRankVal >= 1
-    const helperAcceptedEarly = !!activeCase.ackedAt
+    // C-04: Use helperAccepted if provided, otherwise fall back to ackedAt as a proxy
+    const helperAccepted = activeCase.helperAccepted ?? !!activeCase.ackedAt
 
     if (activeCase.answer === 'safe') {
       return {
         state: 'SAFE_CONFIRM',
         // Spec 6.2: at M1 or higher the screen shows the mode text, never "OK to open".
         message: isM1OrHigher
-          ? residentScreenFor(effectiveMode, helperAcceptedEarly)
+          ? residentScreenFor(effectiveMode, helperAccepted)
           : `${activeCase.answeredBy || 'Helper'} confirmed: OK to open`,
         backgroundColor: '#4caf50',
         textColor: '#ffffff',
@@ -188,7 +194,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
         state: 'NOT_SAFE',
         // Spec 6.2: from M3 up the screen shows the mode wording, not a helper-name headline.
         message: modeRankVal >= modeRank('helper_only')
-          ? residentScreenFor(effectiveMode, helperAcceptedEarly)
+          ? residentScreenFor(effectiveMode, helperAccepted)
           : `${activeCase.answeredBy || 'Helper'} confirmed: NOT SAFE`,
         backgroundColor: '#f44336',
         textColor: '#ffffff',
@@ -241,7 +247,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
       return {
         state: 'CLOSED_KEEP_SHUT',
         message: modeRankVal >= modeRank('helper_only')
-          ? residentScreenFor(effectiveMode, helperAcceptedEarly)
+          ? residentScreenFor(effectiveMode, helperAccepted)
           : 'Nobody answered. Keep door closed and call your helper',
         backgroundColor: '#2d1b1b',
         textColor: '#ffffff',
@@ -259,8 +265,7 @@ export function computeResidentView(state: StateInfo, household: Household): Res
                       activeCase.checkWho ? activeCase.checkWho :
                       'Unknown'
 
-    // P11: Use residentScreenFor for the screen text based on effective mode and ackedAt
-    const helperAccepted = helperAcceptedEarly
+    // P11: Use residentScreenFor for the screen text based on effective mode and helperAccepted
     const screenText = residentScreenFor(effectiveMode, helperAccepted)
 
     return {

@@ -6,7 +6,7 @@
  */
 import { getDb } from '@/lib/db/client'
 
-export type AuditActor = 'ai' | 'helper' | 'resident' | 'system'
+export type AuditActor = 'ai' | 'helper' | 'resident' | 'system' | 'controller'
 
 export interface AuditEvent {
   at: string // ISO timestamp

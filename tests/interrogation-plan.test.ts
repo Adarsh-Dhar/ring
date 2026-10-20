@@ -182,11 +182,8 @@ describe('nextFocus: no caps', () => {
 })
 
 describe('isSatisfied', () => {
-  it('is false before MIN_TURNS even if everything is specific', () => {
-    expect(isSatisfied(allSpecific(), MIN_TURNS - 1)).toBe(false)
-  })
-  it('is true when everything required is specific and enough turns passed', () => {
-    expect(isSatisfied(allSpecific(), MIN_TURNS)).toBe(true)
+  it('is true when everything required is specific (WP4: removed MIN_TURNS requirement)', () => {
+    expect(isSatisfied(allSpecific(), 0)).toBe(true)
   })
   it('is false when one required slot is vague', () => {
     const s = allSpecific(); s.status.proof = 'vague'

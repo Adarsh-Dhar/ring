@@ -8,10 +8,13 @@ import { effectiveModeFor } from './collaborationController'
 import { modeRank } from './riskRules'
 
 export interface ModeScreenCase {
+  id?: string
   kind: string
   riskScore?: number | null
   controlMode?: string | null
   ackedAt?: string | number | Date | null
+  /** C-04: Whether a helper has accepted a request for this case (not just seen it) */
+  helperAccepted?: boolean
 }
 
 export interface ModeScreen {
@@ -43,7 +46,10 @@ export function modeScreenFor(c: ModeScreenCase | null | undefined): ModeScreen 
   if (!mode) return null
   // Emergency visitor cases (S_eff 100) are handled by the resident page's emergency screen, not modeScreenFor
   if (mode === 'emergency') return null
-  return { mode, title: residentScreenFor(mode, !!c!.ackedAt), ...STYLE[mode] }
+
+  // C-04: Use helperAccepted if provided, otherwise fall back to ackedAt as a proxy
+  const helperAccepted = c.helperAccepted ?? !!c.ackedAt
+  return { mode, title: residentScreenFor(mode, helperAccepted), ...STYLE[mode] }
 }
 
 /** M4 and M5 outrank everything else on the screen, including night lock, offline and connection warnings. */

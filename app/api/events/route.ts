@@ -85,6 +85,8 @@ export async function GET(req: NextRequest) {
               ackedAt: currentCase.ackedAt != null ? new Date(currentCase.ackedAt) : null,
               effectiveMode: effectiveModeFor(currentCase.riskScore, currentCase.controlMode as any), // spec 6.1: event minimum AND score band
               unconfirmedAlertedAt: currentCase.unconfirmedAlertedAt != null ? new Date(currentCase.unconfirmedAlertedAt) : null,
+              helperAccepted: currentCase.helperAccepted,
+              visitorLeftAt: currentCase.visitorLeftAt != null ? new Date(currentCase.visitorLeftAt) : null,
             }] : [],
             deviceOnline: !state.offline,
             lastHeartbeat: new Date(), // the view is computed live; the client detects loss from missing heartbeat events
