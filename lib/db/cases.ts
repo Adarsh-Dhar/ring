@@ -142,6 +142,37 @@ export async function deleteOldCases(householdId: string, olderThanDays = 30) {
   })
 }
 
+export async function deleteOldNotifications(userId: string, olderThanDays = 30) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000)
+  return getDb().notification.deleteMany({
+    where: {
+      toUserId: userId,
+      createdAt: { lt: cutoff },
+      read: true,
+      status: { in: ['accepted', 'rejected', 'completed'] }
+    }
+  })
+}
+
+export async function deleteOldNotificationsForHousehold(householdId: string, olderThanDays = 30) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000)
+  // Get all user IDs in the household
+  const memberships = await getDb().membership.findMany({
+    where: { householdId },
+    select: { userId: true }
+  })
+  const userIds = memberships.map(m => m.userId)
+  // Delete notifications for all users in the household
+  return getDb().notification.deleteMany({
+    where: {
+      toUserId: { in: userIds },
+      createdAt: { lt: cutoff },
+      read: true,
+      status: { in: ['accepted', 'rejected', 'completed'] }
+    }
+  })
+}
+
 export async function deleteAllCasesForHousehold(householdId: string) {
   return getDb().case.deleteMany({
     where: { householdId }

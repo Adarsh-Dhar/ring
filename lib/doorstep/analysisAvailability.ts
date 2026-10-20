@@ -38,7 +38,7 @@ export async function markAiUnavailable(
     // Notify helpers once
     const { createHelperRequest } = await import('./helperRequests')
     const memberships = await getDb().membership.findMany({
-      where: { householdId, approved: true },
+      where: { householdId, consent: 'approved' },
     })
 
     // Only notify if not already notified (deduplication via helper request)

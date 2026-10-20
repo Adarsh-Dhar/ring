@@ -4,7 +4,7 @@ import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfigure
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
-import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, claimEscalationStep, getOverdueCases } from '../db/cases'
+import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, deleteOldNotificationsForHousehold, claimEscalationStep, getOverdueCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 import { effectiveModeFor, effectiveScore } from '@/lib/doorstep/collaborationController'
@@ -1274,7 +1274,7 @@ export async function selfVerify(
   }
 
   // H-30: Check for pending approvals
-  const { getPendingActions, approvePendingAction } = await import('./pendingActions')
+  const { getPendingActions, approvePendingAction } = await import('../doorstep/pendingActions')
   const pendingActions = await getPendingActions(caseId)
   const pendingApproval = pendingActions.find(a => a.state === 'pending' && a.kind === 'visit_approval')
   if (pendingApproval) {
@@ -1668,6 +1668,7 @@ export async function resetAll(householdId: string) {
   if (household) state.plannedMode = asMode((household as any).plannedMode)
   await deleteOldCases(householdId, 0)
   await deleteOldExpectedVisits(householdId)
+  await deleteOldNotificationsForHousehold(householdId, 0)
 }
 
 // ── Alert status ──────────────────────────────────────────────────────────────

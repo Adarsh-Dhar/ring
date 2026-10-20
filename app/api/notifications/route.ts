@@ -7,6 +7,10 @@ import { Prisma } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
+const MarkReadBody = z.object({
+  notificationIds: z.array(z.string()),
+})
+
 export async function GET(req: NextRequest) {
   const a = await authorize(req, 'any')
   if (a.ok === false) return a.res
@@ -59,6 +63,34 @@ const CreateBody = z.object({
   message: z.string().min(1).max(1000),
   toUserId: z.string(),
 })
+
+export async function PATCH(req: NextRequest) {
+  const a = await authorize(req, 'any')
+  if (a.ok === false) return a.res
+
+  const p = await parse(req, MarkReadBody)
+  if (p.ok === false) return p.res
+  const body = p.data
+
+  try {
+    const db = getDb()
+    await db.notification.updateMany({
+      where: {
+        id: { in: body.notificationIds },
+        toUserId: a.session!.userId,
+      },
+      data: {
+        read: true,
+        readAt: new Date(),
+      },
+    })
+
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[NOTIFICATIONS PATCH] Failed to mark notifications as read', e)
+    return fail('Unable to mark notifications as read. Please try again.', 503)
+  }
+}
 
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'any')

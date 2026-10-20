@@ -9,8 +9,8 @@ export interface ModelLimits { rpm: number; rpd: number }
 const env = (k: string, d: string) => (process.env[k] || d).trim()
 
 export const MODEL_IDS: Record<ModelRole, () => string> = {
-  workhorse: () => env('GEMINI_MODEL_WORKHORSE', 'gemini-3.1-flash-lite'),
-  quality:   () => env('GEMINI_MODEL_QUALITY',   'gemini-3.8-flash'),
+  workhorse: () => env('GEMINI_MODEL_WORKHORSE', 'gemini-3.5-flash-lite'),
+  quality:   () => env('GEMINI_MODEL_QUALITY',   'gemini-3.5-flash-lite'),
   fallback:  () => env('GEMINI_MODEL_FALLBACK',  'gemma-4-26b'),
   embedding: () => env('GEMINI_MODEL_EMBEDDING', 'gemini-embedding-2'),
   tts:       () => env('GEMINI_MODEL_TTS',       'gemini-3.1-flash-tts'),

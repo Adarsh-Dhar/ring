@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useWorkspace } from '../WorkspaceContext'
 import { useDashboardData } from '../useDashboardData'
@@ -9,6 +9,23 @@ export default function DashboardPage() {
   const { data: dashboardData, reload } = useDashboardData(workspaceId)
   const [showRingModal, setShowRingModal] = useState(false)
   const [ringInstructions, setRingInstructions] = useState<any>(null)
+  const [now, setNow] = useState(Date.now())
+
+  // Update the countdown every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Date.now())
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  // Reload dashboard data every 10 seconds to sync with server
+  useEffect(() => {
+    const interval = setInterval(() => {
+      reload()
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [reload])
 
   const ringStatus = dashboardData?.ringStatus === 'connected' ? 'connected' : 'not_connected'
 
@@ -78,7 +95,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-600">
-                    Expires in {Math.max(0, Math.ceil((new Date(pendingCase.deadlineAt).getTime() - Date.now()) / 1000))}s
+                    Expires in {Math.max(0, Math.ceil((new Date(pendingCase.deadlineAt).getTime() - now) / 1000))}s
                   </p>
                   <Link
                     href="/helper"

@@ -32,6 +32,16 @@ export default function NotificationsPage() {
       const data = await res.json()
       setNotifications(data.notifications ?? [])
       setError(null)
+
+      // Mark all unread notifications as read
+      const unreadIds = data.notifications.filter((n: Notification) => !n.read).map((n: Notification) => n.id)
+      if (unreadIds.length > 0) {
+        await fetch('/api/notifications', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notificationIds: unreadIds }),
+        })
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load notifications')
     } finally {

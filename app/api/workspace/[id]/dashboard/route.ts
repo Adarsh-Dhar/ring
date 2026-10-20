@@ -67,11 +67,37 @@ export async function GET(
     })
 
     // Get pending cases (doorbell alerts that need response)
+    const now = new Date()
+
+    // Close expired cases before counting/displaying
+    const expiredCases = await db.case.findMany({
+      where: {
+        householdId,
+        status: 'waiting',
+        closedAt: null,
+        deadlineAt: { lte: now }, // Deadline has passed
+      },
+      select: { id: true },
+    })
+
+    for (const c of expiredCases) {
+      await db.case.update({
+        where: { id: c.id },
+        data: {
+          lifecycle: 'closed',
+          closedAt: now,
+          closedBy: 'system',
+          closeReason: 'deadline_expired',
+        },
+      })
+    }
+
     const pendingCasesCount = await db.case.count({
       where: {
         householdId,
         status: 'waiting',
         closedAt: null,
+        deadlineAt: { gt: now }, // Only count cases that haven't expired yet
       },
     })
 
@@ -81,6 +107,7 @@ export async function GET(
         householdId,
         status: 'waiting',
         closedAt: null,
+        deadlineAt: { gt: now }, // Only show cases that haven't expired yet
       },
       orderBy: { createdAt: 'desc' },
       take: 10,

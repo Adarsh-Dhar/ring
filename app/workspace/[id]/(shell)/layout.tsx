@@ -46,6 +46,17 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     })
   }, [workspaceId])
 
+  // Reload notifications when page becomes visible (e.g., after reading notifications in another tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadNotifications()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
+
   const loadNotifications = async () => {
     try {
       const res = await fetch('/api/notifications')
@@ -80,10 +91,10 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
   const markAsRead = async (notificationId: string) => {
     try {
       console.log('Marking notification as read:', notificationId)
-      const res = await fetch(`/api/notifications/${notificationId}`, {
-        method: 'POST',
+      const res = await fetch('/api/notifications', {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_read' }),
+        body: JSON.stringify({ notificationIds: [notificationId] }),
       })
       console.log('Mark as read response:', res.status, await res.text())
       loadNotifications()
@@ -276,8 +287,13 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         await loadNotifications()
                         // Mark all unread notifications as read when opening the dropdown
                         const unreadIds = notifications.filter(n => !n.read).map(n => n.id)
-                        for (const id of unreadIds) {
-                          await markAsRead(id)
+                        if (unreadIds.length > 0) {
+                          await fetch('/api/notifications', {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ notificationIds: unreadIds }),
+                          })
+                          loadNotifications()
                         }
                       }
                     }}
