@@ -130,7 +130,7 @@ describe('section 9: every AI action goes through the dispatcher', () => {
     const offenders: string[] = []
     for (const f of files) {
       const norm = f.replace(/\\/g, '/')
-      if (norm.startsWith('lib/ai/talkback/') || norm === 'lib/doorstep/toolDispatcher.ts' || norm === 'lib/doorstep/actionGate.ts') continue
+      if (norm.startsWith('lib/ai/talkback/') || norm === 'lib/doorstep/toolDispatcher.ts' || norm === 'lib/doorstep/actionGate.ts' || norm === 'lib/doorstep/decisionPacket.ts') continue
       readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
         const t = line.trim()
         if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return

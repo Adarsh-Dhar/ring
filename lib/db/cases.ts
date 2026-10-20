@@ -186,9 +186,18 @@ export async function claimEscalationStep(
       status:      change.status,
       lane:        change.lane ?? null,
       resolvedAt:  change.resolvedAt !== undefined ? new Date(change.resolvedAt) : undefined,
-      log:         log as unknown as Prisma.JsonArray,
+      // Spec 11.1: the audit log is append-only. With a real database the new lines are APPENDED below, never written over the
+      // column, so an audit entry another writer added a moment ago cannot be lost. Test doubles without raw SQL keep the old write.
+      ...(typeof (getDb() as any).$executeRaw === 'function' ? {} : { log: log as unknown as Prisma.JsonArray }),
     },
   })
+  if (r.count === 1 && typeof (getDb() as any).$executeRaw === 'function' && log.length) {
+    const lines = JSON.stringify(log)
+    await (getDb() as any).$executeRaw`UPDATE "Case" SET "log" = COALESCE("log", '[]'::jsonb) || COALESCE((
+      SELECT jsonb_agg(e) FROM jsonb_array_elements(${lines}::jsonb) AS e
+      WHERE NOT (COALESCE("log", '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('t', e->'t', 'msg', e->'msg')))
+    ), '[]'::jsonb) WHERE "id" = ${caseId}`
+  }
   return r.count === 1
 }
 

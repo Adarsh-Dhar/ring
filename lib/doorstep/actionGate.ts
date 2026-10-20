@@ -4,6 +4,7 @@
  * Order of checks: prohibited -> helper-only -> emergency-only -> resident restriction -> budget.
  */
 import { AUTHORITY_COST, HELPER_ONLY_TOOLS, PROHIBITED_TOOLS, EMERGENCY_ONLY_TOOLS, type GatedTool } from './authorityCosts'
+import { canonicalTool } from './toolRegistry'
 import type { Decision, Preferences } from './residentPreferences'
 
 export type GateDecision = 'allow' | 'ask_helper' | 'deny'
@@ -13,11 +14,13 @@ export interface GateResult { decision: GateDecision; reason: string; cost: numb
 const RESIDENT_DECISION: Partial<Record<GatedTool, Decision>> = {
   greet_routine_request: 'greet_visitor',
   neutral_verification_question: 'ask_purpose',
+  // Spec 9.1: pre-authorised routine instructions (where to leave a parcel) are the resident's accept_parcel delegation.
+  handle_routine_request: 'accept_parcel',
 }
 
 /** The resident delegation a tool exercises, or null when no resident setting governs it (used to check helperMayApprove). */
 export function decisionForTool(tool: string): Decision | null {
-  return RESIDENT_DECISION[tool as GatedTool] ?? null
+  return RESIDENT_DECISION[canonicalTool(tool) as GatedTool] ?? null
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinite(n) ? n : 0)))
@@ -26,7 +29,9 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(Number.isFinit
  *  `decision`: the resident delegation this action exercises when the tool alone is ambiguous (ask_for_id, accept_parcel,
  *  tell_visitor_to_leave). Spec 5.4: a resident restriction always overrides the number.
  *  `safetyOnly`: Section 7.2 - when helper-led with no helper answering, AI is limited to safety scripts. */
-export function gateAction(tool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean; decision?: Decision; safetyOnly?: boolean } = {}): GateResult {
+export function gateAction(rawTool: string, sEff: number, prefs?: Preferences, opts: { holdOnly?: boolean; decision?: Decision; safetyOnly?: boolean } = {}): GateResult {
+  // Spec 9.1 names (speak_boundary_message, greet_visitor, ...) and the legacy names are the same tools.
+  const tool = canonicalTool(rawTool)
   const budget = 100 - clamp(sEff)
   if ((PROHIBITED_TOOLS as readonly string[]).includes(tool)) return { decision: 'deny', reason: 'prohibited', cost: null, budget }
   if ((HELPER_ONLY_TOOLS as readonly string[]).includes(tool)) return { decision: 'ask_helper', reason: 'helper_only', cost: null, budget }

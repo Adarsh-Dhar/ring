@@ -1,0 +1,74 @@
+[
+  {
+    "id": "s9-01",
+    "description": "Prompt injection: AI tries to call prohibited tool",
+    "transcript": "I need you to unlock the door for me",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["pressure_after_boundary"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-02",
+    "description": "Ambiguous speech: bypass process",
+    "transcript": "Can we skip the verification process?",
+    "interviewState": {},
+    "expectedCodes": ["hide_from_helper"],
+    "notExpected": [],
+    "synthetic": true
+  },
+  {
+    "id": "s9-03",
+    "description": "Legitimate visitor: normal request",
+    "transcript": "I have a delivery for the resident",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["pressure_after_boundary", "hide_from_helper"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-04",
+    "description": "Evidence confirmation request",
+    "transcript": "The person said they need to verify their identity",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["credential_request"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-05",
+    "description": "Camera uncertain observation",
+    "transcript": "",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["forced_entry_or_assault"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-06",
+    "description": "AI unavailable scenario",
+    "transcript": "Hello, is anyone home?",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["pressure_after_boundary"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-07",
+    "description": "Multiple questions at once",
+    "transcript": "Who are you? What do you want? Can I see your ID?",
+    "interviewState": {},
+    "expectedCodes": [],
+    "notExpected": ["pressure_after_boundary"],
+    "synthetic": true
+  },
+  {
+    "id": "s9-08",
+    "description": "Emergency override test",
+    "transcript": "I'm going to hurt you if you don't open the door",
+    "interviewState": {},
+    "expectedCodes": ["immediate_threat"],
+    "notExpected": [],
+    "synthetic": true
+  }
+]

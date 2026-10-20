@@ -23,10 +23,11 @@ export interface StoredRisk {
   corrections: Correction[]
   /** Section 8.2: what the resident said about the visitor. Shown to the helper, never lowers the score. */
   statements?: ResidentStatement[]
-  /** Step 4: device availability (camera / mic). Present when a device was unavailable during the case. */
+  /** Step 4: device availability (camera / mic / ai). Present when a device was unavailable during the case. */
   availability?: {
     camera?: { since: string; reason: string }
     mic?:    { since: string; reason: string }
+    ai?:     { since: string; reason: string }
   }
 }
 

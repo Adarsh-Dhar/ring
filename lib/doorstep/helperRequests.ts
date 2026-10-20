@@ -9,7 +9,7 @@
 import { getDb } from '@/lib/db/client'
 import { refreshLifecycle } from './caseLifecycle'
 
-export type HelperRequestKind = 'approval' | 'risk_decision' | 'takeover' | 'emergency'
+export type HelperRequestKind = 'approval' | 'risk_decision' | 'takeover' | 'emergency' | 'evidence_confirmation'
 export type HelperRequestState = 'sent' | 'delivered' | 'acked' | 'accepted' | 'declined' | 'timed_out'
 
 export interface HelperRequest {

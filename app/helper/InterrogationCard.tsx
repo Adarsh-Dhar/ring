@@ -41,6 +41,7 @@ type Ai = {
     availability?: {
       camera?: { since: string; reason: string }
       mic?: { since: string; reason: string }
+      ai?: { since: string; reason: string }
     }
   } | null
   aiStatus?: 'succeeded' | 'processing' | 'disabled' | 'not_enabled' | 'failed' | 'not_applicable'
@@ -378,13 +379,18 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
                 </div>
               )}
               {/* Unknown: unavailable, retracted, or unestablished. Also shows device availability. */}
-              {(evidenceGroups.unknown.length > 0 || availability.camera || availability.mic) && (
+              {(evidenceGroups.unknown.length > 0 || availability.camera || availability.mic || availability.ai) && (
                 <div>
                   <p className="text-xs font-medium text-slate-400">Unknown (unavailable or unestablished)</p>
                   {/* Device availability markers */}
                   {availability.camera && (
                     <p className="text-xs text-slate-400 mt-1">
                       📷 Camera offline since {new Date(availability.camera.since).toLocaleTimeString()} — {availability.camera.reason}
+                    </p>
+                  )}
+                  {availability.ai && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      🤖 AI analysis unavailable since {new Date(availability.ai.since).toLocaleTimeString()} — no points were added because of it. Please review this visit yourself.
                     </p>
                   )}
                   {availability.mic && (

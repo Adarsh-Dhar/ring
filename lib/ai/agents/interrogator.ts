@@ -162,6 +162,9 @@ export async function startInterrogator(householdId: string, caseId: string, dev
   } catch (e) {
     console.error('[AI interrogator]', e)
     await setCaseAi(caseId, { interrogationState: 'failed' })
+    // Spec 9.5: say so on the case and tell the helper. No points are added; the door stays closed.
+    const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability')
+    await markAnalysisUnavailable(householdId, caseId, 'AI service error')
   }
 }
 
@@ -248,6 +251,8 @@ export async function processAnswer(
         riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
         // riskScore, riskLedger, controlMode are now written by applyRiskEdit
       })
+      // Spec 9.5: the model could not grade this answer (down, busy or invalid). Mark the analysis unavailable, add no points, tell the helper.
+      { const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAnalysisUnavailable(householdId, caseId, 'AI could not grade this answer') }
       return { question: 'I could not understand that. Please try again.', final: false, close: null }
     }
 
@@ -402,7 +407,8 @@ export async function processAnswer(
     const dq = await dispatchAiAction({ householdId, caseId, tool: 'neutral_verification_question', text: nextQuestion, sEff: control.effectiveScore, decision: 'ask_purpose' })
     if (!dq.allowed) {
       const closeLine = await closeWith(householdId, caseId, modeRank(control.mode) >= modeRank('helper_only') ? 'safety' : 'close')
-      await finishInterrogation(householdId, caseId, updatedTurns, 'authority_limit', out)
+      // Spec 9.1: the per-case question limit is the planned end of the interview, not an authority-limit hand-over.
+      await finishInterrogation(householdId, caseId, updatedTurns, dq.reason === 'question_limit_reached' ? 'max_turns' : 'authority_limit', out)
       return { question: null, final: true, close: closeLine }
     }
 
@@ -415,6 +421,7 @@ export async function processAnswer(
     return { question: dq.text, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
+    { const { markAnalysisUnavailable } = await import('@/lib/doorstep/analysisAvailability'); await markAnalysisUnavailable(householdId, caseId, 'AI service error') }
     let errorMessage = 'AI service error. Please try again.'
     if (e instanceof Error) {
       if (e.message.includes('503') || e.message.includes('high demand') || e.message.includes('UNAVAILABLE')) {

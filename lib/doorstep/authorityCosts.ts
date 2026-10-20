@@ -15,6 +15,14 @@ export const AUTHORITY_COST = {
   neutral_verification_question: 41,
   offer_approved_alternative: 61,
   greet_routine_request: 81,
+  // Spec 9.1 new tools
+  report_observation: 0,
+  summarize_evidence: 0,
+  preserve_evidence: 0,
+  escalate_to_backup: 0,
+  enforce_entry_policy: 0,
+  trigger_emergency_workflow: 0,
+  request_evidence_confirmation: 0,
 } as const
 export type GatedTool = keyof typeof AUTHORITY_COST
 
@@ -24,5 +32,14 @@ export const HELPER_ONLY_TOOLS = ['policy_exception'] as const
  * Zero-cost internal tools (read_log_summarise, update_status, alert_helper) are NOT listed: the helper is notified from M1 and
  * the AI gives factual summaries at M3, so they must stay available at every score (spec 6.2). */
 export const EMERGENCY_ONLY_TOOLS = ['emergency_guidance'] as const
-/** Never allowed for anyone at any score. */
-export const PROHIBITED_TOOLS = ['unlock_door', 'disclose_access_credentials', 'grant_entry', 'compel_resident_to_open'] as const
+/** Never allowed for anyone at any score. Spec 9.3: also covers labelling a visitor dangerous/criminal, emergency services on a score, silence as consent. */
+export const PROHIBITED_TOOLS = [
+  'unlock_door',
+  'disclose_access_credentials',
+  'grant_entry',
+  'compel_resident_to_open',
+  'label_visitor_dangerous',
+  'label_visitor_criminal',
+  'call_emergency_services_on_score',
+  'silence_as_consent',
+] as const

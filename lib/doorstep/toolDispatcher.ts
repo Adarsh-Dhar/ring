@@ -10,6 +10,8 @@
  * Nothing else may say a fixed line or call the gate. tests/doorstep-dispatcher.test.ts fails if it does.
  * The gate itself (gateAction) stays pure. This file adds the case lookup, the helper-decision side effects,
  * the audit log and the stamps around it.
+ *
+ * Spec 9.1: AI_VISITOR_QUESTION_LIMIT caps the number of questions per case (default 2).
  */
 import { getDb } from '@/lib/db/client'
 import { getPreferences } from '@/lib/db/preferences'
@@ -21,6 +23,10 @@ import { interrogatorLines } from '@/lib/ai/talkback/lines'
 import type { LineId } from '@/lib/ai/talkback/types'
 import type { Decision } from './residentPreferences'
 import { modeRank, type InterviewState } from './riskRules'
+import { canonicalTool } from './toolRegistry'
+
+/** Spec 9.1: at most two questions per case by default. AI_VISITOR_QUESTION_LIMIT changes this. */
+const AI_VISITOR_QUESTION_LIMIT = parseInt(process.env.AI_VISITOR_QUESTION_LIMIT || '2', 10)
 
 /** Which interview stamps a fixed line writes once it has been played. First write wins, see applyRiskEdit. */
 export const LINE_STAMPS: Partial<Record<LineId, (keyof InterviewState)[]>> = {
@@ -185,4 +191,49 @@ export async function dispatchAiAction(i: DispatchInput): Promise<DispatchResult
   }
   await audit(i.caseId, { tool, line, decision: 'executed', reason: g.reason, cost: g.cost, budget: g.budget, stamps })
   return { allowed: true, decision: 'allow', reason: g.reason, tool, line, text }
+}
+
+/**
+ * Dispatch a non-speech AI tool call (spec 9.1).
+ *
+ * This is the entry point for AI tools that are not fixed talkback lines.
+ * It validates the tool name via canonicalTool(), checks the question limit,
+ * and executes or refuses with audit logging.
+ */
+export async function dispatchTool(
+  caseId: string,
+  householdId: string,
+  toolName: string,
+  args: any
+): Promise<{ allowed: boolean; reason?: string; data?: any }> {
+  const canonical = canonicalTool(toolName)
+
+  // Check question limit for verification questions
+  if (canonical === 'neutral_verification_question') {
+    const { readStored } = await import('./caseRisk')
+    const c = await getDb().case.findUnique({
+      where: { id: caseId },
+      select: { riskObservations: true },
+    })
+    if (c) {
+      const stored = readStored(c.riskObservations as unknown)
+      const questionCount = stored.observations.filter(
+        o => o.code === 'neutral_verification_question' || o.quotes.some(q => q.includes('?'))
+      ).length
+      if (questionCount >= AI_VISITOR_QUESTION_LIMIT) {
+        await audit(caseId, { tool: canonical, decision: 'blocked', reason: 'question_limit_exceeded' })
+        return { allowed: false, reason: `Question limit (${AI_VISITOR_QUESTION_LIMIT}) exceeded` }
+      }
+    }
+  }
+
+  // Execute the tool via aiTools
+  const { executeAiToolCall } = await import('./aiTools')
+  const result = await executeAiToolCall(caseId, householdId, canonical, args)
+
+  return {
+    allowed: result.success,
+    reason: result.reason,
+    data: result.data,
+  }
 }

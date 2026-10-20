@@ -30,6 +30,14 @@ export interface Preferences {
   approvedAlternative?: string
   /** Section 7.3: what a helper may approve when the resident is unavailable. Default false. */
   helperMayApprove?: Record<Decision, boolean>
+  /** Section 11.2: privacy settings (retention and AI video analysis switch). */
+  privacy?: {
+    aiVideoAnalysis?: boolean
+    videoRetentionDays?: number
+    audioRetentionDays?: number
+    transcriptRetentionDays?: number
+    auditRetentionDays?: number
+  }
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
@@ -41,6 +49,14 @@ export const DEFAULT_PREFERENCES: Preferences = {
   entryWithoutApproval: 'never',
   // Section 7.3: helpers may approve nothing on the resident's behalf until the resident says so.
   helperMayApprove: { greet_visitor: false, ask_purpose: false, ask_for_id: false, tell_visitor_to_leave: false, accept_parcel: false, approve_short_notice: false },
+  // Section 11.2: default privacy settings
+  privacy: {
+    aiVideoAnalysis: true,
+    videoRetentionDays: 30,
+    audioRetentionDays: 30,
+    transcriptRetentionDays: 90,
+    auditRetentionDays: 365,
+  },
 }
 
 const isDelegate = (v: unknown): v is Delegate => v === 'ai' || v === 'helper' || v === 'resident_only'
@@ -58,6 +74,16 @@ export function parsePreferences(raw: unknown): Preferences {
     helperMayApprove[d] = typeof o.helperMayApprove?.[d] === 'boolean' ? o.helperMayApprove[d] : false
   }
 
+  // Parse privacy settings
+  const privacy = o.privacy ?? {}
+  const parsedPrivacy = {
+    aiVideoAnalysis: typeof privacy.aiVideoAnalysis === 'boolean' ? privacy.aiVideoAnalysis : true,
+    videoRetentionDays: typeof privacy.videoRetentionDays === 'number' ? privacy.videoRetentionDays : 30,
+    audioRetentionDays: typeof privacy.audioRetentionDays === 'number' ? privacy.audioRetentionDays : 30,
+    transcriptRetentionDays: typeof privacy.transcriptRetentionDays === 'number' ? privacy.transcriptRetentionDays : 90,
+    auditRetentionDays: typeof privacy.auditRetentionDays === 'number' ? privacy.auditRetentionDays : 365,
+  }
+
   return {
     delegation,
     communication: {
@@ -69,6 +95,7 @@ export function parsePreferences(raw: unknown): Preferences {
     entryWithoutApproval: 'never',
     approvedAlternative: typeof o.approvedAlternative === 'string' ? o.approvedAlternative : undefined,
     helperMayApprove,
+    privacy: parsedPrivacy,
   }
 }
 

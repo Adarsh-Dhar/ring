@@ -5,7 +5,7 @@
  */
 export interface ResidentRequestLine { id: string; kind: string; state: string; helperName?: string; label: string }
 
-const WHAT: Record<string, string> = { approval: 'approval', risk_decision: 'a decision', takeover: 'to take over', emergency: 'urgent help' }
+const WHAT: Record<string, string> = { approval: 'approval', risk_decision: 'a decision', takeover: 'to take over', emergency: 'urgent help', evidence_confirmation: 'evidence confirmation' }
 
 export function residentRequestLabel(kind: string, state: string, name?: string): string {
   const who = name ?? 'A helper'

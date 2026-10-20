@@ -41,7 +41,7 @@ export type RiskEdit =
   | { kind: 'append'; observation: Observation }
   | { kind: 'interview'; stampType: keyof InterviewState; at: string }
   | { kind: 'helper'; idx: number; obsId?: string; action: 'confirm' | 'reject' | 'restore' | 'resolve'; who: string; reason?: string }
-  | { kind: 'availability'; device: 'camera' | 'mic'; available: boolean; since: string; reason?: string }
+  | { kind: 'availability'; device: 'camera' | 'mic' | 'ai'; available: boolean; since: string; reason?: string }
   | { kind: 'reset'; who: string; reason: string }
   | { kind: 'dispute'; obsId: string; who: string; note?: string }
   | { kind: 'statement'; statementKind: 'expected' | 'known'; who: string; note?: string }
@@ -229,7 +229,7 @@ export async function applyRiskEdit(caseId: string, edit: RiskEdit): Promise<{ o
     }
 
     case 'availability': {
-      // Mark a device (camera or mic) as available or unavailable.
+      // Mark a device (camera, mic, or ai) as available or unavailable.
       // This writes no points and does not lower the mode.
       const prevAvailability = stored.availability ?? {}
       if (edit.available) {

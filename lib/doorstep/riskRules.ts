@@ -185,7 +185,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
     sources: SPEECH_OR_HELPER,
   },
   hide_from_helper: {
-    label: 'Tried to hide from the helper',
+    label: 'Tried to hide from the helper or bypass the process',
     points: 15,
     cap: 15,
     floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
@@ -363,7 +363,8 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   refuse_to_leave: /\b(won'?t|will not|not going to|not gonna|never)\s+(leave|go away|go|move|budge)\b|\bnot\s+(leaving|going anywhere|going away|moving|budging)\b|\bnever\s+leaving\b|\brefuse[sd]?\s+to\s+(leave|go|move)\b/i,
   // Step 8: immediate_threat requires intent aimed at a person. Drop bare beat/smash/burn/harm/break down.
   immediate_threat: /\b(i('?ll| will|'?m going to|'?m gonna))\s+(hurt|kill|stab|shoot|beat (you )?up|burn)\b|\b(hurt|kill|stab|shoot) you\b/i,
-  hide_from_helper: /\b(don'?t|do not|no need to|please don'?t|never)\s+(tell|call|ask|involve|phone|let)\s+(your|the|any)?\s*(helper|carer|son|daughter|family|anyone|anybody|them|him|her)\b|\b(keep (this|it) (a )?secret|between us|just us)\b/i,
+  // Spec 9.4: hide_from_helper wording widened to "bypass the process / avoid verification"
+  hide_from_helper: /\b(don'?t|do not|no need to|please don'?t|never)\s+(tell|call|ask|involve|phone|let)\s+(your|the|any)?\s*(helper|carer|son|daughter|family|anyone|anybody|them|him|her)\b|\b(keep (this|it) (a )?secret|between us|just us)\b|\b(bypass|avoid|skip|go around)\s+(the )?(process|verification|check|confirmation|helper)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
   pressure_after_rule: /\b(let me (in|inside|through)|open up|open the door)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
