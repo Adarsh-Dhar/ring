@@ -28,6 +28,36 @@ vi.mock('@/lib/db/cases', () => ({
   getActiveLifecycleCase: () => Promise.resolve(null),
 }))
 
+vi.mock('@/lib/db/client', () => ({
+  getDb: () => ({
+    case: {
+      findMany: () => Promise.resolve([]),
+      findUnique: () => Promise.resolve(null),
+      update: () => Promise.resolve({}),
+      updateMany: () => Promise.resolve({ count: 1 }),
+      create: () => Promise.resolve({}),
+      $queryRaw: () => Promise.resolve([]),
+    },
+    household: {
+      findUnique: () => Promise.resolve({ preferences: null }),
+    },
+    visitRequest: {
+      findMany: () => Promise.resolve([]),
+    },
+  }),
+}))
+
+vi.mock('@/lib/doorstep/caseLifecycle', () => ({
+  sweepQuietCases: () => Promise.resolve([]),
+  sweepStaleCases: () => Promise.resolve([]),
+  getLifecyclePolicy: () => Promise.resolve({ quietMinutes: 10, lookbackHours: 24 }),
+  hasPendingHelperRequest: () => Promise.resolve(false),
+}))
+
+vi.mock('@/lib/doorbell/request-lifecycle', () => ({
+  sweepRequests: () => Promise.resolve([]),
+}))
+
 const expectedVisitsStore: any[] = []
 
 vi.mock('@/lib/db/visits', () => ({

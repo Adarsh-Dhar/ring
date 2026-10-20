@@ -67,7 +67,34 @@ vi.mock('@/lib/db/memberships', () => ({
 }))
 
 vi.mock('@/lib/db/client', () => ({
-  getDb: () => ({ device: { findMany: () => Promise.resolve([]), upsert: () => Promise.resolve({}) } }),
+  getDb: () => ({
+    case: {
+      findMany: () => Promise.resolve([]),
+      findUnique: () => Promise.resolve(null),
+      update: () => Promise.resolve({}),
+      updateMany: () => Promise.resolve({ count: 1 }),
+      create: () => Promise.resolve({}),
+      $queryRaw: () => Promise.resolve([]),
+    },
+    device: { findMany: () => Promise.resolve([]), upsert: () => Promise.resolve({}) },
+    household: {
+      findUnique: () => Promise.resolve({ preferences: null }),
+    },
+    visitRequest: {
+      findMany: () => Promise.resolve([]),
+    },
+  }),
+}))
+
+vi.mock('@/lib/doorstep/caseLifecycle', () => ({
+  sweepQuietCases: () => Promise.resolve([]),
+  sweepStaleCases: () => Promise.resolve([]),
+  getLifecyclePolicy: () => Promise.resolve({ quietMinutes: 10, lookbackHours: 24 }),
+  hasPendingHelperRequest: () => Promise.resolve(false),
+}))
+
+vi.mock('@/lib/doorbell/request-lifecycle', () => ({
+  sweepRequests: () => Promise.resolve([]),
 }))
 
 vi.mock('@/lib/ring/client', () => ({

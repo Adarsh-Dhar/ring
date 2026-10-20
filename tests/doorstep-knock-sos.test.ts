@@ -22,7 +22,27 @@ const alertEmergency         = vi.fn(async () => true)
 const alertUrgent            = vi.fn(async () => true)
 const alertUnconfirmedEmergency = vi.fn(async () => true)
 
-vi.mock('@/lib/doorbell/store', () => ({ alertEmergency, alertUrgent, alertUnconfirmedEmergency }))
+vi.mock('@/lib/doorbell/store', () => ({
+  alertEmergency: async (hh: string, caseId: string) => {
+    // Simulate the compare-and-set in the real implementation
+    if (row.id === caseId && row.emergencyAlertedAt === null) {
+      row.emergencyAlertedAt = new Date()
+      alertEmergency(hh, caseId) // Call the spy
+      return true
+    }
+    return false // Compare-and-set failed - don't call the spy
+  },
+  alertUrgent: async (hh: string, caseId: string, cause: 'threat' | 'score') => {
+    // Simulate the compare-and-set in the real implementation
+    if (row.id === caseId && row.urgentAlertedAt === null) {
+      row.urgentAlertedAt = new Date()
+      alertUrgent(hh, caseId, cause) // Call the spy
+      return true
+    }
+    return false // Compare-and-set failed - don't call the spy
+  },
+  alertUnconfirmedEmergency,
+}))
 vi.mock('@/lib/db/client', () => ({
   getDb: () => ({
     case: {
@@ -31,9 +51,16 @@ vi.mock('@/lib/db/client', () => ({
       updateMany: async ({ where, data }: any) => {
         // compare-and-set for deadline
         if (where.deadlineAt && row.deadlineAt && where.deadlineAt.getTime() !== row.deadlineAt.getTime()) return { count: 0 }
+        // compare-and-set for emergencyAlertedAt (null check)
+        if (where.emergencyAlertedAt === null && row.emergencyAlertedAt !== null) return { count: 0 }
+        // compare-and-set for urgentAlertedAt (null check)
+        if (where.urgentAlertedAt === null && row.urgentAlertedAt !== null) return { count: 0 }
         Object.assign(row, data)
         return { count: 1 }
       },
+    },
+    household: {
+      findUnique: async () => ({ preferences: null }),
     },
   }),
 }))
