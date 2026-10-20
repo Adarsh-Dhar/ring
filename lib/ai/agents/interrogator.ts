@@ -20,7 +20,6 @@ import { isUnplannedVisit } from '../interrogation/gate'
 import { modeRank } from '@/lib/doorstep/riskRules'
 import { getEventResponse, renderEventResponse, getUncertainResponse } from '@/lib/doorstep/eventResponses'
 import {
-  MAX_TURNS,
   type PlanTurn,
   cleanObs,
   foldPlan,
@@ -32,13 +31,32 @@ import {
   coverageFacts,
   coverageLines,
   isStalled,
+  bankQuestion,
   type Slot,
 } from '@/lib/ai/interrogation/plan'
+import { decideNext, type NextAction, type DecisionContext } from '@/lib/ai/interrogation/respond'
 
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
 
-/** P7: Reason for finishing interrogation - extended for pressure_continues */
-export type FinishReason = 'done' | 'max_turns' | 'evasive' | 'invalid_question' | 'banned_question' | 'model_failed' | 'over_budget' | 'pressure_continues'
+/** WP1: Extended finish reasons for explicit states */
+export type FinishReason =
+  | 'done_verified'
+  | 'unverified_stalled'
+  | 'unverified_refused'
+  | 'visitor_left'
+  | 'model_down'
+  | 'authority_limit'
+  | 'urgent'
+  | 'emergency'
+  // Legacy reasons for backwards compatibility
+  | 'done'
+  | 'max_turns'
+  | 'evasive'
+  | 'invalid_question'
+  | 'banned_question'
+  | 'model_failed'
+  | 'over_budget'
+  | 'pressure_continues'
 
 interface InterrogationTurn {
   question: string      // the question this answer replies to
@@ -175,15 +193,10 @@ export async function processAnswer(
     const greet = interrogatorLines(null).greet
     const asked = turns.length > 0 ? (turns[turns.length - 1].next ?? greet) : greet
 
-    // Optional operator ceiling (AI_INTERROGATOR_MAX_TURNS). Unlimited by default.
-    if (turns.length >= MAX_TURNS) {
-      await finishInterrogation(householdId, caseId, turns, 'max_turns')
-      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
-    }
-
+    // WP4: Removed MAX_TURNS limit - no arbitrary total-question cap
     // The visitor walked away or never speaks: stop, and say so in the risk.
     if (turns.length >= SILENT_LIMIT && trailing(turns, t => !t.transcript && !t.modelFailed) >= SILENT_LIMIT) {
-      await finishInterrogation(householdId, caseId, turns, 'evasive')
+      await finishInterrogation(householdId, caseId, turns, 'visitor_left')
       return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
 
@@ -227,6 +240,7 @@ export async function processAnswer(
       }
       const live = liveAssessment(transcripts, riskMatchesFor(transcripts), {
         coverage: { purposeVague: true, unverifiable: true },
+        transcriptQuality: 'low', // Model failure indicates low quality
       })
       const control = await controlFor(householdId, live)
       await setCaseAi(caseId, {
@@ -249,7 +263,7 @@ export async function processAnswer(
 
     // WP3: Use deterministic planner instead of model-generated questions
     const satisfied = isSatisfied(after, answeredCount) && out.satisfied && !out.evasive && out.inconsistencies.length === 0
-    const focus = nextFocus(after, answeredCount, MAX_TURNS)
+    const focus = nextFocus(after, answeredCount)
 
     let nextQuestion: string | null = null
     if (!satisfied && focus) {
@@ -263,19 +277,7 @@ export async function processAnswer(
     }
     const updatedTurns = [...turns, newTurn]
 
-    // WP3: Check for stall detection before continuing
-    if (isStalled(after, answeredCount)) {
-      await finishInterrogation(householdId, caseId, updatedTurns, 'evasive', out)
-      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
-    }
-
-    if (!nextQuestion) {
-      // WP3: Explicit unverified finish outcome when not satisfied
-      const finishReason = satisfied ? 'done' : 'evasive'
-      await finishInterrogation(householdId, caseId, updatedTurns, finishReason, out)
-      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
-    }
-
+    // WP1: CRITICAL - Risk processing MUST happen before any exit decision
     // Risk is updated live after EVERY answer, so helpers see it while the visitor is still at the door.
     const liveText = updatedTurns.map(t => t.transcript).join(' ')
     const live = liveAssessment(liveText, riskMatchesFor(liveText), {
@@ -292,87 +294,125 @@ export async function processAnswer(
       interviewState: (await getCaseAi(householdId, caseId))?.riskObservations?.interviewState ?? {},
     })
 
-    // P16: M4 - stop greeter conversation if continuing could raise risk. No negotiating or exceptions.
-    // If mode is M4 or higher and we have any confirmed risk events, stop the conversation.
+    // WP3: Use deterministic decideNext() to determine next action based on updated risk
     const newConfirmedBehaviours = live.observations.filter(o => o.state === 'confirmed' && o.source === 'transcript')
-    if (modeRank(control.mode) >= modeRank('helper_urgent') && newConfirmedBehaviours.length > 0) {
+    const PHYSICAL_OR_THREAT = ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault']
+    const uncertainObs = live.observations.find(o => o.state === 'uncertain' && PHYSICAL_OR_THREAT.includes(o.code))
+    const missing = live.ledger.find(e => e.state === 'uncertain' && PRECONDITION_LINE[String(e.debug?.why)])
+
+    const decisionCtx: DecisionContext = {
+      observations: live.observations,
+      score: live.score,
+      controlMode: control.mode,
+      effectiveScore: control.effectiveScore,
+      visitorLeft: trailing(turns, t => !t.transcript && !t.modelFailed) >= SILENT_LIMIT,
+      modelDown: false,
+      stallsRemaining: isStalled(after, answeredCount) ? 0 : 3, // Simplified stall tracking
+      canAskAnother: nextQuestion !== null,
+      hasPreconditionLine: missing ? PRECONDITION_LINE[String(missing.debug?.why)] : null,
+    }
+
+    const decision = decideNext(decisionCtx)
+
+    // Handle decision according to precedence order
+    if (decision.type === 'emergency') {
+      // M5: Emergency workflow
       const closeLine = await closeWith(householdId, caseId, 'safety')
-      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+      await finishInterrogation(householdId, caseId, updatedTurns, 'emergency', out)
       return { question: null, final: true, close: closeLine }
     }
 
-    // P16: M3 uncertain events - pause questions, play safety script, preserve evidence
-    // Evidence is preserved automatically through the observation store (not deleted by cleanup)
-    const PHYSICAL_OR_THREAT = ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault']
-    const uncertainObs = live.observations.find(o => o.state === 'uncertain' && PHYSICAL_OR_THREAT.includes(o.code))
-    if (modeRank(control.mode) >= modeRank('helper_only') && uncertainObs) {
-      // For uncertain physical events, use the uncertain response with safety script
-      const uncertainResponse = getUncertainResponse(uncertainObs.code)
+    if (decision.type === 'urgent_safety') {
+      // M4: Urgent safety path
+      const closeLine = await closeWith(householdId, caseId, 'safety')
+      await finishInterrogation(householdId, caseId, updatedTurns, 'urgent', out)
+      return { question: null, final: true, close: closeLine }
+    }
+
+    if (decision.type === 'uncertain_safety') {
+      // M3: Uncertain physical/threat event
+      const uncertainResponse = uncertainObs ? getUncertainResponse(uncertainObs.code) : null
       if (uncertainResponse) {
         const d = await dispatchAiAction({ householdId, caseId, tool: uncertainResponse.tool, text: uncertainResponse.response, sEff: control.effectiveScore })
         if (d.allowed) {
-          await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+          await finishInterrogation(householdId, caseId, updatedTurns, 'authority_limit', out)
           return { question: null, final: true, close: d.text }
         }
       }
       const closeLine = await closeWith(householdId, caseId, 'safety')
-      await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
+      await finishInterrogation(householdId, caseId, updatedTurns, 'authority_limit', out)
       return { question: null, final: true, close: closeLine }
     }
 
-    // P15: Check for event-specific scripted responses
-    // These run in addition to the mode. Each response goes through the dispatcher (gate, audit, stamp).
-    for (const obs of newConfirmedBehaviours) {
-      const eventResponse = getEventResponse(obs.code)
+    if (decision.type === 'event_response') {
+      // Event-specific scripted response (e.g., credential request)
+      const eventResponse = getEventResponse(decision.code)
       if (eventResponse) {
-        // Load approved alternative for pressure_after_rule if available
         let approvedAlternative: string | undefined
-        if (obs.code === 'pressure_after_rule') {
+        if (decision.code === 'pressure_after_rule') {
           const prefs = await getPreferences(householdId)
           approvedAlternative = prefs.approvedAlternative
         }
         const d = await dispatchAiAction({
           householdId, caseId, tool: eventResponse.tool,
-          text: renderEventResponse(eventResponse, obs.quotes ?? [], { approvedAlternative }),
+          text: renderEventResponse(eventResponse, newConfirmedBehaviours.find(o => o.code === decision.code)?.quotes ?? [], { approvedAlternative }),
           sEff: control.effectiveScore,
         })
         if (d.allowed) {
-          // Speak the scripted response instead of the next question
           await finishInterrogation(householdId, caseId, updatedTurns, 'done', out)
           return { question: null, final: true, close: d.text }
         }
       }
     }
 
-    // Spec 4.2: a behaviour that was ignored only because its precondition line never played (rules not explained,
-    // boundary not stated, visitor not yet asked to leave) is fixed by playing that fixed line now. The dispatcher
-    // stamps it when it is played, so the next repeat can be scored. This replaces guessing stamps from model wording.
-    let outgoing: string | null = null
-    const missing = live.ledger.find(e => e.state === 'uncertain' && PRECONDITION_LINE[String(e.debug?.why)])
-    if (missing) {
-      const pre = await dispatchAiAction({ householdId, caseId, line: PRECONDITION_LINE[String(missing.debug?.why)], sEff: control.effectiveScore })
-      if (pre.allowed) outgoing = pre.text
+    if (decision.type === 'precondition_line') {
+      // Play missing precondition line
+      const pre = await dispatchAiAction({ householdId, caseId, line: decision.line as any, sEff: control.effectiveScore })
+      if (pre.allowed) {
+        newTurn.next = pre.text
+        await setCaseAi(caseId, {
+          interrogationTurns: updatedTurns as any, interrogationState: 'asking',
+          visitorSummary: out.realReasonSummary ?? undefined,
+          riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
+        })
+        return { question: pre.text, final: false, close: null }
+      }
     }
 
-    // Spec 5.4: asking the next question is a neutral verification question (cost 41). Over budget -> stop and hand over.
-    if (!outgoing) {
-      const dq = await dispatchAiAction({ householdId, caseId, tool: 'neutral_verification_question', text: nextQuestion, sEff: control.effectiveScore, decision: 'ask_purpose' })
-      if (!dq.allowed) {
-        // P7: M3 and above - return the safety line instead of "Thank you. Please wait a moment."
-        const closeLine = await closeWith(householdId, caseId, modeRank(control.mode) >= modeRank('helper_only') ? 'safety' : 'close')
-        await finishInterrogation(householdId, caseId, updatedTurns, 'over_budget', out)
-        return { question: null, final: true, close: closeLine }
-      }
-      outgoing = dq.text
+    if (decision.type === 'handoff_unverified') {
+      // Hand over with unverified status
+      await finishInterrogation(householdId, caseId, updatedTurns, 'unverified_stalled', out)
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
-    newTurn.next = outgoing   // the next turn's "question this answers" is what was actually said
+
+    if (decision.type === 'visitor_gone') {
+      await finishInterrogation(householdId, caseId, updatedTurns, 'visitor_left', out)
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
+    }
+
+    // decision.type === 'ask': Ask the next question
+    if (!nextQuestion) {
+      // No question available - finish
+      const finishReason = satisfied ? 'done_verified' : 'unverified_stalled'
+      await finishInterrogation(householdId, caseId, updatedTurns, finishReason, out)
+      return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
+    }
+
+    // Check authority gate before asking
+    const dq = await dispatchAiAction({ householdId, caseId, tool: 'neutral_verification_question', text: nextQuestion, sEff: control.effectiveScore, decision: 'ask_purpose' })
+    if (!dq.allowed) {
+      const closeLine = await closeWith(householdId, caseId, modeRank(control.mode) >= modeRank('helper_only') ? 'safety' : 'close')
+      await finishInterrogation(householdId, caseId, updatedTurns, 'authority_limit', out)
+      return { question: null, final: true, close: closeLine }
+    }
+
+    newTurn.next = dq.text
     await setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
       visitorSummary: out.realReasonSummary ?? undefined,
       riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control: control } as any,
-      // riskScore, riskLedger, controlMode are now written by applyRiskEdit
     })
-    return { question: outgoing, final: false, close: null }
+    return { question: dq.text, final: false, close: null }
   } catch (e) {
     console.error('[AI interrogator] processAnswer failed', e)
     let errorMessage = 'AI service error. Please try again.'

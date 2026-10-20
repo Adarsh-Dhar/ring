@@ -171,11 +171,13 @@ const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
   'Hides from helper':              'hide_from_helper',
 }
 
-export function observationsFromRuleMatches(matches: RuleMatch[]): Observation[] {
+export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQuality?: 'high' | 'medium' | 'low'): Observation[] {
   const out: Observation[] = []
   for (const m of matches) {
     const b = RULE_FLAG_BEHAVIOUR[m.flag]
     if (b) {
+      // WP2: Pass through transcription quality; default to 'medium' if not provided
+      const quality = transcriptQuality || 'medium'
       out.push({
         code: b,
         at: new Date().toISOString(),
@@ -183,7 +185,7 @@ export function observationsFromRuleMatches(matches: RuleMatch[]): Observation[]
         source: 'transcript',
         state: 'uncertain',
         points: 0,
-        transcriptQuality: undefined, // Would need engine confidence from STT
+        transcriptQuality: quality,
       })
     }
   }
@@ -192,14 +194,14 @@ export function observationsFromRuleMatches(matches: RuleMatch[]): Observation[]
 
 function assemble(a: {
   transcript: string; cats: Set<RiskCategory>; evidence: Evidence[]; rationale: string
-  source: Assessment['source']; ruleMatches: RuleMatch[]; interviewState?: InterviewState
+  source: Assessment['source']; ruleMatches: RuleMatch[]; interviewState?: InterviewState; precomputedObservations?: Observation[]
 }): Assessment {
   // Pass the full transcript as the segment so that when caseRiskStore re-scores with transcript:'',
   // each observation's own segment keeps the quote grounded correctly (spec 4.3 re-score safety).
   const fromJudge = observationsFromEvidence(a.evidence, { segment: a.transcript })
   const judged = new Set(fromJudge.observations.map(o => o.code))
-  // A keyword hit and a judge hit on the same behaviour are one observation, not two.
-  const fromRules = observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
+  // WP2: Use precomputed observations if provided (from liveAssessment), otherwise compute them
+  const fromRules = a.precomputedObservations || observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
   const allObs = [...fromRules, ...fromJudge.observations]
   const risk = scoreObservations(allObs, { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
@@ -228,13 +230,15 @@ function assemble(a: {
  */
 export function liveAssessment(
   transcript: string, ruleMatches: RuleMatch[],
-  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean; interviewState?: InterviewState },
+  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean; interviewState?: InterviewState; transcriptQuality?: 'high' | 'medium' | 'low' },
 ): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleMatches.map(m => m.flag)))
   if (extra?.inconsistent) cats.add('story_mismatch')
   if (extra?.evasive) cats.add('evasive_answers')
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
+  // WP2: Pass transcript quality to observation creation
+  const observations = observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
   return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState })
 }
 

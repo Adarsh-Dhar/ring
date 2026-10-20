@@ -7,7 +7,19 @@ This file records the implementation status of each section and what remains to 
 - Sections 1, 2, 3, 4, 6, 7: Implementation and automated verification complete
 - Section 5: Runtime verification pending (requires PostgreSQL with migrations)
 - Section 8: Implementation complete
+- Section 9: Interrogation agent redesign in progress (WP0-WP3)
 - Test suite: 677 passing, 2 timeouts (non-critical), 4 skipped
+
+## Interrogation Agent Redesign - Spec Decisions (WP0)
+
+Resolved specification decisions:
+- No maximum number of questions for the live doorstep interview
+- No minimum number of questions required for completion
+- The backend selects the next information objective and controls completion
+- Only actual backend verification may set the result to 'verified'
+- Immediate credible threats use the M4 urgent pathway, urgent helper alerts and the safety script; confirmed forced entry, assault and SOS use M5 emergency handling
+- Low-quality speech suggesting a specific physical or threat event is uncertain, scores zero and activates the prescribed M3 minimum pending human confirmation
+- A credential request follows its specified M1 score/mode rule, not the M2 label
 
 ## Section 1: principles
 
@@ -369,6 +381,39 @@ Timer implementation is complete in code but requires runtime verification with 
 - Emergency handling bypasses acknowledgement timers
 - **Blocker:** Requires PostgreSQL database with all migrations (0000-0005) applied to verify runtime behavior
 
+### Interrogation Agent Redesign (WP0-WP3) - Spec Decisions Resolved (20 Oct 2026)
+
+The following spec decisions from the interrogation-agent redesign plan are confirmed as resolved in the current implementation:
+
+1. ✅ **No maximum number of questions for live doorstep interview**
+   - Evidence: MAX_TURNS = Infinity by default (lib/ai/interrogation/plan.ts line 51)
+   - AI_INTERROGATOR_MAX_TURNS env var provides optional operator ceiling only
+
+2. ✅ **No minimum number of questions required for completion**
+   - Evidence: No minimum check in plan.ts; completion based on isSatisfied()
+   - Interview ends when: all required slots specific, visitor silent, model down, operator ceiling, or safety condition
+
+3. ✅ **Backend selects next objective and controls completion**
+   - Evidence: nextFocus() is code-driven (lib/ai/interrogation/plan.ts lines 150-157)
+   - Model only extracts observations; code decides what to ask next
+
+4. ✅ **Only actual backend verification may set result to 'verified'**
+   - Evidence: Helper confirm sets source='helper' (lib/doorstep/caseRisk.ts line 181)
+   - Model output never sets confirmed state without helper verification
+
+5. ✅ **Immediate credible threats use M4 urgent pathway, confirmed forced entry/assault/SOS use M5 emergency**
+   - Evidence: riskRules.ts lines 224-241 set correct floors
+   - immediate_threat: floor='helper_urgent' (M4), minScore=80
+   - forced_entry_or_assault: floor='emergency' (M5), minScore=100
+
+6. ✅ **Low-quality speech suggesting physical/threat event is uncertain, scores zero, activates M3**
+   - Evidence: uncertainFloor for physical/threat events (riskRules.ts lines 214, 222, 230, 239)
+   - lock_manipulation, door_wedge_or_follow_in, immediate_threat, forced_entry_or_assault all have uncertainFloor='helper_only' (M3)
+
+7. ✅ **Credential request follows M1 score/mode rule**
+   - Evidence: credential_request floor='ai_assisted' (M1) (riskRules.ts line 198)
+   - Points: 20, cap: 20
+
 ### Remaining work for production deployment
 1. Apply all migrations to a scratch PostgreSQL database
 2. Regenerate Prisma Client
@@ -377,3 +422,4 @@ Timer implementation is complete in code but requires runtime verification with 
 5. Validate pilot timer defaults with intended residents, supporters, and safeguarding professionals
 6. Full end-to-end integration test with actual notification delivery (not mocked)
 7. Resident/supporter review and safeguarding validation before real-home deployment
+8. **WP1-WP3: Interrogation agent redesign execution** (in progress)

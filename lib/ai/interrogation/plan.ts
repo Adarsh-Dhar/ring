@@ -38,17 +38,17 @@ export const ORDER: readonly Slot[] = ['purpose', 'organisation', 'detail', 'pro
 export const PRESS_FIRST: readonly Slot[] = ['purpose', 'organisation', 'proof']
 
 /**
- * NO per-slot cap and NO default turn cap: the interview runs until the plan state indicates completion.
- * AI_INTERROGATOR_MAX_TURNS is an optional operator ceiling (a positive number). Unset or 0 = unlimited.
+ * WP4: Removed all turn limits - no arbitrary total-question cap, no minimum turns.
+ * The interview runs until the plan state indicates completion or state-based exit conditions are met.
  * The interview ends when:
  * 1. All required slots are specific (verified)
  * 2. Visitor goes silent (stall detection in processAnswer)
  * 3. Model is down (error handling in processAnswer)
- * 4. Operator ceiling is hit (AI_INTERROGATOR_MAX_TURNS)
- * 5. Explicit safety condition triggered (threat detection)
+ * 4. State-based stall detection (isStalled)
+ * 5. Explicit safety condition triggered
+ * 6. Helper takeover
+ * 7. Authority limit reached
  */
-export const clampTurns = (n: number) => (Number.isFinite(n) && n > 0 ? Math.max(3, Math.round(n)) : Infinity)
-export const MAX_TURNS = clampTurns(Number(process.env.AI_INTERROGATOR_MAX_TURNS || 0))
 
 /** What we remember about each answered turn (stored inside Case.interrogationTurns, no migration needed). */
 export interface PlanTurn {
@@ -143,12 +143,12 @@ export function isSatisfied(s: PlanState, answered: number): boolean {
 }
 
 /**
- * What to ask next, or null when nothing is open (or an operator ceiling is hit).
+ * What to ask next, or null when nothing is open.
  * Core slots (reason, organisation, proof) are pressed until specific. Otherwise fewest-asks-first.
  * Pure and deterministic: the model cannot end the interview early.
+ * WP4: Removed max parameter - no arbitrary total-question cap.
  */
-export function nextFocus(s: PlanState, answered: number, max = MAX_TURNS): Slot | null {
-  if (answered >= max) return null
+export function nextFocus(s: PlanState, answered: number): Slot | null {
   const open = requiredSlots(s, answered).filter(k => s.status[k] !== 'specific')
   if (!open.length) return null
   const press = PRESS_FIRST.find(k => open.includes(k) && s.asks[k] > 0)
@@ -160,77 +160,78 @@ export function nextFocus(s: PlanState, answered: number, max = MAX_TURNS): Slot
  * Scripted questions, five phrasings per slot, getting firmer. Used when the model is unavailable or its question
  * fails validation. Every line is <= 20 words and passes validQuestion(): no accusations, no resident details,
  * never says what is "expected", never asks whether anyone is home. Past the last phrasing they cycle.
+ * WP5: Removed pressure-based language; questions are neutral and purpose-specific.
  */
 export const QUESTION_BANK: Record<Slot, readonly string[]> = {
   purpose: [
-    'What exactly is the reason for your visit?',
-    'I need specifics. What exactly are you here to do or offer?',
-    'Which product or service, exactly, and what does it cost?',
-    'Who told you to come to this address, and why this one?',
-    'I still have no clear reason. State it in one full sentence.',
+    'What is the reason for your visit?',
+    'Could you tell me what you are here for?',
+    'What would you like to discuss?',
+    'How can I help you today?',
+    'What brings you to this address?',
   ],
   organisation: [
     'Which company or organisation are you from?',
-    'Give me the full registered name of that company.',
-    'What is the office phone number of your company?',
-    'What is your supervisor\'s full name?',
-    'Which street is your company based on?',
+    'What is the name of your organisation?',
+    'Who sent you here today?',
+    'Which organisation do you represent?',
+    'Who is your employer?',
   ],
   detail: [
-    'Describe exactly what you want to do or offer, step by step.',
-    'What is the product called, and who makes it?',
-    'How did you choose this address today?',
-    'How many houses have you visited today, and on which streets?',
-    'Walk me through exactly what would happen if I agreed.',
+    'What work would you like to do?',
+    'What is the specific purpose of your visit?',
+    'What service are you offering?',
+    'What would you like to do today?',
+    'What is the nature of your visit?',
   ],
   name: [
     'What is your name, please?',
-    'Could you give me your first and last name?',
-    'Spell your surname for me, letter by letter.',
-    'Is that the name on your ID? Say it again, slowly.',
-    'I need your full legal name before anything else.',
+    'Could you tell me your name?',
+    'May I have your name?',
+    'Who should I say is here?',
+    'What is your name?',
   ],
   relation: [
-    'How do you know them?',
-    'How long have you known them, and how did you meet?',
-    'When did you last see them, and where?',
-    'Who else do you both know?',
-    'What was the last thing you spoke about together?',
+    'How do you know the resident?',
+    'What is your connection to them?',
+    'How are you related to them?',
+    'Who are you visiting today?',
+    'Which resident are you here to see?',
   ],
   target: [
-    'Who exactly are you here to see?',
-    'Could you give me the full name of the person you want?',
-    'What is their full name, and how do you know it?',
-    'Who gave you that name?',
-    'State the full name of the person, not just a first name.',
+    'Who are you here to see?',
+    'Which resident are you visiting?',
+    'Who should I ask for?',
+    'Who lives at this address?',
+    'Whose doorbell is this?',
   ],
   proof: [
-    'Please hold your ID card or work order up to the camera.',
-    'Do you have a reference number, or the name of whoever sent you?',
-    'Read me the number on your card, slowly.',
-    'What phone number can the household use to check you with your office?',
-    'Without checkable ID I will record that you declined. Will you show it?',
+    'Do you have any identification?',
+    'Can you show me your ID?',
+    'Do you have a work order or reference?',
+    'Is there any paperwork I can see?',
+    'Can you provide a reference number?',
   ],
   companions: [
-    'Is anyone with you today?',
-    'Is there anybody else with you, perhaps in a vehicle nearby?',
-    'Does anyone work with you, and where are they right now?',
-    'Who dropped you off, or did you come on your own?',
-    'How many colleagues are working this street today?',
+    'Is anyone with you?',
+    'Are you alone today?',
+    'Did anyone come with you?',
+    'Is there anyone else outside?',
+    'Are you working with anyone?',
   ],
   spatial: [
-    'Where did you park, or how did you get here today?',
-    'What time did you set off today, and from where?',
-    'Which street did you walk or drive down just before this door?',
-    'What colour is your vehicle, and where is it now?',
-    'Describe the last house you visited before this one.',
+    'How did you get here today?',
+    'Where did you park?',
+    'Did you drive or walk here?',
+    'Which street did you come from?',
+    'Where is your vehicle?',
   ],
   recheck: [
-    'Remind me: what is your name and reason for coming, in your own words?',
-    'Earlier you gave me details. Repeat them exactly as you said them.',
-    'Let me confirm: say again who sent you, and what for.',
-    'Say your name and company once more, so I record it correctly.',
-    'Please repeat your reason in full, from the beginning.',
+    'Could you confirm your name and purpose?',
+    'What was your name again?',
+    'What did you say you are here for?',
+    'Could you repeat the reason for your visit?',
+    'What organisation are you with again?',
   ],
 }
 export const bankQuestion = (slot: Slot, asked: number): string => {
