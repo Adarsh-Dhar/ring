@@ -129,11 +129,19 @@ function DoorbellSim() {
   const recRef = useRef<MediaRecorder | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Cancel speech when speakAloud is toggled off
+  useEffect(() => {
+    if (!speakAloud) {
+      window.speechSynthesis?.cancel()
+    }
+  }, [speakAloud])
+
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [chat, phase])
 
   const say = useCallback(async (t: string) => {
     setChat((c) => [...c, { from: 'door', text: t }])
-    if (speakAloud) await speak(t)
+    // Speak in the background without blocking - user can reply as soon as text is shown
+    if (speakAloud) speak(t).catch(() => {})
   }, [speakAloud])
 
   async function reset() {

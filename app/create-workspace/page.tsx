@@ -48,7 +48,7 @@ export default function CreateWorkspacePage() {
       if (data.householdId) {
         router.push(`/workspace/${data.householdId}/dashboard?role=resident`)
       } else {
-        router.push('/select-role')
+        router.push('/select-workspace')
       }
     } catch {
       setError('Network error. Please try again.')

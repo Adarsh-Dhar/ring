@@ -278,10 +278,10 @@ export default function SelectWorkspacePage() {
               </div>
 
               <button
-                onClick={() => router.push('/select-role')}
+                onClick={() => router.push('/select-workspace')}
                 className="text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white px-3 py-2 rounded-md text-sm font-medium"
               >
-                Change Role
+                Refresh
               </button>
             </div>
           </div>
@@ -309,10 +309,10 @@ export default function SelectWorkspacePage() {
               </p>
             )}
             <button
-              onClick={() => router.push('/select-role')}
+              onClick={() => router.push('/select-workspace')}
               className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors"
             >
-              Change Role
+              Refresh
             </button>
           </div>
         ) : (

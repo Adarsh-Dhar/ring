@@ -365,7 +365,8 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
   // Step 8: immediate_threat requires intent aimed at a person. Drop bare beat/smash/burn/harm/break down.
   immediate_threat: /\b(i('?ll| will|'?m going to|'?m gonna))\s+(hurt|kill|stab|shoot|beat (you )?up|burn)\b|\b(hurt|kill|stab|shoot) you\b/i,
   // Spec 9.4: hide_from_helper wording widened to "bypass the process / avoid verification"
-  hide_from_helper: /\b(don'?t|do not|no need to|please don'?t|never)\s+(tell|call|ask|involve|phone|let)\s+(your|the|any)?\s*(helper|carer|son|daughter|family|anyone|anybody|them|him|her)\b|\b(keep (this|it) (a )?secret|between us|just us)\b|\b(bypass|avoid|skip|go around)\s+(the )?(process|verification|check|confirmation|helper)\b|\bwithout\s+(checking|telling|asking|involving|calling|informing)(\s+with)?\s+(your|the)?\s*(helper|carer|family|resident|owner)\b/i,
+  // Pattern captures the full concealment request including what follows the helper/carer reference
+  hide_from_helper: /\b(don'?t|do not|no need to|please don'?t|never)\s+(tell|call|ask|involve|phone|let)\s+(your|the|any)?\s*(helper|carer|son|daughter|family|anyone|anybody|them|him|her)(\s+(i came|i was here|about this|anything))?(\s+)?\b|\b(keep (this|it) (a )?secret|between us|just us)\b|\b(bypass|avoid|skip|go around)\s+(the )?(process|verification|check|confirmation|helper)\b|\bwithout\s+(checking|telling|asking|involving|calling|informing)(\s+with)?\s+(your|the)?\s*(helper|carer|family|resident|owner)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
   pressure_after_rule: /\b(let me (in|inside|through)|open up|open the door)\b/i,
   // F6: Tightened pattern - requires access-demand wording, not just urgency words
@@ -474,7 +475,9 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
       const groundingText = o.segment && o.segment.trim().length > 0 ? o.segment : ctx.transcript
       if (!o.quotes.every(q => quoteIsGrounded(q, groundingText))) return reject('uncertain', 'quote_not_in_transcript')
       // Quality is judged on the segment the words came from. A one-word quote ("pin") must still be able to confirm.
-      if (!passesTranscriptionQuality(o.segment ?? ctx.transcript, o.transcriptQuality)) return reject('uncertain', 'transcription_quality')
+      // Convert transcript quality string to normalized number (high=1, medium=0.7, low=0.3)
+      const qualityValue = o.transcriptQuality === 'high' ? 1 : o.transcriptQuality === 'medium' ? 0.7 : o.transcriptQuality === 'low' ? 0.3 : 0.5
+      if (!passesTranscriptionQuality(o.segment ?? ctx.transcript, qualityValue)) return reject('uncertain', 'transcription_quality')
       if (!o.quotes.every(q => phraseMatches(o.code, q))) return reject('uncertain', 'wording_does_not_match')
     }
 
@@ -580,17 +583,21 @@ export function newObsId(): string {
 
 export function observationsFromEvidence(
   evidence: { category: string; quote: string }[],
-  opts?: { segment?: string; transcriptQuality?: number },
+  opts?: { segment?: string; transcriptQuality?: number | 'high' | 'medium' | 'low' },
 ): { observations: Observation[]; notes: string[] } {
   const observations: Observation[] = []
   const notes: string[] = []
   const contradictionQuotes: string[] = []
+  // Convert transcript quality string to normalized number if needed
+  const qualityValue = typeof opts?.transcriptQuality === 'string'
+    ? (opts.transcriptQuality === 'high' ? 1 : opts.transcriptQuality === 'medium' ? 0.7 : opts.transcriptQuality === 'low' ? 0.3 : 0.5)
+    : opts?.transcriptQuality
   const base = (code: Behaviour, quotes: string[], idx: number): Observation => ({
     id: newObsId(),
     code, at: `${new Date().toISOString()}-${idx}`, quotes, source: 'transcript',
     // The model only EXTRACTS. State here is the claim; scoreObservations applies the real checks (quote in transcript,
     // quality, wording, interview state) and records 'uncertain' in the ledger when one fails.
-    state: 'confirmed', points: 0, segment: opts?.segment, transcriptQuality: opts?.transcriptQuality,
+    state: 'confirmed', points: 0, segment: opts?.segment, transcriptQuality: qualityValue,
   })
   let idx = 0
   for (const e of evidence) {

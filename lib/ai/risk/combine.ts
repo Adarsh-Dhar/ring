@@ -182,22 +182,25 @@ const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
 export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQuality?: 'high' | 'medium' | 'low'): Observation[] {
   const out: Observation[] = []
   const now = new Date().toISOString()
+  // Convert transcript quality string to normalized number (high=1, medium=0.7, low=0.3)
+  const qualityValue = transcriptQuality === 'high' ? 1 : transcriptQuality === 'medium' ? 0.7 : transcriptQuality === 'low' ? 0.3 : 0.5
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i]
     const b = RULE_FLAG_BEHAVIOUR[m.flag]
     if (b) {
-      // WP2: Pass through transcription quality; default to 'medium' if not provided
-      const quality = transcriptQuality || 'medium'
       // Add a unique suffix to timestamp to distinguish multiple occurrences in the same turn
       const at = `${now}-${i}`
+      // Deterministic confirmation for hide_from_helper when transcript quality is acceptable
+      // This ensures concealment requests are scored even if the AI model fails
+      const isConfirmed = b === 'hide_from_helper' && (transcriptQuality === 'high' || transcriptQuality === 'medium')
       out.push({
         code: b,
         at,
-        quotes: [m.quote],
+        quotes: [m.quote], // Use the exact matched text from the regex
         source: 'transcript',
-        state: 'uncertain',
-        points: 0,
-        transcriptQuality: quality,
+        state: isConfirmed ? 'confirmed' : 'uncertain',
+        points: isConfirmed ? 15 : 0,
+        transcriptQuality: qualityValue,
       })
     }
   }

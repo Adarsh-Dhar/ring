@@ -200,12 +200,31 @@ export async function processAnswer(
       const failures = trailing(turns, t => !!t.modelFailed) + 1
       const transcripts = [...turns.map(t => t.transcript), typed ?? ''].join(' ')
       const updated: InterrogationTurn[] = [...turns, { question: asked, transcript: typed ?? '', timestamp: Date.now(), next: null, modelFailed: true }]
+      
+      // Deterministic concealment detection: if the visitor clearly asks to hide from helpers,
+      // dispatch the fixed safety response even when the model is unavailable
+      const ruleMatches = riskMatchesFor(transcripts)
+      const hasConcealment = ruleMatches.some(m => m.flag === 'Hides from helper')
+      
+      if (hasConcealment) {
+        const control = await controlFor(householdId, { score: 15, minMode: 'ai_assisted' })
+        const concealmentResponse = await dispatchAiAction({
+          householdId, caseId, tool: 'safety_script',
+          text: 'I must tell the helper about this conversation. I cannot keep it secret.',
+          sEff: control.effectiveScore, decision: 'hide_from_helper'
+        })
+        if (concealmentResponse.allowed) {
+          await finishInterrogation(householdId, caseId, updated, 'done_verified')
+          return { question: null, final: true, close: concealmentResponse.text }
+        }
+      }
+      
       if (failures >= MODEL_FAIL_LIMIT) {
         await finishInterrogation(householdId, caseId, updated, 'model_failed')
         return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
       }
       // Offline safety net: the keyword tripwire is the only thing that can read a typed answer without a model.
-      const live = liveAssessment(transcripts, riskMatchesFor(transcripts), {
+      const live = liveAssessment(transcripts, ruleMatches, {
         coverage: { purposeVague: true, unverifiable: true }, transcriptQuality: 'low',
         interviewState: existing?.riskObservations?.interviewState,
       })

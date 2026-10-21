@@ -136,18 +136,18 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
             // User has other households, go to workspace selection
             router.push('/select-workspace')
           } else {
-            // User has no households, go to role selection
-            router.push('/select-role')
+            // User has no households, go to workspace selection
+            router.push('/select-workspace')
           }
         } else {
-          router.push('/select-role')
+          router.push('/select-workspace')
         }
         return
       }
       const data = await res.json()
       setWorkspace(data)
     } catch {
-      router.push('/select-role')
+      router.push('/select-workspace')
     } finally {
       setLoading(false)
     }
@@ -245,7 +245,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
             <div className="flex justify-between items-center h-16">
               <div className="flex items-center space-x-4">
                 <button
-                  onClick={() => isResidentView ? router.push('/select-role') : router.push('/select-workspace')}
+                  onClick={() => router.push('/select-workspace')}
                   className="text-gray-700 hover:text-gray-900"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

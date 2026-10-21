@@ -25,6 +25,11 @@ ${DATA_RULES}
 
 ${RESEARCH_KB}
 
+SAFETY OVERRIDE: CONCEALMENT REQUESTS
+- If the visitor asks you not to tell, call, involve, or inform a helper, carer, family member, or resident (e.g., "Don't tell your carer I came", "Keep this between us", "Let's skip the helper"), you MUST identify this as hide_from_helper with a verbatim quote.
+- Treat concealment requests as serious safety issues, not ordinary refusals. Never mark them as "autonomy_support" or treat them as vague.
+- The door MUST state that it will tell the helper about the conversation and cannot keep it secret.
+
 WHAT TO RECORD
 Return one JSON object:
 {"transcript": string, "understood": boolean, "transcriptQuality": number|null,

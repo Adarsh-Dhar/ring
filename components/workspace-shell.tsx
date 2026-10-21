@@ -50,8 +50,8 @@ export default function WorkspaceShell({ role, children }: { role: 'resident' | 
             <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" strokeLinecap="round" strokeLinejoin="round" /></svg>
             <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-amber-300 ring-2 ring-slate-950" aria-label="Unread notification" />
           </button>
-          <Link href="/select-role" className="hidden items-center gap-1 whitespace-nowrap rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/10 sm:flex">
-            Switch view <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3 fill-none stroke-current" strokeWidth="1.5"><path d="m3 4.5 3 3 3-3" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          <Link href="/select-workspace" className="hidden items-center gap-1 whitespace-nowrap rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 transition hover:bg-white/10 sm:flex">
+            Switch workspace <svg aria-hidden="true" viewBox="0 0 12 12" className="h-3 w-3 fill-none stroke-current" strokeWidth="1.5"><path d="m3 4.5 3 3 3-3" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </Link>
         </div>
       </header>

@@ -8,6 +8,8 @@
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:interrogation-request-response": "vitest run tests/interrogation-request-response.test.ts",
+    "test:runbook-conversations": "tsx scripts/runbook-phrase-conversations.ts",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

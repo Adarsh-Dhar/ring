@@ -209,7 +209,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Set session cookie and redirect
-    const redirectTarget = next || '/select-role'
+    const redirectTarget = next || '/select-workspace'
     console.log('[GOOGLE CALLBACK] Redirecting to:', redirectTarget)
     const finalRes = NextResponse.redirect(new URL(buildRedirectUrl(redirectTarget)))
     finalRes.cookies.set(COOKIE, token, cookieOpts)

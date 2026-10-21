@@ -1,6 +1,7 @@
 /** Deterministic risk flagger. Output is for the helper only. */
 import { embed } from '@/lib/ai/client'
 import type { RuleMatch } from '@/lib/ai/risk/combine'
+import { PHRASE_PATTERNS } from '@/lib/doorstep/riskRules'
 
 const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Claims urgency',            re: /\b(urgent(ly)?|immediately|right now|emergency|last chance|final notice)\b/i },
@@ -10,7 +11,7 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Asks who is home',          re: /\b(anyone (home|in)|who('s| is) (home|in)|alone|are you on your own)\b/i },
   { flag: 'Offers work or sells',      re: /\b(driveway|roof(ing)?|gutter|tarmac|tree work|spare (materials|tarmac)|special offer|free (check|quote|sample)|sell(ing|er|s)?|sales ?(man|woman|person|rep|pitch)|salesm[ae]n|door[- ]to[- ]door|discount|brochure|leaflet|subscription)\b/i },
   { flag: 'Refuses to leave',          re: /\b(not leaving|i('m| am) staying|i won'?t leave|let me talk to them|get (the )?(owner|resident)|i know (them|him|her))\b/i },
-  { flag: 'Hides from helper',         re: /\b(tell (them|him|her) (i am )?(not )?(here|gone|busy|sleeping)|(don'?t|do not) (call|tell|answer)|(just|only) me|(go away|leave) (me|us) alone)\b/i },
+  { flag: 'Hides from helper',         re: PHRASE_PATTERNS.hide_from_helper! },
   { flag: 'Credential request',        re: /\b(pin|otp|password|access code|verification code|security code|account number)\b/i },
   { flag: 'Immediate threat',          re: /\b(i('ll| will)|i'?m going to|i'?m gonna)\s+(hurt|kill|stab|shoot|beat\s+(you|ya)(\s+up)?|beat\s+up|burn\s+you)\b|\byou('re| are) dead\b|\bshut (your )?mouth\b|\bor (i|you)('ll| will) (make you|pay for this)\b|\bwatch (your )?back\b/i },
 ]

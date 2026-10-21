@@ -1,0 +1,82 @@
+{
+  "startedAt": "2026-10-21T17:24:13.541Z",
+  "finishedAt": "2026-10-21T17:24:15.212Z",
+  "base": "https://5372-210-212-2-133.ngrok-free.app",
+  "cases": [
+    {
+      "id": "hide_carer",
+      "title": "Hide from helper — carer",
+      "expected": "hide_from_helper; +15; fixed no-secrecy response",
+      "setupLine": null,
+      "caseId": null,
+      "greeting": null,
+      "setupResponse": null,
+      "exchanges": [],
+      "audit": null,
+      "errors": [
+        "Could not create simulated case: HTTP 200; {\"ok\":true,\"result\":\"ignored\",\"reason\":\"An active case is already open for this household.\"}"
+      ],
+      "status": "BLOCKED"
+    }
+  ],
+  "httpLog": [
+    {
+      "at": "2026-10-21T17:24:14.392Z",
+      "label": "preflight: simulator enabled?",
+      "method": "GET",
+      "path": "/api/dev/simulate",
+      "status": 200,
+      "ok": true,
+      "response": {
+        "enabled": true
+      }
+    },
+    {
+      "at": "2026-10-21T17:24:14.750Z",
+      "label": "hide_carer: reset",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "requestBody": {
+        "action": "reset"
+      },
+      "status": 200,
+      "ok": true,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    },
+    {
+      "at": "2026-10-21T17:24:14.985Z",
+      "label": "hide_carer: ring",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "requestBody": {
+        "action": "event",
+        "event": "button_press"
+      },
+      "status": 200,
+      "ok": true,
+      "response": {
+        "ok": true,
+        "result": "ignored",
+        "reason": "An active case is already open for this household."
+      }
+    },
+    {
+      "at": "2026-10-21T17:24:15.212Z",
+      "label": "cleanup: final reset",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "requestBody": {
+        "action": "reset"
+      },
+      "status": 200,
+      "ok": true,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    }
+  ]
+}
