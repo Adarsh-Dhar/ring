@@ -43,7 +43,7 @@ export type FinishReason =
   | 'over_budget'
 
 /** Operator ceiling on follow-up questions. The interview normally ends well before it (satisfied, declined twice, a safety event). */
-const MAX_FOLLOW_UPS = Number(process.env.AI_INTERVIEW_MAX_QUESTIONS || 6)
+const MAX_FOLLOW_UPS = Number(process.env.AI_INTERVIEW_MAX_QUESTIONS || 1)   // greeting + 1 follow-up = 2 questions
 
 /** Consecutive silent turns (nothing intelligible) before we assume the visitor left. */
 const SILENT_LIMIT = 3

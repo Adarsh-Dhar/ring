@@ -12,7 +12,7 @@ const RULES: { flag: string; re: RegExp }[] = [
   { flag: 'Refuses to leave',          re: /\b(not leaving|i('m| am) staying|i won'?t leave|let me talk to them|get (the )?(owner|resident)|i know (them|him|her))\b/i },
   { flag: 'Hides from helper',         re: /\b(tell (them|him|her) (i am )?(not )?(here|gone|busy|sleeping)|(don'?t|do not) (call|tell|answer)|(just|only) me|(go away|leave) (me|us) alone)\b/i },
   { flag: 'Credential request',        re: /\b(pin|otp|password|access code|verification code|security code|account number)\b/i },
-  { flag: 'Immediate threat',          re: /\b(i('ll| will) (hurt|kill|break|smash|beat)|you('re| are) dead|shut (your )?mouth|or (i|you)('ll| will) (make you|pay for this)|watch (your )?back)\b/i },
+  { flag: 'Immediate threat',          re: /\b(i('ll| will)|i'?m going to|i'?m gonna)\s+(hurt|kill|stab|shoot|beat\s+(you|ya)(\s+up)?|beat\s+up|burn\s+you)\b|\byou('re| are) dead\b|\bshut (your )?mouth\b|\bor (i|you)('ll| will) (make you|pay for this)\b|\bwatch (your )?back\b/i },
 ]
 
 export function riskFlagsFor(transcript: string): string[] {
@@ -25,10 +25,8 @@ export function riskFlagsFor(transcript: string): string[] {
 export function riskMatchesFor(transcript: string): RuleMatch[] {
   const out: RuleMatch[] = []
   for (const r of RULES) {
-    const matches = transcript.matchAll(r.re)
-    for (const m of matches) {
-      out.push({ flag: r.flag, quote: m[0] })
-    }
+    const re = new RegExp(r.re.source, r.re.flags.includes('g') ? r.re.flags : r.re.flags + 'g')
+    for (const m of transcript.matchAll(re)) out.push({ flag: r.flag, quote: m[0] })
   }
   return out
 }

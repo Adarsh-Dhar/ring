@@ -68,16 +68,12 @@ export function decideNext(ctx: DecisionContext): NextAction {
     return { type: 'uncertain_safety', reason: `Uncertain ${uncertainPhysical.code} detected` }
   }
 
-  // 4. Defined scored-event response (credential request)
-  const credentialRequest = ctx.observations.find(o =>
-    o.code === 'credential_request' && o.state === 'confirmed'
-  )
-  if (credentialRequest) {
-    return {
-      type: 'event_response',
-      code: 'credential_request',
-      response: 'I cannot disclose credentials. Please wait for a helper to review.'
-    }
+  // 4. Defined scored-event responses (spec 6.3), highest priority first
+  const SCRIPTED = ['credential_request', 'hide_from_helper', 'refuse_to_leave',
+    'pressure_after_boundary', 'purpose_contradiction', 'pressure_after_rule'] as const
+  for (const code of SCRIPTED) {
+    const hit = ctx.observations.find(o => o.code === code && o.state === 'confirmed' && !o.retracted && !o.resolvedAt)
+    if (hit) return { type: 'event_response', code, response: '' }   // the interrogator renders the real line from eventResponses.ts
   }
 
   // 4b. The visitor may be the one who needs help. Safety lines would be wrong here: hand over to a carer.
