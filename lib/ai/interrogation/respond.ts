@@ -12,8 +12,9 @@ export type NextAction =
   | { type: 'uncertain_safety'; reason: string }
   | { type: 'event_response'; code: string; response: string }
   | { type: 'precondition_line'; line: string }
-  | { type: 'ask'; question: string }
+  | { type: 'ask' }
   | { type: 'handoff_unverified'; reason: string }
+  | { type: 'handoff_visitor_wellbeing'; reason: string }
   | { type: 'visitor_gone' }
 
 export interface DecisionContext {
@@ -23,8 +24,10 @@ export interface DecisionContext {
   effectiveScore: number
   visitorLeft: boolean
   modelDown: boolean
-  stallsRemaining: number
-  canAskAnother: boolean
+  /** The visitor declined or deflected twice in a row. We stop asking (non-coercive stop rule). */
+  stalled: boolean
+  /** The visitor seems a child, lost, confused, unwell, or asked for help. A carer must take over (Mendez principle 3). */
+  visitorNeedsCare: { reason: string } | null
   hasPreconditionLine: string | null
 }
 
@@ -34,10 +37,10 @@ export interface DecisionContext {
  * 1. Resident SOS, confirmed forced entry or assault
  * 2. Confirmed credible immediate threat
  * 3. Uncertain physical or threat evidence
- * 4. Defined scored-event response
- * 5. Hard resident rules, allowed actions and authority gate
- * 6. Progress and stall conditions
- * 7. Next question
+ * 4. Defined scored-event response (credential request)
+ * 5. The visitor themselves needs care (child, lost, distressed, unwell)
+ * 6. Progress and stall conditions (visitor left, model down, visitor declined twice, missing precondition line)
+ * 7. Next question (the interviewer agent chooses and words it; the authority gate has the last word)
  */
 export function decideNext(ctx: DecisionContext): NextAction {
   // 1. Emergency: confirmed forced entry, assault, or SOS
@@ -65,7 +68,7 @@ export function decideNext(ctx: DecisionContext): NextAction {
     return { type: 'uncertain_safety', reason: `Uncertain ${uncertainPhysical.code} detected` }
   }
 
-  // 4. Defined scored-event response (credential request, etc.)
+  // 4. Defined scored-event response (credential request)
   const credentialRequest = ctx.observations.find(o =>
     o.code === 'credential_request' && o.state === 'confirmed'
   )
@@ -77,10 +80,9 @@ export function decideNext(ctx: DecisionContext): NextAction {
     }
   }
 
-  // 5. Hard resident rules, allowed actions and authority gate
-  // This is checked by the dispatcher before calling decideNext, but we also check here
-  if (!ctx.canAskAnother) {
-    return { type: 'handoff_unverified', reason: 'Authority limit reached' }
+  // 4b. The visitor may be the one who needs help. Safety lines would be wrong here: hand over to a carer.
+  if (ctx.visitorNeedsCare) {
+    return { type: 'handoff_visitor_wellbeing', reason: ctx.visitorNeedsCare.reason }
   }
 
   // 6. Progress and stall conditions
@@ -92,14 +94,14 @@ export function decideNext(ctx: DecisionContext): NextAction {
     return { type: 'handoff_unverified', reason: 'Model unavailable' }
   }
 
-  if (ctx.stallsRemaining <= 0) {
-    return { type: 'handoff_unverified', reason: 'Interview stalled' }
+  if (ctx.stalled) {
+    return { type: 'handoff_unverified', reason: 'Visitor declined twice. Stopped asking.' }
   }
 
   if (ctx.hasPreconditionLine) {
     return { type: 'precondition_line', line: ctx.hasPreconditionLine }
   }
 
-  // 7. Next question (default - will be selected by caller based on objectives)
-  return { type: 'ask', question: '' } // Caller fills in the question
+  // 7. Next question. The caller composes it (interviewer agent + guardrails).
+  return { type: 'ask' }
 }

@@ -25,6 +25,8 @@ export interface RiskInput {
   coverage?: { purposeVague: boolean; unverifiable: boolean }
   /** P7: Interview state stamps for conditional codes. */
   interviewState?: InterviewState
+  /** Behaviours the interviewer agent already heard, each with a quote. Re-grounded against the transcript before use. */
+  agentEvidence?: { category: string; quote: string }[]
 }
 
 const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T | null> => {
@@ -59,5 +61,6 @@ export async function assessRisk(i: RiskInput): Promise<Assessment> {
   return buildAssessment({
     transcript, ruleFlags: i.ruleFlags, ruleMatches: riskMatchesFor(transcript), judge,
     inconsistent: i.inconsistencies.length > 0, evasive: i.evasive, coverage: i.coverage, interviewState: i.interviewState,
+    agentEvidence: i.agentEvidence as any,
   })
 }

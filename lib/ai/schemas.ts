@@ -2,37 +2,7 @@ import { z } from 'zod'
 import { PURPOSE_KEYS } from '@/lib/doorbell/purposes'
 import { LEVELS, RISK_CATEGORIES } from '@/lib/ai/risk/combine'
 
-export const InterrogatorTurnOut = z.object({
-  transcript:          z.string().max(600),
-  understood:          z.boolean().default(true),
-  /** Transcription quality score from 0 to 1, or null if unavailable. Combined with heuristics for final quality check. */
-  transcriptQuality:  z.number().min(0).max(1).nullable().default(null),
-  claims: z.object({
-    name:         z.string().max(80).nullable().default(null),
-    organisation: z.string().max(80).nullable().default(null),
-    reason:       z.string().max(120).nullable().default(null),
-    forWhom:      z.string().max(80).nullable().default(null),
-    time:         z.string().max(40).nullable().default(null),
-  }),
-  inconsistencies:     z.array(z.string().max(100)).max(5).default([]),
-  evasive:             z.boolean().default(false),
-  nextQuestion:       z.string().max(200).nullable().default(null),   // 20 WORDS (checked by validQuestion), not 20 characters
-  realReasonSummary:  z.string().max(250).nullable().default(null),
-  verdict:            z.enum(['consistent', 'inconsistent', 'evasive', 'unclear']).default('unclear'),
-  /** Running gut-check shown live to helpers. Ungrounded, so the code caps it at 'medium'. */
-  riskHint:           z.enum(LEVELS).default('none'),
-  /** How specific the visitor's answers were, per interview slot. Strings are cleaned by cleanObs() in code. */
-  coverage:           z.record(z.string(), z.string()).default({}),
-  /** True if they say they act for a company, agency, council or authority, or do a delivery or trade job. */
-  claimsOrganisation: z.boolean().default(false),
-  /** True if they say they are a friend, relative or acquaintance of the resident. */
-  claimsPersonalTie:  z.boolean().default(false),
-  /** The slot nextQuestion is about. Code re-derives the focus and ignores the question if it disagrees. */
-  nextFocus:          z.string().nullable().default(null),
-  /** The model's own judgement that the visitor's story is now specific, checkable and consistent. Code must agree before the interview ends. */
-  satisfied:          z.boolean().default(false),
-})
-export type InterrogatorTurnResult = z.infer<typeof InterrogatorTurnOut>
+/** The interviewer's output schemas live in lib/ai/interrogation/schemas.ts. */
 
 export const CompressorOut = z.object({
   text: z.string().max(120),

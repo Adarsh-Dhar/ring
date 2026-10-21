@@ -237,21 +237,30 @@ function assemble(a: {
 }
 
 /**
- * Score shown while the conversation is still going. Built only from the keyword matches, so it can never be
- * inflated by an ungrounded model hint. Coverage facts are shown as notes and add no points.
+ * Score shown while the conversation is still going. Built from the interviewer's quote-grounded behaviours plus the
+ * keyword tripwire (which can only add uncertain observations), so an ungrounded model hint can never inflate it.
+ * Coverage facts are shown as notes and add no points.
  */
 export function liveAssessment(
   transcript: string, ruleMatches: RuleMatch[],
-  extra?: { coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean; interviewState?: InterviewState; transcriptQuality?: 'high' | 'medium' | 'low' },
+  extra?: {
+    coverage?: { purposeVague: boolean; unverifiable: boolean }; inconsistent?: boolean; evasive?: boolean
+    interviewState?: InterviewState; transcriptQuality?: 'high' | 'medium' | 'low'
+    /** Behaviours the interviewer agent heard (any wording, any language), each with a verbatim quote the caller has already
+     *  checked against the transcript. They go through the same scorer as the final judge's evidence, so the same
+     *  narrow phrase checks still decide what is confirmed and what stays uncertain for a helper to confirm. */
+    evidence?: Evidence[]
+  },
 ): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleMatches.map(m => m.flag)))
+  for (const e of extra?.evidence ?? []) cats.add(e.category)
   if (extra?.inconsistent) cats.add('story_mismatch')
   if (extra?.evasive) cats.add('evasive_answers')
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
   // WP2: Pass transcript quality to observation creation, and pass observations to assemble
   const observations = observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
-  return assemble({ transcript, cats, evidence: [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations })
+  return assemble({ transcript, cats, evidence: extra?.evidence ?? [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations })
 }
 
 export function buildAssessment(a: {
@@ -265,6 +274,8 @@ export function buildAssessment(a: {
   /** Computed by the interview plan from what the visitor did or did not give. Shown as notes only. */
   coverage?: { purposeVague: boolean; unverifiable: boolean }
   interviewState?: InterviewState
+  /** Interviewer-agent evidence; grounded here like the judge's. */
+  agentEvidence?: Evidence[]
 }): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(a.ruleFlags))
   if (a.inconsistent) cats.add('story_mismatch')
@@ -276,8 +287,10 @@ export function buildAssessment(a: {
   let rationale = ''
   let usedJudge = false
 
+  if (a.agentEvidence?.length && !a.judge) evidence = groundEvidence(a.agentEvidence, a.transcript)
+  for (const e of evidence) cats.add(e.category)
   if (a.judge) {
-    evidence = groundEvidence(a.judge.evidence, a.transcript)
+    evidence = groundEvidence([...a.judge.evidence, ...(a.agentEvidence ?? [])], a.transcript)
     for (const e of evidence) cats.add(e.category)
     rationale = clampWordsLocal(a.judge.rationale || '', 40)
     usedJudge = true
