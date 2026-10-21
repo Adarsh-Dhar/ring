@@ -27,7 +27,7 @@ const FIXTURES_DIR = path.join(__dirname, '../tests/fixtures/section12')
 const ZERO_SCORE_PHRASES = [
   'looking nervous', 'avoids eye contact', 'has an accent', 'speaking slowly',
   'face mismatch', 'blurry camera', 'arriving without notice', 'arrived unannounced',
-  'my van broke down',
+  'my van broke down', "i'll beat the traffic",
 ]
 
 interface Fixture {

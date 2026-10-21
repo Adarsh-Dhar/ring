@@ -37,7 +37,7 @@ export interface DecisionContext {
  * 1. Resident SOS, confirmed forced entry or assault
  * 2. Confirmed credible immediate threat
  * 3. Uncertain physical or threat evidence
- * 4. Defined scored-event response (credential request)
+ * 4. Defined scored-event responses (credential, hide, refuse to leave, pressure, contradiction)
  * 5. The visitor themselves needs care (child, lost, distressed, unwell)
  * 6. Progress and stall conditions (visitor left, model down, visitor declined twice, missing precondition line)
  * 7. Next question (the interviewer agent chooses and words it; the authority gate has the last word)
