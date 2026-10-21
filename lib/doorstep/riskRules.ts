@@ -45,6 +45,7 @@ export type EvidenceState = 'confirmed' | 'uncertain' | 'unavailable'
  * Determine if a transcription passes quality check.
  * Combines engine confidence (if available) with heuristics.
  * Heuristics are checked first and can fail regardless of engine confidence.
+ * Note: engineConfidence should be normalized to 0-1 scale before calling.
  */
 export function passesTranscriptionQuality(
   transcript: string,

@@ -537,6 +537,7 @@ model AiRun {
   tokensOut   Int       @default(0)
   latencyMs   Int       @default(0)
   status      String
+  error       String?   // Store the actual error message when status is 'error' or 'invalid'
   caseId      String?
   createdAt   DateTime  @default(now())
   Household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)

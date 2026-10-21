@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Workspace → Simulation tab (helper only, DEMO_MODE=1).
+ * Workspace → Simulation tab (helper and resident, DEMO_MODE=1).
  *
  *  1. Doorbell visitor : the uploaded clip plays as the "Ring camera". You ring, the interrogator
  *                        speaks its fixed greeting, and YOU answer (type or speak) as the visitor.
@@ -80,7 +80,7 @@ export default function SimulationPanel() {
 
   if (enabled === 'loading') return <p className="text-gray-500">Loading simulation…</p>
   if (enabled === 'denied') return (
-    <div className={CARD}><p className="text-gray-700">The simulation is for helpers only. Switch to a helper account to use it.</p></div>
+    <div className={CARD}><p className="text-gray-700">The simulation is for helpers and residents only. Switch to a helper or resident account to use it.</p></div>
   )
   if (enabled === 'off') return (
     <div className={CARD}>

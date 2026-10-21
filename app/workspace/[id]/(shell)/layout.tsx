@@ -464,7 +464,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               >
                 Calendar
               </Link>
-              {userIsHelper && (
+              {(userIsHelper || isResidentView) && (
                 <Link
                   href={href('/simulation')}
                   className={`py-4 px-1 border-b-2 font-medium text-sm ${

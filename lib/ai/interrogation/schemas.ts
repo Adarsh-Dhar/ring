@@ -37,7 +37,7 @@ export const TurnAnalysisOut = z.object({
   /** Verbatim as far as the audio allows. "" if nothing intelligible. */
   transcript: z.string().max(700).default(''),
   understood: z.boolean().default(true),
-  transcriptQuality: z.number().min(0).max(1).nullable().default(null),
+  transcriptQuality: z.number().min(0).max(5).nullable().default(null), // Model uses 0-5 scale, normalized to 0-1 in code
   /** What the visitor says about themselves. Kept for the helper card. */
   claims: z.object({
     name: z.string().max(80).nullable().default(null),

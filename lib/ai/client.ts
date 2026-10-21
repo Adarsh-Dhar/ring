@@ -66,7 +66,7 @@ async function tryModel<S extends ZodTypeAny>(
       if (!res.ok) {
         const body = (await res.text().catch(() => '')).slice(0, 300)
         console.warn(`[AI] Gemini HTTP ${res.status} model=${model}: ${body}`)
-        await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started })
+        await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started, error: `HTTP ${res.status}: ${body}` })
         throw new Error(`HTTP ${res.status}: ${body}`)
       }
       
@@ -77,13 +77,15 @@ async function tryModel<S extends ZodTypeAny>(
       await logRun({
         ...base, model, status: parsed.success ? 'ok' : 'invalid',
         tokensIn: usage.promptTokenCount ?? 0, tokensOut: usage.candidatesTokenCount ?? 0, latencyMs: Date.now() - started,
+        error: parsed.success ? undefined : `Schema validation failed. Response: ${text.slice(0, 500)}`
       })
       if (parsed.success) return { success: true, data: parsed.data, lastError: null }
+      console.error(`[AI] Schema validation failed for ${a.agent}. Response:`, text.slice(0, 1000))
       throw new Error('Schema validation failed')
     } catch (e) {
       lastError = e as Error
       if (attempt === maxRetries - 1) {
-        await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started })
+        await logRun({ ...base, model, status: 'error', latencyMs: Date.now() - started, error: lastError?.message || String(lastError) })
       }
     } finally { clearTimeout(timer) }
   }
@@ -140,12 +142,19 @@ export async function embed(householdId: string, texts: string[]): Promise<numbe
     const res = await post(`models/${model}:batchEmbedContents`, {
       requests: texts.map(t => ({ model: `models/${model}`, content: { parts: [{ text: t }] } })),
     }, ctl.signal)
-    if (!res.ok) { await logRun({ householdId, agent: 'embed', model, status: 'error', latencyMs: Date.now() - started }); return null }
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300)
+      await logRun({ householdId, agent: 'embed', model, status: 'error', latencyMs: Date.now() - started, error: `HTTP ${res.status}: ${body}` })
+      return null
+    }
     const j: any = await res.json()
     const out = (j?.embeddings ?? []).map((e: any) => e?.values as number[])
     await logRun({ householdId, agent: 'embed', model, status: 'ok', latencyMs: Date.now() - started })
     return out.length === texts.length ? out : null
-  } catch { return null } finally { clearTimeout(timer) }
+  } catch (e) {
+    await logRun({ householdId, agent: 'embed', model, status: 'error', latencyMs: Date.now() - started, error: e instanceof Error ? e.message : String(e) })
+    return null
+  } finally { clearTimeout(timer) }
 }
 
 /** Gemini TTS: returns raw 16-bit PCM @24kHz as base64, or null. */
@@ -160,10 +169,17 @@ export async function synthesize(householdId: string, text: string): Promise<str
       contents: [{ role: 'user', parts: [{ text }] }],
       generationConfig: { responseModalities: ['AUDIO'] },
     }, ctl.signal)
-    if (!res.ok) { await logRun({ householdId, agent: 'tts', model, status: 'error', latencyMs: Date.now() - started }); return null }
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300)
+      await logRun({ householdId, agent: 'tts', model, status: 'error', latencyMs: Date.now() - started, error: `HTTP ${res.status}: ${body}` })
+      return null
+    }
     const j: any = await res.json()
     const data = j?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData)?.inlineData?.data
     await logRun({ householdId, agent: 'tts', model, status: data ? 'ok' : 'invalid', latencyMs: Date.now() - started })
     return data || null
-  } catch { return null } finally { clearTimeout(timer) }
+  } catch (e) {
+    await logRun({ householdId, agent: 'tts', model, status: 'error', latencyMs: Date.now() - started, error: e instanceof Error ? e.message : String(e) })
+    return null
+  } finally { clearTimeout(timer) }
 }

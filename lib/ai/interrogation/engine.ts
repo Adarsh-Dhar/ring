@@ -111,8 +111,10 @@ export async function analyseTurn(i: AnalyseTurnInput, deps: EngineDeps = realDe
 
   const counterTactic = cleanCounter(raw.counterTactic)
   const strategy = counterTactic ? 'counter_tactic' : cleanStrategy(raw.strategy)
-  const quality = !passesTranscriptionQuality(transcript, raw.transcriptQuality) ? 'low' as const
-    : raw.transcriptQuality !== null && raw.transcriptQuality < 0.7 ? 'medium' as const : 'high' as const
+  // Normalize 0-5 scale to 0-1 for quality checks
+  const normalizedQuality = raw.transcriptQuality !== null ? raw.transcriptQuality / 5 : null
+  const quality = !passesTranscriptionQuality(transcript, normalizedQuality) ? 'low' as const
+    : normalizedQuality !== null && normalizedQuality < 0.7 ? 'medium' as const : 'high' as const
 
   const analysis: StoredAnalysis = {
     understood, strategy, counterTactic, commitments, inconsistencies: [...within, ...statementEvidence], behaviours,

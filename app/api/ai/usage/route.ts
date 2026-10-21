@@ -16,8 +16,16 @@ export async function GET(req: NextRequest) {
   if (!householdId) return fail('No household', 400)
   const since = new Date(Date.now() - 24 * 3_600_000)
   const runs = await getDb().aiRun.groupBy({ by: ['agent', 'status'], where: { householdId, createdAt: { gte: since } }, _count: { _all: true }, _sum: { tokensIn: true, tokensOut: true } })
+  // Get recent failed runs with error details
+  const failedRuns = await getDb().aiRun.findMany({
+    where: { householdId, createdAt: { gte: since }, status: { in: ['error', 'invalid', 'budget', 'disabled', 'skipped'] } },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+    select: { agent: true, status: true, error: true, caseId: true, createdAt: true }
+  })
   return NextResponse.json({
     last24h: runs.map(r => ({ agent: r.agent, status: r.status, calls: r._count._all, tokensIn: r._sum.tokensIn ?? 0, tokensOut: r._sum.tokensOut ?? 0 })),
+    recentErrors: failedRuns,
     quotas: await usageSnapshot(),   // process-wide model budgets, not per household
   })
 }

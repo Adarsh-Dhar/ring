@@ -50,7 +50,7 @@ type Ai = {
 const STATUS_TEXT: Record<string, string> = {
   disabled: '⚠️ AI is off on this server (AI_DISABLED=1 or GEMINI_API_KEY missing).',
   not_enabled: '⚠️ AI is not enabled for this household. Turn it on in Setup → AI Helpers.',
-  failed: '⚠️ AI analysis failed. Check server logs and /api/ai/usage.',
+  failed: '⚠️ AI analysis failed. Check server logs and /api/ai/usage for error details.',
   not_applicable: '', // Planned visits don't show the card
 }
 
