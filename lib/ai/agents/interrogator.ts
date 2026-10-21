@@ -288,6 +288,7 @@ export async function processAnswer(
     if (decision.type === 'event_response') {
       const eventResponse = getEventResponse(decision.code as Parameters<typeof getEventResponse>[0])
       if (eventResponse) {
+        let approvedAlternative: string | undefined
         if (decision.code === 'pressure_after_rule') approvedAlternative = (await getPreferences(householdId)).approvedAlternative
         const matchingBehaviour = newConfirmedBehaviours.find(o => o.code === decision.code)
         const d = await dispatchAiAction({

@@ -83,7 +83,7 @@ describe('case file', () => {
   it('two declines in a row stop the interview', () => {
     const d = A({ counterTactic: 'no_comment', strategy: 'counter_tactic' })
     expect(isStalled(foldCaseFile([T('no', d), T('no', d)]))).toBe(true)
-    expect(isStalled(foldCaseFile([T('no', d), T('ok', A({ commitments: [C('name', 'specific')] }))])))).toBe(false)
+    expect(isStalled(foldCaseFile([T('no', d), T('ok', A({ commitments: [C('name', 'specific')] }))]))).toBe(false)
   })
   it('reads turns written before the rewrite', () => {
     const f = foldCaseFile([{ question: 'q', transcript: 't', timestamp: 1, obs: { purpose: 'vague' }, focus: 'purpose' }])
