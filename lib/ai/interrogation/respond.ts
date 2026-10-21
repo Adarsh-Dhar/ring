@@ -68,7 +68,7 @@ export function decideNext(ctx: DecisionContext): NextAction {
     return { type: 'uncertain_safety', reason: `Uncertain ${uncertainPhysical.code} detected` }
   }
 
-  // 4. Defined scored-event responses (spec 6.3), highest priority first
+  // 4. Defined scored-event responses (credential, hide, refuse to leave, pressure, contradiction)
   const SCRIPTED = ['credential_request', 'hide_from_helper', 'refuse_to_leave',
     'pressure_after_boundary', 'purpose_contradiction', 'pressure_after_rule'] as const
   for (const code of SCRIPTED) {

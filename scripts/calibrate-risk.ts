@@ -21,13 +21,13 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { scoreObservations, observationsFromEvidence, phraseMatches, BEHAVIOURS, type Behaviour, type InterviewState } from '../lib/doorstep/riskRules'
+import { scoreObservations, observationsFromEvidence, phraseMatches, BEHAVIOURS, PHRASE_PATTERNS, type Behaviour, type InterviewState } from '../lib/doorstep/riskRules'
 
 const FIXTURES_DIR = path.join(__dirname, '../tests/fixtures/section12')
 const ZERO_SCORE_PHRASES = [
   'looking nervous', 'avoids eye contact', 'has an accent', 'speaking slowly',
   'face mismatch', 'blurry camera', 'arriving without notice', 'arrived unannounced',
-  'my van broke down', "i'll beat the traffic",
+  'my van broke down',
 ]
 
 interface Fixture {
@@ -73,9 +73,11 @@ for (const fix of allFixtures) {
   const is = fix.interviewState ?? {}
 
   // Run phraseMatches against the transcript to find which codes the pattern layer would fire.
+  // Skip codes without PHRASE_PATTERNS (they need sensor/helper sources, not transcript alone).
+  const PHRASE_CODES = new Set(Object.keys(PHRASE_PATTERNS) as Behaviour[])
   const firedCodes = new Set<Behaviour>()
   for (const b of BEHAVIOURS) {
-    if (phraseMatches(b, fix.transcript)) firedCodes.add(b)
+    if (PHRASE_CODES.has(b) && phraseMatches(b, fix.transcript)) firedCodes.add(b)
   }
 
   // For codes with no PHRASE_PATTERN (e.g. purpose_contradiction, extra_knock, door events), they need

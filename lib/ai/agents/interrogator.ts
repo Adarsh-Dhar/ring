@@ -368,7 +368,7 @@ export async function processAnswer(
     const dq = await dispatchAiAction({ householdId, caseId, tool: 'neutral_verification_question', text: composed.text, sEff: control.effectiveScore, decision: 'ask_purpose' })
     if (!dq.allowed) {
       const closeLine = await closeWith(householdId, caseId, modeRank(control.mode) >= modeRank('helper_only') ? 'safety' : 'close')
-      await finishInterrogation(householdId, caseId, updatedTurns, dq.reason === 'question_limit_reached' ? 'max_turns' : 'authority_limit')
+      await finishInterrogation(householdId, caseId, updatedTurns, 'authority_limit')
       return { question: null, final: true, close: closeLine }
     }
 

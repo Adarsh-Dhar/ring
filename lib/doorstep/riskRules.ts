@@ -538,7 +538,7 @@ export function legacyLevel(score: number, minMode: ControlMode): LegacyLevel {
 export const CATEGORY_TO_BEHAVIOUR: Record<string, Behaviour> = {
   // Renamed and narrowed payment_request to credential_request
   payment_request: 'credential_request',
-  credential_request: 'credential_request',   // add
+  credential_request: 'credential_request',
   // New categories
   pressure_after_rule: 'pressure_after_rule',
   pressure_after_boundary: 'pressure_after_boundary',
@@ -546,7 +546,7 @@ export const CATEGORY_TO_BEHAVIOUR: Record<string, Behaviour> = {
   hide_from_helper: 'hide_from_helper',
   refuse_to_leave: 'refuse_to_leave',
   spoken_threat: 'immediate_threat',
-  immediate_threat: 'immediate_threat',        // add
+  immediate_threat: 'immediate_threat',
   // Note-only categories map to nothing (removed)
   // official_impersonation, entry_request, home_probing are now note-only
 }
