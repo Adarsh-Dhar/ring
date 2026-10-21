@@ -22,7 +22,7 @@ const Add = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const p = await parse(req, Add)
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const p = await parse(req, z.object({
@@ -62,7 +62,7 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const p = await parse(req, z.object({ id: z.string().min(1).max(80) }))

@@ -7,14 +7,14 @@ export const runtime = 'nodejs'
 
 /** GET /api/household/lifecycle: the resident-set quiet period and look-back window (section 8.2). */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   return NextResponse.json(await getLifecyclePolicy(a.session!.householdId!), { headers: { 'Cache-Control': 'no-store' } })
 }
 
 /** PUT /api/household/lifecycle  Body: { quietMinutes?, lookbackHours? }. Out-of-range values are rejected, not clamped. */
 export async function PUT(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   let body: any
   try { body = await req.json() } catch { return fail('Request body must be valid JSON', 400) }

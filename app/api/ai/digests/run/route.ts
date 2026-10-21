@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     const b = await req.json().catch(() => ({})); householdId = b?.householdId
     if (!householdId) return fail('householdId required for cron', 400)
   } else {
-    const a = await authorize(req, 'guardian')
+    const a = await authorize(req, 'helper')
     if (a.ok === false) return a.res
     householdId = a.session.householdId
     const p = await parse(req, Body.partial())

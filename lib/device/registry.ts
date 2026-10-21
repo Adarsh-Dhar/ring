@@ -9,7 +9,7 @@ import { getDb } from '@/lib/db/client'
 const DEVICE_KEY_BYTES = 32
 const DEVICE_SESSION_DURATION = 90 * 24 * 60 * 60 * 1000 // 90 days
 
-export type DeviceKind = 'resident' | 'helper' | 'guardian' | 'visitor'
+export type DeviceKind = 'resident' | 'helper' | 'visitor'
 
 /**
  * Generate a device key pair

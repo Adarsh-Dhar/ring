@@ -6,6 +6,12 @@ was changed, which files were touched, and how to verify the fix.
 
 ---
 
+## Guardian role removed
+
+Only resident (one), helper (many) and visitors (planned and unplanned) remain. See `docs/ROLES.md`.
+
+---
+
 ## Fix 1 — Escalation state: no duplicate alerts on restart
 
 ### Problem
@@ -131,7 +137,7 @@ docker compose exec server npx prisma migrate status
   existing `hit()` function from `lib/ratelimit.ts`.
 - Added per-code DB attempt counter: after **10 wrong guesses** the code row
   is permanently locked (`pairingAttempts >= PAIRING_MAX_ATTEMPTS`). The
-  guardian must generate a new code.
+  helper must generate a new code.
 - On a successful pairing the `pairingAttempts` counter is reset to 0.
 
 `prisma/schema.prisma`
@@ -267,7 +273,7 @@ FINAL_TEST_REPORT*.md
 - `FACE_RETENTION_DAYS` was documented and respected for *sightings* (via
   `purgeOldSightings`), but **GuestFace embeddings** belonging to closed
   regular-visitor registrations were never automatically deleted. Once
-  enrolled, a face stayed in the database forever unless a guardian manually
+  enrolled, a face stayed in the database forever unless a helper manually
   deleted it.
 - No privacy policy document existed, which is a legal requirement before
   collecting biometric data under India's DPDP Act 2023 and GDPR.

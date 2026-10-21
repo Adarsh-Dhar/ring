@@ -198,7 +198,7 @@ describe('expiry, withdraw, remove', () => {
     expect(rows.get('r2').status).toBe('removed')
   })
 
-  it('a guardian removing a regular deletes the face', async () => {
+  it('a helper removing a regular deletes the face', async () => {
     await decideRegistration('hh1', 'r1', { kind: 'helper', membershipId: 'm1' }, 'approve')
     expect(await removeRegular('hh1', 'r1')).toEqual({ ok: true })
     expect(await listFaces('hh1')).toHaveLength(0)

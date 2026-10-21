@@ -11,7 +11,7 @@ export const runtime = 'nodejs'
  * The packet is computed by the modules from stored evidence; nothing in it comes from a language model.
  */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian', 'helper', 'resident')
+  const a = await authorize(req, 'helper', 'resident')
   if (a.ok === false) return a.res
   const caseId = req.nextUrl.searchParams.get('caseId')
   if (!caseId) return fail('caseId is required', 400)

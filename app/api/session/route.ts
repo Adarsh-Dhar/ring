@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   if (s.kind === 'user') {
     // Resolve household for user sessions
     let targetHouseholdId = s.householdId
-    let role: 'guardian' | 'helper' | null = null
+    let role: 'helper' | null = null
 
     if (!targetHouseholdId) {
       const householdCookie = req.cookies.get(HOUSEHOLD_COOKIE)?.value
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
 
       if (memberships.length === 1) {
         targetHouseholdId = memberships[0].householdId
-        role = memberships[0].role as 'guardian' | 'helper'
+        role = memberships[0].role as 'helper'
       }
     }
 
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
         select: { role: true },
       })
       if (membership) {
-        role = membership.role as 'guardian' | 'helper'
+        role = membership.role as 'helper'
       }
     }
 
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
 /**
  * POST { pairingCode }: resident device pairing.
  *
- * The resident enters a 6-character code shown by the guardian.
+ * The resident enters a 6-character code shown by a helper.
  *
  * Security measures:
  *  - IP rate limit: max 5 attempts per IP per 10 minutes (in-memory, resets on restart).

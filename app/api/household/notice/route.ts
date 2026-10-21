@@ -10,7 +10,7 @@ const select = { minNoticeHours: true, shortNoticePolicy: true, unknownVisitorPo
 
 /** GET /api/household/notice: the minimum-notice settings (spec section 3). */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   try {
     const h = await getDb().household.findUnique({ where: { id: a.session!.householdId }, select })
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
 /** PUT /api/household/notice: validated write of the four notice settings. Notice never adds risk points. */
 export async function PUT(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   let body: unknown
   try { body = await req.json() } catch { return fail('Request body must be valid JSON', 400) }

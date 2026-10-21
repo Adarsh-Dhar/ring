@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   let history: Awaited<ReturnType<typeof getHistory>>

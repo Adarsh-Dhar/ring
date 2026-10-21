@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/** POST: a helper OR the resident approves/declines. A guardian can also remove an approved regular. */
+/** POST: a helper OR the resident approves/declines. A helper can also remove an approved regular. */
 export async function POST(req: NextRequest) {
   const a = await authorize(req, 'helper', 'resident')
   if (a.ok === false) return a.res
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
   try {
     if (p.data.decision === 'remove') {
-      if (s.role !== 'guardian') return fail('Only a guardian can remove a regular visitor.', 403)
+      if (s.kind === 'resident') return fail('Only a helper can remove a regular visitor.', 403)
       const r = await removeRegular(s.householdId, p.data.id)
       return r.ok === false ? fail(r.error, r.status) : NextResponse.json(r)
     }

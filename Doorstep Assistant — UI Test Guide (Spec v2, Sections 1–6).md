@@ -8,7 +8,7 @@ Spec v2, sections 1 to 6. Run every test from the browser, using the simulator, 
 
 1. Start Postgres and the app: `npx prisma generate && npx prisma migrate deploy && npm run dev`.
 2. In `.env.local` set `DEMO_MODE=1`. Without it the simulator shows "Simulation is off".
-3. Log in as a guardian and open three browser tabs:
+3. Log in as a helper and open three browser tabs:
    - Tab A: `/workspace/<householdId>` (simulator: ring, reset, sensor buttons, visitor chat)
    - Tab B: `/helper` (helper card: score, ledger, mode, Observed / Inferred / Unknown)
    - Tab C: `/resident` (resident screen, SOS button, delegation settings)

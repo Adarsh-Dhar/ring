@@ -27,14 +27,14 @@ const Body = z.discriminatedUnion('action', [
   }),
   // 2. The visitor answers the intake agent's follow-up questions (no answer = start)
   z.object({ action: z.literal('intake'), requestId: z.string().min(1).max(80), answer: z.string().trim().max(300).optional() }),
-  // 3. A helper approves or declines (simulated with the signed-in guardian's membership)
+  // 3. A helper approves or declines (simulated with the signed-in helper's membership)
   z.object({ action: z.literal('decide'), requestId: z.string().min(1).max(80), decision: z.enum(['approve', 'decline']) }),
 ])
 
-/** GET: the helper-side list for the Simulation tab (pending first, then the latest decided). Guardian only. */
+/** GET: the helper-side list for the Simulation tab (pending first, then the latest decided). Helper only. */
 export async function GET(req: NextRequest) {
   if (demoOff()) return fail('Simulator is disabled. Set DEMO_MODE=1 and restart.', 403)
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   if (demoOff()) return fail('Simulator is disabled. Set DEMO_MODE=1 and restart.', 403)
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const s = a.session
   const householdId = s.householdId

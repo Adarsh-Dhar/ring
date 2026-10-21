@@ -9,7 +9,7 @@ export const runtime = 'nodejs'
 import { getDb } from '@/lib/db/client'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

@@ -45,9 +45,9 @@ export default function OnboardingPage() {
   const [loading,     setLoading]     = useState(false)
   const [message,     setMessage]     = useState<Message | null>(null)
   const [residentName, setResidentName] = useState('')
-  const [guardianName, setGuardianName] = useState('')
-  const [guardianPhone, setGuardianPhone] = useState('')
-  const [guardianEmail, setGuardianEmail] = useState('')
+  const [helperName, setHelperName] = useState('')
+  const [helperPhone, setHelperPhone] = useState('')
+  const [helperEmail, setHelperEmail] = useState('')
   const [helperName,   setHelperName]   = useState('')
   const [helperContact, setHelperContact] = useState('')
 
@@ -56,11 +56,11 @@ export default function OnboardingPage() {
       setMessage({ text: 'Please enter the resident\'s name.', kind: 'error' })
       return
     }
-    if (!guardianName.trim()) {
+    if (!helperName.trim()) {
       setMessage({ text: 'Please enter your name.', kind: 'error' })
       return
     }
-    if (!guardianPhone.trim() && !guardianEmail.trim()) {
+    if (!helperPhone.trim() && !helperEmail.trim()) {
       setMessage({ text: 'Please enter either your phone number or email address.', kind: 'error' })
       return
     }
@@ -77,10 +77,10 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           action:        'create',
           residentName:  residentName.trim(),
-          guardianName:  guardianName.trim(),
+          helperName:  helperName.trim(),
           // Only send fields that were actually filled in — empty string would fail validation
-          guardianPhone: guardianPhone.trim() || undefined,
-          guardianEmail: guardianEmail.trim() || undefined,
+          helperPhone: helperPhone.trim() || undefined,
+          helperEmail: helperEmail.trim() || undefined,
         }),
       })
 
@@ -191,12 +191,12 @@ export default function OnboardingPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Your name (guardian) <span className="text-red-500">*</span>
+                Your name (helper) <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
-                value={guardianName}
-                onChange={e => setGuardianName(e.target.value)}
+                value={helperName}
+                onChange={e => setHelperName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Your full name"
               />
@@ -208,8 +208,8 @@ export default function OnboardingPage() {
               </label>
               <input
                 type="tel"
-                value={guardianPhone}
-                onChange={e => setGuardianPhone(e.target.value)}
+                value={helperPhone}
+                onChange={e => setHelperPhone(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="+919876543210"
                 autoComplete="tel"
@@ -223,8 +223,8 @@ export default function OnboardingPage() {
               </label>
               <input
                 type="email"
-                value={guardianEmail}
-                onChange={e => setGuardianEmail(e.target.value)}
+                value={helperEmail}
+                onChange={e => setHelperEmail(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="you@example.com"
                 autoComplete="email"

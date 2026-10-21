@@ -12,7 +12,7 @@ const Body = z.object({ aiEnabled: z.boolean().optional(), aiInterrogator: z.boo
 
 /** Guardian kill switch. Turning AI off never affects alerts. */
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

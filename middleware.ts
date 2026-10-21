@@ -114,7 +114,6 @@ export const config = {
     '/workspaces',
     '/account',
     '/select-workspace',
-    '/select-role',
     '/create-workspace',
     '/notifications',
   ],

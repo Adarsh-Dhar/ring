@@ -15,7 +15,7 @@ import { getDb } from '@/lib/db/client'
 const Query = z.object({ caseId: z.string() })
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'device', 'helper', 'guardian')
+  const a = await authorize(req, 'device', 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

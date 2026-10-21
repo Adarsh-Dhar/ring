@@ -52,7 +52,7 @@ export async function GET(
       return fail('You are not a member of this household. Please accept an invite to join.', 403)
     }
 
-    // Check if user has a helper membership (they might also be a guardian)
+    // Check if user has a helper membership (they might also be a helper)
     const helperMembership = await db.membership.findFirst({
       where: {
         userId,

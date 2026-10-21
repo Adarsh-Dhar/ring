@@ -419,8 +419,8 @@ function SetupPage() {
             <div className="flex items-center justify-between">
               <span className="text-lg font-semibold">
                 {m.emoji} {m.name}{' '}
-                {m.role === 'guardian' && (
-                  <span className="text-xs bg-purple-600 px-2 py-1 rounded ml-2">Guardian</span>
+                {m.role === 'helper' && (
+                  <span className="text-xs bg-purple-600 px-2 py-1 rounded ml-2">Helper</span>
                 )}
                 <span className="text-sm text-slate-400 ml-1">{m.phone || m.email}</span>
               </span>

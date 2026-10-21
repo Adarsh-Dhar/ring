@@ -15,7 +15,7 @@ export const runtime = 'nodejs'
 const hour = z.number().int().min(0).max(23)
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
 
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     return fail('Unable to load household details. Please try again.', 503)
   }
 
-  // Check if any guardian has Google Calendar connected
+  // Check if any helper has Google Calendar connected
   const hasGoogleCalendar = setup.members.some((m: any) => m.user?.googleRefreshToken)
 
   return NextResponse.json({
@@ -57,9 +57,9 @@ const Body = z.discriminatedUnion('action', [
   z.object({
     action:        z.literal('create'),
     residentName:  z.string().trim().min(1).max(60),
-    guardianName:  z.string().trim().min(1).max(60),
-    guardianPhone: z.string().trim().optional(),
-    guardianEmail: z.string().email(),
+    helperName:  z.string().trim().min(1).max(60),
+    helperPhone: z.string().trim().optional(),
+    helperEmail: z.string().email(),
     timezone:      z.string().optional(),
   }),
   z.object({ action: z.literal('quiet'), enabled: z.boolean(), startHour: hour, endHour: hour }),
@@ -87,17 +87,17 @@ export async function POST(req: NextRequest) {
   if (b.action === 'create') {
     const a = await authorize(req, 'user')
     if (a.ok === false) return fail('You must be signed in to create a household.', 401)
-    const guardianUserId = a.session!.userId
+    const helperUserId = a.session!.userId
 
-    if (!b.guardianEmail) {
-      return fail('Guardian email address is required.', 400)
+    if (!b.helperEmail) {
+      return fail('Your email address is required.', 400)
     }
 
-    const guardianPhone = b.guardianPhone && b.guardianPhone.trim() ? normalizePhone(b.guardianPhone) : null
-    const guardianEmail = b.guardianEmail && b.guardianEmail.trim() ? normalizeEmail(b.guardianEmail) : null
+    const helperPhone = b.helperPhone && b.helperPhone.trim() ? normalizePhone(b.helperPhone) : null
+    const helperEmail = b.helperEmail && b.helperEmail.trim() ? normalizeEmail(b.helperEmail) : null
 
-    if (b.guardianPhone && b.guardianPhone.trim() && !guardianPhone) {
-      return fail(`"${b.guardianPhone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
+    if (b.helperPhone && b.helperPhone.trim() && !helperPhone) {
+      return fail(`"${b.helperPhone}" is not a valid phone number. Use E.164 format, e.g. +919876543210`, 400)
     }
 
     let db
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
     let currentUser: { name: string | null; phone: string | null; email: string | null } | null = null
     try {
       currentUser = await db.user.findUnique({
-        where:  { id: guardianUserId },
+        where:  { id: helperUserId },
         select: { name: true, phone: true, email: true },
       })
     } catch (e) {
@@ -129,32 +129,18 @@ export async function POST(req: NextRequest) {
     // errors when the user already has this phone/email from OTP sign-in.
     // Email and phone changes only come from verified Google identity, not household creation
     const profileUpdate: Record<string, string> = {}
-    if (b.guardianName && b.guardianName !== currentUser.name) {
-      profileUpdate.name = b.guardianName
+    if (b.helperName && b.helperName !== currentUser.name) {
+      profileUpdate.name = b.helperName
     }
     // Email and phone are not updated here - they come from verified Google identity
 
     if (Object.keys(profileUpdate).length > 0) {
       try {
-        await db.user.update({ where: { id: guardianUserId }, data: profileUpdate })
+        await db.user.update({ where: { id: helperUserId }, data: profileUpdate })
       } catch (e: any) {
         console.error('[HOUSEHOLD CREATE] Failed to update user profile', e)
         return fail('Unable to update your profile. Please try again.', 503)
       }
-    }
-
-    let existingGuardian: any
-    try {
-      existingGuardian = await db.membership.findFirst({
-        where: { userId: guardianUserId, role: 'guardian' },
-      })
-    } catch (e) {
-      console.error('[HOUSEHOLD CREATE] Failed to check existing guardianship', e)
-      return fail('Unable to check existing households. Please try again.', 503)
-    }
-
-    if (existingGuardian) {
-      return fail('You are already a guardian of a household. Each account can only manage one household.', 400)
     }
 
     let household: Awaited<ReturnType<typeof createHousehold>>
@@ -173,9 +159,9 @@ export async function POST(req: NextRequest) {
       const memberCount = await db.membership.count({ where: { householdId: household.id } })
       membership = await db.membership.create({
         data: {
-          userId:      guardianUserId,
+          userId:      helperUserId,
           householdId: household.id,
-          role:        'guardian',
+          role:        'helper',
           consent:     'approved',
           consentAt:   new Date(),
           position:    memberCount,
@@ -184,8 +170,8 @@ export async function POST(req: NextRequest) {
         },
       })
     } catch (e) {
-      console.error('[HOUSEHOLD CREATE] Failed to create guardian membership', e)
-      return fail('Household was created but failed to assign your guardian role. Please contact support.', 503)
+      console.error('[HOUSEHOLD CREATE] Failed to create helper membership', e)
+      return fail('Household was created but failed to add you as a helper. Please contact support.', 503)
     }
 
     // Don't change the session - keep the user's existing 'user' session
@@ -194,13 +180,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok:          true,
       householdId: household.id,
-      role:        'guardian',
+      role:        'helper',
       residentName: household.residentName,
     })
   }
 
-  // ── All other actions require a guardian session ───────────────────────────
-  const a = await authorize(req, 'guardian')
+  // ── All other actions require a helper session ───────────────────────────
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session!.householdId
 

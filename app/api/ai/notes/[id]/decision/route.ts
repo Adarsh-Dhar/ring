@@ -16,7 +16,7 @@ const Body = z.object({
 })
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const a = await authorize(req, 'helper', 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const a = await authorize(req, 'helper', 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

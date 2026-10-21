@@ -14,10 +14,10 @@ export type Session = {
   userId: string
   householdId?: string
   membershipId?: string
-  role?: 'guardian' | 'helper'
+  role?: 'helper'
 }
 
-type Who = 'helper' | 'resident' | 'device' | 'guardian' | 'any' | 'user'
+type Who = 'helper' | 'resident' | 'device' | 'any' | 'user'
 
 const tokenFrom = (req: NextRequest) => {
   const b = req.headers.get('authorization')
@@ -120,13 +120,13 @@ export async function getDeviceSession(req: NextRequest): Promise<{ householdId:
 
 /**
  * v2: Resolves a v2 device session from the session cookie.
- * Supports device-based authentication for residents, helpers, and guardians.
+ * Supports device-based authentication for the resident, helpers and visitors.
  */
 export async function getV2DeviceSession(req: NextRequest): Promise<{
   deviceId: string
   householdId: string
   membershipId?: string
-  kind: 'resident' | 'helper' | 'guardian' | 'visitor'
+  kind: 'resident' | 'helper' | 'visitor'
 } | null> {
   const t = verifyToken(tokenFrom(req))
   if (!t.ok) return null
@@ -134,7 +134,7 @@ export async function getV2DeviceSession(req: NextRequest): Promise<{
   const data = t.data
 
   // v2 device sessions have deviceId as 'sub' and kind indicating device type
-  if (!['resident', 'helper', 'guardian', 'visitor'].includes(data.kind)) {
+  if (!['resident', 'helper', 'visitor'].includes(data.kind)) {
     return null
   }
 
@@ -151,8 +151,8 @@ export async function getV2DeviceSession(req: NextRequest): Promise<{
   // Reject token whose kind differs from the device's kind
   if (device.kind !== data.kind) return null
 
-  // Reject helper and guardian devices whose membership isn't approved
-  if ((device.kind === 'helper' || device.kind === 'guardian') && device.memberId) {
+  // Reject helper devices whose membership isn't approved
+  if (device.kind === 'helper' && device.memberId) {
     const membership = await db.membership.findUnique({
       where: { id: device.memberId },
       select: { consent: true }
@@ -169,7 +169,7 @@ export async function getV2DeviceSession(req: NextRequest): Promise<{
     deviceId: device.id,
     householdId: device.householdId,
     membershipId: device.memberId ?? undefined,
-    kind: device.kind as 'resident' | 'helper' | 'guardian' | 'visitor',
+    kind: device.kind as 'resident' | 'helper' | 'visitor',
   }
 }
 
@@ -230,8 +230,7 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     }
 
     // Convert v2 device session to old-style Session format for compatibility
-    let role: 'guardian' | 'helper' | undefined
-    if (v2Session.kind === 'guardian') role = 'guardian'
+    let role: 'helper' | undefined
     if (v2Session.kind === 'helper') role = 'helper'
 
     // Visitor devices get their own kind, not mapped to helper
@@ -247,7 +246,6 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
     let roleOk = false
     if (allowed.includes('any')) roleOk = true
     if (allowed.includes('user') && session.kind === 'user') roleOk = true
-    if (allowed.includes('guardian') && session.role === 'guardian') roleOk = true
     if (allowed.includes('helper') && session.kind === 'helper') roleOk = true
     if (allowed.includes('resident') && session.kind === 'resident') roleOk = true
     if (allowed.includes('device') && v2Session.kind === 'visitor') roleOk = true
@@ -319,15 +317,14 @@ export async function authorize(req: NextRequest, ...allowed: Who[]): Promise<Au
 
     // Check role authorization
     let roleOk = false
-    if (allowed.includes('guardian') && membership.role === 'guardian') roleOk = true
-    if (allowed.includes('helper') && membership.role === 'helper') roleOk = true
+    if (allowed.includes('helper')) roleOk = true
 
     if (!roleOk) {
       return { ok: false as const, res: fail('Forbidden', 403) }
     }
 
     // Augment session with role and membershipId
-    session.role = membership.role as 'guardian' | 'helper'
+    session.role = 'helper'
     session.membershipId = membership.id
     session.householdId = targetHouseholdId
   }

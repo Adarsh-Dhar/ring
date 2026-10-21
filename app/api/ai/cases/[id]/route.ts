@@ -10,7 +10,7 @@ import { getCaseAi } from '@/lib/ai/caseAi'
 
 /** Helper card polls this for the AI fields. Kept separate so the core case state is untouched. */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const a = await authorize(req, 'helper', 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

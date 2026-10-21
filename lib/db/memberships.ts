@@ -37,7 +37,7 @@ export async function getApprovedMemberships(householdId: string) {
 export async function createMembership(data: {
   userId: string
   householdId: string
-  role: 'guardian' | 'helper'
+  role: 'helper'
   position: number
   emoji?: string
 }) {
@@ -56,7 +56,7 @@ export async function createMembership(data: {
 }
 
 export async function updateMembership(membershipId: string, data: {
-  role?: 'guardian' | 'helper'
+  role?: 'helper'
   position?: number
   emoji?: string
 }) {

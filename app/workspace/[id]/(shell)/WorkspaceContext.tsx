@@ -16,7 +16,7 @@ export interface WorkspaceCtx {
   workspace: WorkspaceData
   role: 'resident' | 'helper'
   isResidentView: boolean
-  userIsGuardian: boolean
+  userIsHelper: boolean
   /** Build a workspace URL that keeps the current role, e.g. href('/calendar'). */
   href: (subPath?: string) => string
 }

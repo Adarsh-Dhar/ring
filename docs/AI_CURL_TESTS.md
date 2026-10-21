@@ -25,12 +25,12 @@ Everything here was written from reading the routes and agents in `ring-main (3)
 ```bash
 export BASE=http://localhost:3000
 export J="Content-Type: application/json"
-export G="Cookie: db_session=PASTE_GUARDIAN_TOKEN"        # a guardian
+export G="Cookie: db_session=PASTE_HELPER_TOKEN"        # a helper
 export H="Cookie: db_session=PASTE_HELPER_TOKEN"          # a helper (second browser profile)
 export R="Cookie: db_device=PASTE_RESIDENT_DEVICE_TOKEN"  # paired resident screen
 ```
 
-If your guardian belongs to more than one household, add `; db_household=<id>` to the end of `$G` and `$H`.
+If your helper belongs to more than one workspace, add `; db_household=<id>` to the end of `$G` and `$H`.
 
 To get `$R`: the guardian generates a 6-character pairing code in Setup, then:
 
@@ -86,7 +86,7 @@ The defaults in `.env.example` do not match Google's published IDs:
 ## 2. One-shot smoke test
 
 ```bash
-BASE=$BASE GUARDIAN=<guardian token> HELPER=<helper token> RESIDENT=<device token> \
+BASE=$BASE HELPER=<helper token> RESIDENT=<device token> \
   bash scripts/ai-curl-smoke.sh
 ```
 
@@ -107,7 +107,7 @@ Auth checks:
 
 ```bash
 curl -s -i $BASE/api/ai/usage | head -1                    # 401
-curl -s -i -H "$H" $BASE/api/ai/usage | head -1            # 403 (guardian only)
+curl -s -i -H "$H" $BASE/api/ai/usage | head -1            # 403 (helpers only)
 ```
 
 ## A. Note scribe (agent 3): messy note → one resident sentence
@@ -154,7 +154,7 @@ curl -s -w ' %{http_code}\n' -H "$H" -H "$J" -X POST $BASE/api/ai/notes/$D/decis
   -d '{"action":"approve","text":"Come in, the door is open"}'
 # → {"error":"That wording is not allowed"} 422
 
-# the resident endpoint refuses helpers and guardians
+# the resident endpoint refuses helpers
 curl -s -o /dev/null -w '%{http_code}\n' -H "$H" $BASE/api/ai/notes/current        # 403
 
 # validation

@@ -58,7 +58,7 @@ export async function GET(req: NextRequest, context: Ctx) {
     )
   }
   if (invite.expiresAt && new Date() > invite.expiresAt) {
-    return fail('This invite link has expired. Please ask the guardian to send a new one.', 400)
+    return fail('This invite link has expired. Please ask a helper to send a new one.', 400)
   }
 
   const res = NextResponse.json({
@@ -132,7 +132,7 @@ export async function POST(req: NextRequest, context: Ctx) {
     )
   }
   if (invite.expiresAt && new Date() > invite.expiresAt) {
-    return fail('This invite link has expired. Please ask the guardian to send a new one.', 400)
+    return fail('This invite link has expired. Please ask a helper to send a new one.', 400)
   }
 
   // Handle decline - do not mutate the invite
@@ -141,10 +141,7 @@ export async function POST(req: NextRequest, context: Ctx) {
   }
 
   // Handle accept - use transaction for atomicity
-  // Per user decision: guardian approval required, so consent is 'pending'
-  if (!['guardian', 'helper'].includes(invite.role)) {
-    return fail('Invalid invite role', 400)
-  }
+  // A helper must approve every new helper, so consent is 'pending'.
 
   try {
     const result = await db.$transaction(async (tx) => {
@@ -168,8 +165,8 @@ export async function POST(req: NextRequest, context: Ctx) {
         create: {
           userId,
           householdId: invite.householdId,
-          role: invite.role,
-          consent: 'pending', // Guardian approval required
+          role: 'helper',
+          consent: 'pending', // An existing helper must approve
           consentAt: new Date(),
           position: memberCount,
           emoji: '🙂',
@@ -177,7 +174,7 @@ export async function POST(req: NextRequest, context: Ctx) {
         },
         update: {
           consent: 'pending', // Reset to pending if declined
-          role: invite.role,
+          role: 'helper',
         },
       })
 
@@ -188,7 +185,7 @@ export async function POST(req: NextRequest, context: Ctx) {
       ok: true,
       membershipId: result.membership.id,
       householdId: invite.householdId,
-      role: invite.role,
+      role: 'helper',
     })
   } catch (e) {
     console.error('[INVITES POST] Failed to accept invite', e)

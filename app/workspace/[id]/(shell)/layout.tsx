@@ -155,7 +155,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
 
   const switchRole = (newRole: 'resident' | 'helper') => {
     if (newRole === 'resident') {
-      // If user is guardian of this household, go to resident view
+      // If user is helper of this household, go to resident view
       router.push(`/workspace/${workspaceId}/dashboard?role=resident`)
     } else {
       // Go to workspace selection for helper view
@@ -199,7 +199,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
   }
 
   const isResidentView = roleParam !== 'helper'
-  const userIsGuardian = workspace.role === 'guardian'
+  const userIsHelper = workspace.role === 'helper'
 
   // Build href function that preserves role
   const href = (subPath?: string) => {
@@ -225,14 +225,14 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
     workspace: WorkspaceData
     role: 'resident' | 'helper'
     isResidentView: boolean
-    userIsGuardian: boolean
+    userIsHelper: boolean
     href: (subPath?: string) => string
   } = {
     workspaceId,
     workspace,
     role: isResidentView ? 'resident' : 'helper',
     isResidentView,
-    userIsGuardian,
+    userIsHelper,
     href,
   }
 
@@ -261,7 +261,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               </div>
               <div className="flex items-center space-x-4">
                 {/* Role Switcher */}
-                {userIsGuardian && (
+                {userIsHelper && (
                   <button
                     onClick={() => switchRole(isResidentView ? 'helper' : 'resident')}
                     className="text-gray-700 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium border border-gray-300 hover:border-gray-400"
@@ -464,7 +464,7 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
               >
                 Calendar
               </Link>
-              {userIsGuardian && (
+              {userIsHelper && (
                 <Link
                   href={href('/simulation')}
                   className={`py-4 px-1 border-b-2 font-medium text-sm ${

@@ -5,7 +5,7 @@ import { PURPOSES } from '@/lib/doorbell/purposes'
 
 interface Approved { id: string; name: string; purpose: string; since: number; by: 'helper' | 'resident' }
 
-/** Guardian view: who is registered as a regular visitor, and a way to remove them (their face is deleted). */
+/** Helper view: who is registered as a regular visitor, and a way to remove them (their face is deleted). */
 export default function RegularVisitorsAdmin({ registerUrl }: { registerUrl?: string }) {
   const [items, setItems] = useState<Approved[]>([])
   const [msg, setMsg] = useState('')

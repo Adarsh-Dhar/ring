@@ -4,6 +4,18 @@ A calm doorbell assistant for a person who lives alone with an intellectual disa
 
 Built on the Ring Partner API (webhooks for events, WHEP for live video). Next.js 15, Prisma/Postgres, web-push, Twilio SMS.
 
+## Roles
+
+There are only three kinds of people, and nobody has a higher role than a helper:
+
+| Who | How many | How they use the app |
+|---|---|---|
+| **Resident** | Exactly one per workspace | A paired device (6-character code) showing one simple screen and an SOS button. No login. Pairing a new device retires the old one. |
+| **Helper** | Any number per workspace, all equal | Sign in with Google. Answer doorbell alerts, watch live video, create the workspace, link Ring, add or approve other helpers, manage planned visits and passes, and switch AI on or off. A workspace always keeps at least one approved helper. |
+| **Visitor** | Unlimited, no account | **Planned**: asks through a visit-request link or holds a pass, and is matched to the plan. **Unplanned**: simply rings, and is handled by the interrogator and the helpers. |
+
+There is no guardian or admin role. See `docs/ROLES.md` for what changed and why.
+
 ## Features
 
 - **Multi-household support**: Manage multiple residents/households from a single installation
@@ -174,7 +186,7 @@ npm test
 - `/api/auth/select-household` - Select household (for multi-household users)
 - `/api/session` - Get current session or pair resident device
 
-### Household Management (Guardian only)
+### Household Management (Helpers only)
 - `/api/household` - GET/POST for household settings, quiet hours, timeout, device pairing
 - `/api/household/members` - GET/POST for member management (invite, remove, reorder, consent)
 
@@ -207,7 +219,7 @@ Login page with email/phone OTP authentication.
 ### `/pair`
 Resident device pairing page (enter 6-digit code).
 
-### `/setup` (Guardian only)
+### `/setup` (Helpers only)
 Setup page for managing household settings, members, quiet hours, timeout, and recurring visits.
 
 ### `/helper`
@@ -317,7 +329,7 @@ Resident screen for doorbell events and SOS.
    ```
 
    **Connect Ring Account:**
-   1. After deployment, log in as a guardian
+   1. After deployment, log in as a helper
    2. Go to the Setup page
    3. Click "Connect Ring Account"
    4. Follow the OAuth flow to authorize the app

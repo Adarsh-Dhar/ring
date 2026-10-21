@@ -1,10 +1,10 @@
 /**
  * HTTP layer for face recognition. app/api/face/route.ts just re-exports GET and POST from here.
  *
- *   GET  /api/face                                   list saved guests + status           (guardian or helper)
- *   POST /api/face {action:'enroll', name, image, consent:true, ref?}                     (guardian)
- *   POST /api/face {action:'match',  image, ref?, name?}                                  (guardian or helper)
- *   POST /api/face {action:'delete', id}  or  {action:'delete', name?, ref?}              (guardian)
+ *   GET  /api/face                                   list saved guests + status           (helper)
+ *   POST /api/face {action:'enroll', name, image, consent:true, ref?}                     (helper)
+ *   POST /api/face {action:'match',  image, ref?, name?}                                  (helper)
+ *   POST /api/face {action:'delete', id}  or  {action:'delete', name?, ref?}              (helper)
  *
  * `image` is a base64 string or data URL (JPEG, PNG or WebP).
  */
@@ -36,7 +36,7 @@ function problem(e: unknown) {
 
 export async function GET(req: NextRequest) {
   if (!FACE.enabled) return off()
-  const a = await authorize(req, 'guardian', 'helper')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   return NextResponse.json({ ...faceStatus(), faces: await listFaces(a.session.householdId) })
 }
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!FACE.enabled) return off()
   if (Number(req.headers.get('content-length') ?? 0) > 12_000_000) return fail('Request too large', 413)
-  const a = await authorize(req, 'guardian', 'helper')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const p = await parse(req, Body)
   if (p.ok === false) return p.res
@@ -53,7 +53,6 @@ export async function POST(req: NextRequest) {
 
   const strip = (s: { faces: any[] }) => ({ ...s, faces: s.faces.map(({ embedding, ...rest }) => rest) })
 
-  if (!['match', 'sighting', 'sightings'].includes(b.action) && role !== 'guardian') return fail('Only a guardian can do that', 403)
   if (!hit(`face:${householdId}:${b.action}`, b.action === 'match' || b.action === 'sighting' ? 30 : 10, 60_000)) return fail('Too many requests', 429)
 
   try {

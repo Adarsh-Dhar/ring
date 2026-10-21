@@ -29,7 +29,7 @@ export default function HelperPage() {
   useEffect(() => setVisitor(null), [caseId])
 
   if (unauthorized) {
-    return <main className="p-6 text-center text-amber-300">You are not signed in. Open your personal link again, or ask the guardian for a new one.</main>
+    return <main className="p-6 text-center text-amber-300">You are not signed in. Open your personal link again, or ask the helper for a new one.</main>
   }
   if (!snap) return <main className="p-6 text-slate-400">Loading…</main>
 

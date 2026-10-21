@@ -4,11 +4,11 @@ import SimulationPanel from '@/app/workspace/[id]/SimulationPanel'
 import { useWorkspace } from '../WorkspaceContext'
 
 export default function SimulationPage() {
-  const { userIsGuardian, href } = useWorkspace()
-  if (!userIsGuardian) {
+  const { userIsHelper, href } = useWorkspace()
+  if (!userIsHelper) {
     return (
       <div className="bg-white rounded-lg shadow-md p-6 text-gray-600">
-        The simulator is only available to the household guardian.{' '}
+        The simulator is only available to the household helper.{' '}
         <Link href={href('/dashboard')} className="text-blue-600 hover:underline">Back to dashboard</Link>
       </div>
     )

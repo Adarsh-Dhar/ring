@@ -86,7 +86,7 @@ This implementation adds the Section 8 case-lifecycle behavior to the Ring/Doors
   - GET: earlier serious events (information only)
 - **`/api/doorbell/resident-note`** (resident):
   - POST: dispute, statement, split
-- **`/api/household/lifecycle`** (guardian):
+- **`/api/household/lifecycle`** (helper):
   - GET: resident-set quiet period and look-back window
   - PUT: update resident-set values
 

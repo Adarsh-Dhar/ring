@@ -20,14 +20,13 @@
 
 | Person | Today | v2 |
 | --- | --- | --- |
-| **Guardian** sign-up | Enter details, OTP, link Ring, invite each helper | Create a passkey (Face ID / fingerprint). Link Ring. Add helpers by name and phone. Done. |
-| **Guardian** return | New OTP each login | Open the app. Passkey signs in silently. |
+| **Helper** (workspace creator) sign-up | Enter details, OTP, link Ring, invite each helper | Create a passkey (Face ID / fingerprint). Link Ring. Add helpers by name and phone. Done. |
 | **Helper** join | Receive link, enter OTP, give consent separately, enable push | Tap the SMS link, read one consent screen, tap "I agree". A passkey is created automatically. |
 | **Helper** return | OTP when session expires | Never. Session lasts 90 days and renews on use. |
-| **Resident** device | Type a 6-digit pairing code | Guardian shows a QR on their phone. Resident tablet scans it once. No resident login ever. |
+| **Resident** device | Type a 6-digit pairing code | A helper shows a QR on their phone. Resident tablet scans it once. No resident login ever. |
 | **Resident** daily | Screen only | Same. Nothing to type. |
 | **Visitor** (cleaner, carer) | Pass-word or a rotating code read aloud | Gets a link once, taps "Add to Home Screen". On arrival: one big "I'm here" button. |
-| **One-off visitor** | Request form, guardian approves, status link bound to one device, code | Request form, guardian approves, visitor gets a pass link valid for the time window. No code. |
+| **One-off visitor** | Request form, a helper approves, status link bound to one device, code | Request form, a helper approves, visitor gets a pass link valid for the time window. No code. |
 
 **Codes typed by a human: from \~6 to 0** (OTP remains only as a fallback when a passkey is unavailable).
 
@@ -55,7 +54,6 @@ flowchart LR
   subgraph Clients
     R[Resident PWA<br/>no login, device key]
     H[Helper PWA<br/>passkey, push]
-    G[Guardian PWA<br/>passkey]
     V[Visitor pass<br/>signed link, device key]
   end
   subgraph Edge
@@ -77,12 +75,12 @@ flowchart LR
   RING[Ring Partner API]
   TW[Twilio / Web Push]
 
-  R & H & G & V --> CDN --> API
+  R & H & V --> CDN --> API
   RING --> CDN --> WH --> Q
   API --> SM --> DB
   Q --> SM
   SM --> NS --> TW
-  SM -->|state events| RD --> RT --> R & H & G
+  SM -->|state events| RD --> RT --> R & H
   FS -.evidence only.-> SM
   API --> RING
 ```
@@ -158,8 +156,8 @@ sequenceDiagram
 
 ```
 Household      id, timezone, settings (preset: Standard | Strict | Custom)
-Member         id, householdId, role (owner | helper), name, phone, order, consentedAt
-Device         id, memberId?, householdId, kind (resident | helper | guardian | visitor),
+Member         id, householdId, role (helper), name, phone, order, consentedAt
+Device         id, memberId?, householdId, kind (resident | helper | visitor),
                publicKey, lastSeenAt, revokedAt          -- replaces cookies + pairing codes
 Passkey        id, memberId, credentialId, publicKey
 Case           id, householdId, kind, state, version, deadlineAt   -- optimistic locking

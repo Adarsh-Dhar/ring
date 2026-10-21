@@ -95,17 +95,17 @@ const Body = z.discriminatedUnion('action', [
  * GET — returns whether the simulator is enabled.
  */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   return NextResponse.json({ enabled: DEMO_MODE })
 }
 
 /**
  * POST — dispatch any simulator action.
- * Requires DEMO_MODE=1 and an active guardian session.
+ * Requires DEMO_MODE=1 and an active helper session.
  */
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   if (!DEMO_MODE) {

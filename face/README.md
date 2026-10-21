@@ -16,13 +16,13 @@ const r = await matchFace(householdId, snapshotJpeg, { ref: expectedVisitId })  
 await deleteGuest(householdId, { ref: expectedVisitId })   // when a visit is deleted or the guest asks
 ```
 
-## Use it over HTTP (guardian or helper session)
+## Use it over HTTP (helper session)
 | Call | Who | Body |
 |---|---|---|
-| `GET /api/face` | guardian, helper | , (lists saved guests + status, no biometric data) |
-| `POST /api/face` | guardian | `{action:'enroll', name, image, consent:true, ref?}` |
-| `POST /api/face` | guardian, helper | `{action:'match', image, ref?, name?}` |
-| `POST /api/face` | guardian | `{action:'delete', id}` or `{action:'delete', name?, ref?}` |
+| `GET /api/face` | helper | , (lists saved guests + status, no biometric data) |
+| `POST /api/face` | helper | `{action:'enroll', name, image, consent:true, ref?}` |
+| `POST /api/face` | helper | `{action:'match', image, ref?, name?}` |
+| `POST /api/face` | helper | `{action:'delete', id}` or `{action:'delete', name?, ref?}` |
 
 `image` = base64 or data URL, JPEG/PNG/WebP, up to `FACE_MAX_IMAGE_BYTES` (4 MB).
 

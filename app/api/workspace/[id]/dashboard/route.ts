@@ -29,36 +29,9 @@ export async function GET(
       },
     })
 
-    // If not a member, check if user's name matches resident name and auto-create membership
+    // Only helpers sign in here. The resident uses the paired device, never this dashboard.
     if (!membership) {
-      const household = await db.household.findUnique({
-        where: { id: householdId },
-        select: { residentName: true },
-      })
-
-      const user = await db.user.findUnique({
-        where: { id: userId },
-        select: { name: true },
-      })
-
-      // Auto-create membership if user's name matches resident name (for the resident themselves)
-      if (household && user && user.name === household.residentName) {
-        const memberCount = await db.membership.count({ where: { householdId } })
-        membership = await db.membership.create({
-          data: {
-            userId,
-            householdId,
-            role: 'guardian', // Give resident guardian-level access
-            consent: 'approved',
-            consentAt: new Date(),
-            position: memberCount,
-            tokenEpoch: 1,
-            emoji: '👤',
-          },
-        })
-      } else {
-        return fail('You are not a member of this household.', 403)
-      }
+      return fail('You are not a helper in this workspace.', 403)
     }
 
     // Get Ring connection status

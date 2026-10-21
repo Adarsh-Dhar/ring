@@ -50,7 +50,7 @@ export default function PairPage() {
         <form onSubmit={handlePair} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Enter the 6-character code from your guardian
+              Enter the 6-character code from your helper
             </label>
             <input
               type="text"
@@ -72,7 +72,7 @@ export default function PairPage() {
         </form>
 
         <p className="mt-4 text-sm text-gray-500 text-center">
-          Ask your guardian to show you a pairing code from the setup page.
+          Ask your helper to show you a pairing code from the setup page.
         </p>
       </div>
     </div>

@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian', 'helper')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const householdId = a.session!.householdId
@@ -61,7 +61,7 @@ const Body = z.discriminatedUnion('action', [
     email:  z.string().email().optional(),
     phone:  z.string().optional(),
     name:   z.string().trim().min(1).max(60),
-    role:   z.enum(['guardian', 'helper']),
+    role:   z.literal('helper').default('helper'),
     emoji:  z.string().max(8).default('🙂'),
   }).refine(data => data.email || data.phone, {
     message: "Either email or phone must be provided"
@@ -71,12 +71,21 @@ const Body = z.discriminatedUnion('action', [
   z.object({ action: z.literal('consent'), id: z.string().max(80), consent: z.enum(['pending', 'declined']) }),
   z.object({ action: z.literal('reorder'), ids: z.array(z.string().max(80)) }),
   z.object({ action: z.literal('revoke'),  id: z.string().max(80) }),
-  z.object({ action: z.literal('createInvite'), role: z.enum(['guardian', 'helper']) }),
+  z.object({ action: z.literal('createInvite'), role: z.literal('helper').default('helper') }),
   z.object({ action: z.literal('deleteInvite'), id: z.string().max(80) }),
 ])
 
+class LastHelperError extends Error {}
+
+/** A workspace must always keep at least one approved helper, otherwise nobody can manage it or answer the door. */
+async function guardLastHelper(db: any, householdId: string, membership: { id: string; consent: string }) {
+  if (membership.consent !== 'approved') return
+  const approved = await db.membership.count({ where: { householdId, consent: 'approved' } })
+  if (approved <= 1) throw new LastHelperError('A workspace needs at least one approved helper. Add another helper first.')
+}
+
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const householdId = a.session!.householdId
@@ -196,6 +205,7 @@ export async function POST(req: NextRequest) {
         const membership = await db.membership.findUnique({ where: { id: b.id } })
         if (!membership) return fail('Member not found. They may have already been removed.', 404)
         if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await guardLastHelper(db, householdId, membership)
         await deleteMembership(b.id)
         return NextResponse.json({ ok: true })
       }
@@ -212,6 +222,7 @@ export async function POST(req: NextRequest) {
         const membership = await db.membership.findUnique({ where: { id: b.id } })
         if (!membership) return fail('Member not found.', 404)
         if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await guardLastHelper(db, householdId, membership)
         await setMembershipConsent(b.id, b.consent)
         return NextResponse.json({ ok: true })
       }
@@ -226,6 +237,7 @@ export async function POST(req: NextRequest) {
         const membership = await db.membership.findUnique({ where: { id: b.id } })
         if (!membership) return fail('Member not found.', 404)
         if (membership.householdId !== householdId) return fail('This member does not belong to your household.', 403)
+        await guardLastHelper(db, householdId, membership)
         await setMembershipConsent(b.id, 'pending')
         await db.membership.update({
           where: { id: b.id },
@@ -257,6 +269,7 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (e) {
+    if (e instanceof LastHelperError) return fail(e.message, 400)
     console.error(`[MEMBERS POST action=${b.action}]`, e)
     return fail('Something went wrong. Please try again.', 500)
   }

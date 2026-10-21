@@ -16,7 +16,7 @@ const Body = z.object({
 })
 
 /**
- * Workspace simulator only: the guardian TYPES the visitor's reply instead of speaking it.
+ * Workspace simulator only: the helper TYPES the visitor's reply instead of speaking it.
  * Same interrogator, same guards, same output as /api/ai/interrogator/audio. Locked to
  * DEMO_MODE and to cases raised by a simulated doorbell (deviceId "sim-…"), so it can never be used
  * to put words in a real visitor's mouth.
@@ -24,7 +24,7 @@ const Body = z.object({
 export async function POST(req: NextRequest) {
   if (process.env.DEMO_MODE !== '1') return fail('Simulator is disabled. Set DEMO_MODE=1 and restart.', 403)
 
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

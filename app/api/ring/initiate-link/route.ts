@@ -10,7 +10,7 @@ export const runtime = 'nodejs'
  * and providing instructions to the user
  */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const householdId = a.session!.householdId

@@ -61,7 +61,7 @@ export default function InvitePage() {
 
       // Redirect after showing success message
       setTimeout(() => {
-        if (role === 'guardian') {
+        if (role === 'helper') {
           router.push(`/workspace/${data.householdId}/dashboard`)
         } else {
           router.push('/helper')

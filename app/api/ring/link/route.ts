@@ -14,11 +14,11 @@ export const runtime = 'nodejs'
  *
  * Step ordering:
  *   1. Validate HMAC signature and timestamp  — rejects forgeries and replays
- *   2. Check guardian session                 — redirect to login if missing
+ *   2. Check helper session                 — redirect to login if missing
  *      (nonce NOT consumed yet, so the user can log in and return)
  *   3. Consume nonce                          — single-use
  *   4. Look up the unclaimed connection
- *   5. Bind it to the guardian's household
+ *   5. Bind it to the helper's workspace
  */
 export async function GET(request: NextRequest) {
   const sp = request.nextUrl.searchParams
@@ -65,8 +65,8 @@ export async function GET(request: NextRequest) {
     return redirect(request, '/setup?error=expired&error_detail=Ring+callback+has+expired.+Please+start+the+linking+process+again.')
   }
 
-  // ── 2. Check guardian session BEFORE consuming the nonce ─────────────────
-  const a = await authorize(request, 'guardian')
+  // ── 2. Check helper session BEFORE consuming the nonce ─────────────────
+  const a = await authorize(request, 'helper')
   if (a.ok === false) {
     const returnUrl = encodeURIComponent(request.url)
     return NextResponse.redirect(new URL(`/login?next=${returnUrl}`, request.url))
@@ -112,14 +112,14 @@ export async function GET(request: NextRequest) {
 
   if (connection.status !== 'unclaimed') {
     if (connection.householdId === session.householdId) {
-      // Idempotent — this guardian already linked it
+      // Idempotent — this helper already linked it
       return redirect(request, '/setup?ring_linked=true')
     }
     console.error('[RING LINK] Connection already claimed by a different household', ringAccountId)
     return redirect(request, '/setup?error=connection_already_claimed&error_detail=This+Ring+account+is+already+linked+to+a+different+household.')
   }
 
-  // ── 5. Bind the connection to the guardian's household ────────────────────
+  // ── 5. Bind the connection to the helper's workspace ────────────────────
   try {
     await db.ringConnection.update({
       where: { id: connection.id },

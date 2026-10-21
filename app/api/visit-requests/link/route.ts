@@ -26,7 +26,7 @@ async function notifyCancelled(householdId: string, cancelled: any[]) {
 
 /** GET — is a visit link active? */
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   let l: any
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 
 /** POST — create a new link (rotates any existing one; returns the raw token once). */
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const hid = a.session.householdId
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
 
 /** DELETE — revoke without creating a new one. */
 export async function DELETE(req: NextRequest) {
-  const a = await authorize(req, 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
 
   const hid = a.session.householdId

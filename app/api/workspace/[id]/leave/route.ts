@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const a = await authorize(req, 'any')
+  const a = await authorize(req, 'user')
   if (a.ok === false) return a.res
 
   const userId = a.session!.userId
@@ -15,32 +15,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const db = getDb()
 
-    // Find all memberships for this user in this household
-    const memberships = await db.membership.findMany({
-      where: {
-        userId,
-        householdId: workspaceId,
-      },
+    const membership = await db.membership.findFirst({
+      where: { userId, householdId: workspaceId },
     })
 
-    if (memberships.length === 0) {
-      return fail('You are not a member of this workspace', 404)
+    if (!membership) {
+      return fail('You are not a helper in this workspace', 404)
     }
 
-    // If user has a helper membership, delete it (keep guardian membership if exists)
-    const helperMembership = memberships.find(m => m.role === 'helper')
-    if (helperMembership) {
-      await db.membership.delete({
-        where: { id: helperMembership.id },
-      })
-      return NextResponse.json({ ok: true })
+    // A workspace must always keep at least one approved helper.
+    if (membership.consent === 'approved') {
+      const approved = await db.membership.count({ where: { householdId: workspaceId, consent: 'approved' } })
+      if (approved <= 1) {
+        return fail('You are the only helper in this workspace. Add another helper first, or delete the workspace.', 400)
+      }
     }
 
-    // If user only has a guardian membership, don't allow leaving
-    if (memberships.length === 1 && memberships[0].role === 'guardian') {
-      return fail('Guardians cannot leave their own household. Please delete the household instead.', 400)
-    }
-
+    await db.membership.delete({ where: { id: membership.id } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[LEAVE WORKSPACE] Failed to leave workspace', e)

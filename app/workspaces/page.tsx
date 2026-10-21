@@ -124,7 +124,7 @@ export default function WorkspacesPage() {
                   {household.residentName}'s Home
                 </h3>
                 <p className="text-gray-600 text-sm">
-                  {household.role === 'guardian' ? 'You are the guardian' : 'You are a helper'}
+                  {household.role === 'helper' ? 'You are the helper' : 'You are a helper'}
                 </p>
               </Link>
             ))}

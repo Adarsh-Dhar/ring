@@ -13,9 +13,9 @@ const createPassSchema = z.object({
   recurrence:  z.any().optional(),
 }).refine(v => new Date(v.windowEnd) > new Date(v.windowStart), { message: 'windowEnd must be after windowStart' })
 
-/** GET /api/visitor/passes - list this household's passes (guardian only) */
+/** GET /api/visitor/passes - list this household's passes (helper only) */
 export async function GET(request: NextRequest) {
-  const a = await authorize(request, 'guardian')
+  const a = await authorize(request, 'helper')
   if (!isAuthOk(a)) return a.res
   try {
     return NextResponse.json({ passes: await getPassesForHousehold(a.session.householdId) })
@@ -26,11 +26,11 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/visitor/passes - create a pass (guardian only).
+ * POST /api/visitor/passes - create a pass (helper only).
  * The response contains `link` once. It cannot be recovered later: only a hash is stored.
  */
 export async function POST(request: NextRequest) {
-  const a = await authorize(request, 'guardian')
+  const a = await authorize(request, 'helper')
   if (!isAuthOk(a)) return a.res
   try {
     const parsed = createPassSchema.safeParse(await request.json().catch(() => null))

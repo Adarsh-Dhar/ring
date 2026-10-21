@@ -13,7 +13,7 @@ import { aiFlags } from '@/lib/ai/caseAi'
 const Body = z.object({ note: z.string().trim().min(2).max(400) })
 
 export async function GET(req: NextRequest) {
-  const a = await authorize(req, 'helper', 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const a = await authorize(req, 'helper', 'guardian')
+  const a = await authorize(req, 'helper')
   if (a.ok === false) return a.res
   const householdId = a.session.householdId
   if (!householdId) return fail('No household', 400)

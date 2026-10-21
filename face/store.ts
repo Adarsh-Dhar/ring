@@ -95,7 +95,7 @@ export async function purgeOldEnrollments(now = Date.now()): Promise<number> {
     const cutoff = new Date(now - FACE.retentionDays * 86_400_000)
     // Remove GuestFace rows that were created before the retention cutoff
     // and whose ref points to a reg:* (regular visitor registration) — those
-    // are only live while the visitor is approved. If the household guardian
+    // are only live while the visitor is approved. If the household helper
     // manually enrolled a face (no ref or a visit ref) we leave it alone and
     // let them delete it explicitly.
     const result = await getDb().guestFace.deleteMany({

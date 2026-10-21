@@ -10,8 +10,8 @@ export const runtime = 'nodejs'
  * Ring Partner API Token Exchange Endpoint (server-to-server).
  * Ring POSTs an authorization code here within 60 s of the user authorising.
  * We exchange it for tokens, store them encrypted, and mark the connection
- * 'unclaimed'. A guardian must then visit /api/ring/link to bind it to their
- * household.
+ * 'unclaimed'. A helper must then visit /api/ring/link to bind it to their
+ * workspace.
  *
  * This endpoint is intentionally unauthenticated — it is called by Ring's
  * servers, not by end-users. Security is enforced by the HMAC signature on

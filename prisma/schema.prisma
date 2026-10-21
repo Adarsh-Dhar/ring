@@ -75,7 +75,7 @@ model Membership {
   id                String             @id @default(cuid())
   userId            String
   householdId       String
-  role              String
+  role              String             @default("helper") // always "helper": the only signed-in role (the resident is a paired device)
   consent           String             @default("pending")
   consentAt         DateTime?
   position          Int

@@ -3,11 +3,11 @@
  * simulator does, and checks every reply against the interviewing methods the agent is built on
  * (PEACE / cognitive interview, SUE, Scharff-style non-pressure, ORBIT autonomy support, Mendez guardrails).
  *
- *   BASE=http://localhost:3000 GUARDIAN=<db_session cookie> npx tsx scripts/interrogation-conversation-test.ts
+ *   BASE=http://localhost:3000 HELPER=<db_session cookie> npx tsx scripts/interrogation-conversation-test.ts
  *
- * Server needs: DEMO_MODE=1, GEMINI_API_KEY set, a household where you are a guardian.
+ * Server needs: DEMO_MODE=1, GEMINI_API_KEY set, a household where you are a helper.
  * Options (env or flags):
- *   HOUSEHOLD=<id>          only if the guardian belongs to several households
+ *   HOUSEHOLD=<id>          only if the helper belongs to several households
  *   RESIDENT_NAME=<name>    resident's first name, so leaks of it are caught (default: read from /api/ai/usage if present)
  *   --only a,b              run only these scenarios (names below)
  *   --list                  list scenarios and exit
@@ -320,19 +320,19 @@ const has = (name: string) => process.argv.includes(name)
 async function main() {
   if (has('--list')) { for (const s of SCENARIOS) console.log(`${s.name.padEnd(22)} ${s.method}`); return }
   const base = (process.env.BASE ?? 'http://localhost:3000').replace(/\/$/, '')
-  const guardian = process.env.GUARDIAN
-  if (!guardian) { console.error('Set GUARDIAN to the db_session cookie of a guardian.'); process.exit(2) }
-  const cookie = `db_session=${guardian}${process.env.HOUSEHOLD ? `; db_household=${process.env.HOUSEHOLD}` : ''}`
+  const helper = process.env.HELPER
+  if (!helper) { console.error('Set HELPER to the db_session cookie of a helper.'); process.exit(2) }
+  const cookie = `db_session=${helper}${process.env.HOUSEHOLD ? `; db_household=${process.env.HOUSEHOLD}` : ''}`
   const c: Cfg = { base, cookie, verbose: has('--verbose'), residentName: process.env.RESIDENT_NAME }
   const only = arg('--only')?.split(',').map(s => s.trim())
   const list = only ? SCENARIOS.filter(s => only.includes(s.name)) : SCENARIOS
   if (!list.length) { console.error('No scenario matches --only. Use --list.'); process.exit(2) }
 
   const sim = await call(c, 'GET', '/api/dev/simulate')
-  if (sim.status === 401) { console.error('401: the GUARDIAN cookie is not valid.'); process.exit(2) }
+  if (sim.status === 401) { console.error('401: the HELPER cookie is not valid.'); process.exit(2) }
   if (!sim.json?.enabled) { console.error('Simulator is off. Start the server with DEMO_MODE=1.'); process.exit(2) }
   const on = await call(c, 'POST', '/api/ai/kill', { aiEnabled: true, aiInterrogator: true })
-  if (on.status !== 200) { console.error(`Could not enable the interrogator (${on.status}). Is the cookie a guardian's?`); process.exit(2) }
+  if (on.status !== 200) { console.error(`Could not enable the interrogator (${on.status}). Is the cookie a helper's?`); process.exit(2) }
   if (!c.residentName && typeof on.json?.residentName === 'string') c.residentName = on.json.residentName
 
   let fails = 0, warns = 0

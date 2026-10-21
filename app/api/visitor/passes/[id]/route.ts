@@ -12,7 +12,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const a = await authorize(request, 'guardian')
+  const a = await authorize(request, 'helper')
   if (!isAuthOk(a)) return a.res
   try {
     const { id } = await params
@@ -36,7 +36,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const a = await authorize(request, 'guardian')
+  const a = await authorize(request, 'helper')
   if (!isAuthOk(a)) return a.res
   try {
     const { id } = await params

@@ -74,9 +74,10 @@ The application includes the following security headers via `next.config.js`:
 - Constant-time signature comparison to prevent timing attacks
 
 ### Role-Based Access Control
-- Guardian: Full access to household settings, member management
-- Helper: Can answer cases, view history, limited settings
-- Resident: View-only, confirm door open, SOS, check-in
+- Helper (many per workspace, all equal): answer cases, view history and live video, manage helpers, visitors, passes, Ring link, notice and AI settings
+- Resident (exactly one per workspace, a paired device): view-only, confirm door open, SOS, check-in, delegation settings
+- Visitors (planned and unplanned): no account; planned visitors use a request link or pass, unplanned visitors just ring
+- A workspace always keeps at least one approved helper
 - Cross-household isolation: All DB queries scoped to `session.householdId`
 
 ### Session Security

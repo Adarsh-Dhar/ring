@@ -32,9 +32,9 @@ export default function CreateWorkspacePage() {
         body: JSON.stringify({
           action: 'create',
           residentName: residentName.trim(),
-          guardianName: residentName.trim(), // Resident is their own guardian
-          guardianPhone: phone.trim() || undefined,
-          guardianEmail: email.trim() || undefined,
+          helperName: residentName.trim(), // Resident is their own helper
+          helperPhone: phone.trim() || undefined,
+          helperEmail: email.trim() || undefined,
         }),
       })
 

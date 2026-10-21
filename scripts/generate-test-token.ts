@@ -7,7 +7,7 @@ const membershipId = 'cmv8spls5000298zdc91ysv6b'
 // Get current session version from database
 const sessionVersion = 1
 
-// Create a guardian session token (30 days expiry)
+// Create a helper session token (30 days expiry)
 const exp = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60)
 const token = makeToken({
   kind: 'user',
@@ -20,7 +20,7 @@ const token = makeToken({
 })
 
 if (token) {
-  console.log('Guardian session token:')
+  console.log('Helper session token:')
   console.log(token)
   console.log('Household ID:', householdId)
   console.log('Membership ID:', membershipId)

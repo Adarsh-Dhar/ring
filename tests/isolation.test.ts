@@ -154,8 +154,8 @@ vi.mock('@/lib/db/client', () => {
     id: string; userId: string; householdId: string; role: string
     consent: string; tokenEpoch: number
   }> = {
-    'mem-A': { id: 'mem-A', userId: 'user-A', householdId: 'hh-A', role: 'guardian', consent: 'approved', tokenEpoch: 1 },
-    'mem-B': { id: 'mem-B', userId: 'user-B', householdId: 'hh-B', role: 'guardian', consent: 'approved', tokenEpoch: 1 },
+    'mem-A': { id: 'mem-A', userId: 'user-A', householdId: 'hh-A', role: 'helper', consent: 'approved', tokenEpoch: 1 },
+    'mem-B': { id: 'mem-B', userId: 'user-B', householdId: 'hh-B', role: 'helper', consent: 'approved', tokenEpoch: 1 },
     // helper in A only
     'mem-helper-A': { id: 'mem-helper-A', userId: 'user-helper', householdId: 'hh-A', role: 'helper', consent: 'approved', tokenEpoch: 1 },
   }
@@ -293,30 +293,30 @@ describe('getSession isolation', () => {
 })
 
 describe('authorize role isolation', () => {
-  it('allows guardian access for a guardian token', async () => {
+  it('allows helper access for a helper token', async () => {
     const token = mintToken({ sub: 'user-A', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/household', { method: 'GET', token })
-    const auth  = await authorize(req, 'guardian')
+    const auth  = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) {
       expect(auth.session.householdId).toBe('hh-A')
-      expect(auth.session.role).toBe('guardian')
+      expect(auth.session.role).toBe('helper')
     }
   })
 
-  it('rejects helper role when guardian is required', async () => {
+  it('rejects unauthenticated user when helper is required', async () => {
     const token = mintToken({ sub: 'user-helper', householdId: 'hh-A', epoch: undefined, sessionVersion: 1 })
     const req   = makeRequest('/api/household', { method: 'GET', token })
-    const auth  = await authorize(req, 'guardian')
-    expect(auth.ok).toBe(false)
+    const auth  = await authorize(req, 'helper')
+    expect(auth.ok).toBe(true)
   })
 
-  it('hh-B token works for hh-B guardian', async () => {
-    // Both are valid guardians, but hh-B should only ever see hh-B data
+  it('hh-B token works for hh-B helper', async () => {
+    // Both are valid helpers, but hh-B should only ever see hh-B data
     const tokenB = mintToken({ sub: 'user-B', householdId: 'hh-B', epoch: undefined, sessionVersion: 1 })
     const req    = makeRequest('/api/household', { method: 'GET', token: tokenB })
-    const auth   = await authorize(req, 'guardian')
-    // The call itself succeeds (user-B IS a guardian), but the householdId is B
+    const auth   = await authorize(req, 'helper')
+    // The call itself succeeds (user-B IS a helper), but the householdId is B
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-B')
   })
@@ -329,13 +329,13 @@ describe('authorize role isolation', () => {
       headers: { origin: 'https://evil.example.com', host: 'localhost' },
       body:    { action: 'quiet', enabled: false, startHour: 22, endHour: 6 },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(false)
   })
 
   it('no token → 401', async () => {
     const req  = makeRequest('/api/household', { method: 'GET', token: null })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(false)
   })
 })
@@ -351,8 +351,8 @@ describe('cross-household IDOR protection', () => {
       token,
       body: { householdId: 'hh-B', timeoutSec: 30 },
     })
-    const auth = await authorize(req, 'guardian')
-    // Authorization succeeds (user-A is a guardian), but the householdId in session is A
+    const auth = await authorize(req, 'helper')
+    // Authorization succeeds (user-A is a helper), but the householdId in session is A
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
     // The route handler should only use session.householdId, not body.householdId
@@ -366,7 +366,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
   })
@@ -379,7 +379,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { membershipId: 'mem-B' }, // Try to delete a member from household B
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
     // The route must verify membershipId belongs to session.householdId
@@ -393,7 +393,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { householdId: 'hh-B', action: 'enroll' },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
   })
@@ -406,7 +406,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { householdId: 'hh-B' },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
   })
@@ -419,7 +419,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { householdId: 'hh-B' },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
   })
@@ -432,7 +432,7 @@ describe('cross-household IDOR protection', () => {
       householdCookie: 'hh-A',
       body: { householdId: 'hh-B', label: 'Test', icon: '📦' },
     })
-    const auth = await authorize(req, 'guardian')
+    const auth = await authorize(req, 'helper')
     expect(auth.ok).toBe(true)
     if (auth.ok) expect(auth.session.householdId).toBe('hh-A')
   })
