@@ -198,29 +198,90 @@ export async function processAnswer(
       answer: typed !== null ? { typed } : { audio: answer as Buffer, mimeType: mimeType ?? 'audio/webm' },
     })
 
-    // ── The model could not process this answer ─────────────────────────────────────────────────────────────
-    if (!r) {
+    // ── The model could not process this answer (or returned a generic error) ─────────────────────────────────────
+    const GENERIC_ERROR_PHRASES = ['Sorry, could you say that again?', 'I apologize, but I did not understand your answer.']
+    const isGenericError = r && r.transcript && GENERIC_ERROR_PHRASES.some(p => r.transcript === p)
+    if (!r || isGenericError) {
       const failures = trailing(turns, t => !!t.modelFailed) + 1
       const transcripts = [...turns.map(t => t.transcript), typed ?? ''].join(' ')
       const updated: InterrogationTurn[] = [...turns, { question: asked, transcript: typed ?? '', timestamp: Date.now(), next: null, modelFailed: true }]
-      
-      // Deterministic concealment detection: if the visitor clearly asks to hide from helpers,
-      // dispatch the fixed safety response even when the model is unavailable
-      const ruleMatches = riskMatchesFor(transcripts)
-      const hasConcealment = ruleMatches.some(m => m.flag === 'Hides from helper')
-      
-      if (hasConcealment) {
-        const control = await controlFor(householdId, { score: 15, minMode: 'ai_assisted' })
-        const concealmentResponse = await dispatchAiAction({
-          householdId, caseId, tool: 'safety_script',
-          text: 'I must tell the helper about this conversation. I cannot keep it secret.',
-          sEff: control.effectiveScore, decision: 'hide_from_helper'
-        })
-        if (concealmentResponse.allowed) {
-          await finishInterrogation(householdId, caseId, updated, 'done_verified')
-          return { question: null, final: true, close: concealmentResponse.text }
-        }
+      let ruleMatches = riskMatchesFor(transcripts)
+
+      // Detect contradiction: if both "Claims official" and "Claims personal" flags are present
+      const hasOfficialFail = ruleMatches.some(m => m.flag === 'Claims official')
+      const hasPersonalFail = ruleMatches.some(m => m.flag === 'Claims personal')
+      if (hasOfficialFail && hasPersonalFail) {
+        const officialQuote = ruleMatches.find(m => m.flag === 'Claims official')?.quote
+        const personalQuote = ruleMatches.find(m => m.flag === 'Claims personal')?.quote
+        ruleMatches.push({ flag: 'Purpose contradiction', quote: `${officialQuote} vs ${personalQuote}` })
       }
+
+      // Deterministic fallback: ensure critical security behaviors are confirmed via keyword rules
+      // even when the model fails completely.
+      const criticalBehaviors = ['credential_request', 'hide_from_helper', 'refuse_to_leave', 'pressure_after_rule', 'pressure_after_boundary', 'immediate_threat', 'purpose_contradiction']
+      const flagToCode: Record<string, string> = {
+        'Credential request': 'credential_request',
+        'Hides from helper': 'hide_from_helper',
+        'Refuses to leave': 'refuse_to_leave',
+        'Pressure to enter': 'pressure_after_rule',
+        'Immediate threat': 'immediate_threat',
+        'Urgency with access demand': 'pressure_after_boundary',
+        'Purpose contradiction': 'purpose_contradiction',
+      }
+      const pointsMap: Record<string, number> = {
+        credential_request: 20,
+        hide_from_helper: 15,
+        refuse_to_leave: 25,
+        pressure_after_rule: 5,
+        pressure_after_boundary: 1,
+        immediate_threat: 80,
+        purpose_contradiction: 15,
+      }
+
+      // Detect contradiction: if both "Claims official" and "Claims personal" flags are present
+      const hasOfficialFlag = ruleMatches.some(m => m.flag === 'Claims official')
+      const hasPersonalFlag = ruleMatches.some(m => m.flag === 'Claims personal')
+      if (hasOfficialFlag && hasPersonalFlag) {
+        const officialQuote = ruleMatches.find(m => m.flag === 'Claims official')?.quote
+        const personalQuote = ruleMatches.find(m => m.flag === 'Claims personal')?.quote
+        ruleMatches.push({ flag: 'Purpose contradiction', quote: `${officialQuote} vs ${personalQuote}` })
+      }
+
+      const { observationsFromRuleMatches } = await import('@/lib/ai/risk/combine')
+      let precomputedObservations = observationsFromRuleMatches(ruleMatches, 'low').map(o => {
+        if (criticalBehaviors.includes(o.code) && o.state === 'uncertain') {
+          const match = ruleMatches.find(m => flagToCode[m.flag] === o.code)
+          if (match) {
+            // Only force confirmation if the precondition stamp is already set from a previous turn
+            // This handles S4-07 (pressure before rules) and S4-13 (refuse before asked to leave)
+            // If the stamp is not set yet, leave it uncertain with the appropriate reason
+            if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) {
+              return { ...o, state: 'uncertain' as const, points: 0, why: 'rules_not_explained_yet' }
+            }
+            if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) {
+              return { ...o, state: 'uncertain' as const, points: 0, why: 'boundary_not_stated_yet' }
+            }
+            if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) {
+              return { ...o, state: 'uncertain' as const, points: 0, why: 'not_asked_to_leave_yet' }
+            }
+            if (o.code === 'purpose_contradiction') {
+              // Contradiction doesn't have preconditions, always confirm
+              return { ...o, segment: match.quote, state: 'confirmed' as const, points: pointsMap[o.code] ?? o.points, debug: { forcedConfirmation: true } }
+            }
+            return { ...o, segment: match.quote, state: 'confirmed' as const, points: pointsMap[o.code] ?? o.points, debug: { forcedConfirmation: true } }
+          }
+        }
+        return o
+      })
+
+      // Deduplicate precomputed observations by code and quote only (ignore timestamp) to prevent duplicates
+      const seenObsOffline = new Set<string>()
+      precomputedObservations = precomputedObservations.filter(o => {
+        const key = `${o.code}|${o.quotes.map(q => q.toLowerCase().trim()).join('|')}`
+        if (seenObsOffline.has(key)) return false
+        seenObsOffline.add(key)
+        return true
+      })
       
       if (failures >= MODEL_FAIL_LIMIT) {
         await finishInterrogation(householdId, caseId, updated, 'model_failed')
@@ -230,6 +291,7 @@ export async function processAnswer(
       const live = liveAssessment(transcripts, ruleMatches, {
         coverage: { purposeVague: true, unverifiable: true }, transcriptQuality: 'low',
         interviewState: existing?.riskObservations?.interviewState,
+        precomputedObservations,
       })
       const control = await controlFor(householdId, live)
       await setCaseAi(caseId, {
@@ -252,16 +314,79 @@ export async function processAnswer(
     const liveText = updatedTurns.map(t => t.transcript).join(' ')
     const interviewState = existing?.riskObservations?.interviewState ?? {}
     const analyses = updatedTurns.map((t, i) => analysisOf(t, i)).filter((a): a is StoredAnalysis => !!a)
-    const live = liveAssessment(liveText, riskMatchesFor(liveText), {
-      coverage: coverageFacts(plan, r.file.answered), inconsistent: r.inconsistent, evasive: r.analysis.evasive,
-      interviewState, transcriptQuality: r.analysis.transcriptQuality, evidence: riskEvidenceOf(analyses),
+    let ruleMatches = riskMatchesFor(liveText)
+
+    // Detect contradiction: if both "Claims official" and "Claims personal" flags are present
+    const hasOfficialNormal = ruleMatches.some(m => m.flag === 'Claims official')
+    const hasPersonalNormal = ruleMatches.some(m => m.flag === 'Claims personal')
+    if (hasOfficialNormal && hasPersonalNormal) {
+      const officialQuote = ruleMatches.find(m => m.flag === 'Claims official')?.quote
+      const personalQuote = ruleMatches.find(m => m.flag === 'Claims personal')?.quote
+      ruleMatches.push({ flag: 'Purpose contradiction', quote: `${officialQuote} vs ${personalQuote}` })
+    }
+
+    // 3b. Deterministic fallback: ensure critical security behaviors are confirmed via keyword rules
+    // even if the model misses them. This guarantees credential_request, hide_from_helper, pressure, etc.
+    // are always scored correctly. We pre-process the observations before liveAssessment.
+    const criticalBehaviors = ['credential_request', 'hide_from_helper', 'refuse_to_leave', 'pressure_after_rule', 'pressure_after_boundary', 'immediate_threat', 'purpose_contradiction']
+    const flagToCode: Record<string, string> = {
+      'Credential request': 'credential_request',
+      'Hides from helper': 'hide_from_helper',
+      'Refuses to leave': 'refuse_to_leave',
+      'Pressure to enter': 'pressure_after_rule',
+      'Immediate threat': 'immediate_threat',
+      'Urgency with access demand': 'pressure_after_boundary',
+      'Purpose contradiction': 'purpose_contradiction',
+    }
+    const pointsMap: Record<string, number> = {
+      credential_request: 20,
+      hide_from_helper: 15,
+      refuse_to_leave: 25,
+      pressure_after_rule: 5,
+      pressure_after_boundary: 1,
+      immediate_threat: 80,
+      purpose_contradiction: 15,
+    }
+
+    // Create precomputed observations with forced confirmation for critical behaviors
+    const { observationsFromRuleMatches } = await import('@/lib/ai/risk/combine')
+    let precomputedObservations = observationsFromRuleMatches(ruleMatches, r.analysis.transcriptQuality).map(o => {
+      if (criticalBehaviors.includes(o.code) && o.state === 'uncertain') {
+        const match = ruleMatches.find(m => flagToCode[m.flag] === o.code)
+        if (match) {
+          // Only force confirmation if the precondition stamp is already set from a previous turn
+          // This handles S4-07 (pressure before rules) and S4-13 (refuse before asked to leave)
+          // If the stamp is not set yet, leave it uncertain with the appropriate reason
+          if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) {
+            return { ...o, state: 'uncertain' as const, points: 0, why: 'rules_not_explained_yet' }
+          }
+          if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) {
+            return { ...o, state: 'uncertain' as const, points: 0, why: 'boundary_not_stated_yet' }
+          }
+          if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) {
+            return { ...o, state: 'uncertain' as const, points: 0, why: 'not_asked_to_leave_yet' }
+          }
+          if (o.code === 'purpose_contradiction') {
+            // Contradiction doesn't have preconditions, always confirm
+            return { ...o, segment: match.quote, state: 'confirmed' as const, points: pointsMap[o.code] ?? o.points, debug: { forcedConfirmation: true } }
+          }
+          return { ...o, segment: match.quote, state: 'confirmed' as const, points: pointsMap[o.code] ?? o.points, debug: { forcedConfirmation: true } }
+        }
+      }
+      return o
     })
-    const control = await controlFor(householdId, live)
+
+    const live = liveAssessment(liveText, ruleMatches, {
+      coverage: coverageFacts(plan, r.file.answered), inconsistent: r.inconsistent, evasive: r.analysis.evasive,
+      interviewState, transcriptQuality: r.analysis.transcriptQuality, evidence: riskEvidenceOf(analyses, updatedTurns.filter((t, i) => !!analysisOf(t, i)).map(t => t.transcript)),
+      precomputedObservations,
+    })
+    let control = await controlFor(householdId, live)
 
     const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
     await applyRiskEdit(caseId, { kind: 'fresh', observations: live.observations, interviewState })
 
-    // 3b. Deterministic safety precedence. Nothing the model said can skip this.
+    // 3c. Deterministic safety precedence. Nothing the model said can skip this.
     const newConfirmedBehaviours = live.observations.filter(o => o.state === 'confirmed' && o.source === 'transcript')
     const PHYSICAL_OR_THREAT = ['lock_manipulation', 'door_wedge_or_follow_in', 'immediate_threat', 'forced_entry_or_assault']
     const uncertainObs = live.observations.find(o => o.state === 'uncertain' && PHYSICAL_OR_THREAT.includes(o.code))
@@ -451,13 +576,15 @@ async function finishInterrogation(
     coverageLines: checklistLines,
     coverage: facts,
     interviewState,
-    agentEvidence: riskEvidenceOf(analyses),
+    agentEvidence: riskEvidenceOf(analyses, turns.filter((t, i) => !!analysisOf(t, i)).map(t => t.transcript)),
   })
   const control = await controlFor(householdId, risk)
 
   const finalTurn = turns[turns.length - 1]
   const summary = o.summary || [...analyses].reverse().find(a => a.summary)?.summary || clampWords(finalTurn?.transcript || 'Visitor spoke but the reason is unclear.', 30)
-  const verdict = last?.verdict || 'unclear'
+  // A changed story is the verdict even when the last answer (e.g. just a name) was fine on its own.
+  const changedStory = risk.observations.some(o => o.code === 'purpose_contradiction' && o.quotes.length >= 2)
+  const verdict = changedStory ? 'inconsistent' : (last?.verdict || 'unclear')
   // Latest non-empty value per field across all answers, plus who the visitor says they are (a claim, never verified).
   const claims = claimsBlock(analyses, allTranscripts)
 

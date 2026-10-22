@@ -1,0 +1,1422 @@
+{
+  "startedAt": "2026-10-22T05:16:06.502Z",
+  "finishedAt": "2026-10-22T05:16:37.757Z",
+  "base": "http://localhost:3000",
+  "results": [
+    {
+      "id": "pb-pressure-boundary",
+      "group": "pressure",
+      "title": "Pressure after boundary",
+      "expected": "pressure_after_boundary +1, floor M1 (only after a boundary line). Door: \"That is not acceptable. I will not change this decision. A helper will review this.\"",
+      "steps": [
+        "RING doorbell (button_press)",
+        "GREET line",
+        "FIXED LINE boundary_stated",
+        "SAY \"Open up, I won't wait\""
+      ],
+      "heard": [
+        {
+          "step": "line:greet",
+          "request": {
+            "line": "greet"
+          },
+          "status": 200,
+          "spoken": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?"
+        },
+        {
+          "step": "line:boundary_stated",
+          "request": {
+            "line": "boundary_stated"
+          },
+          "status": 200,
+          "spoken": "That is not acceptable. Please respect my decision."
+        },
+        {
+          "step": "say:Open up, I won't wait",
+          "request": {
+            "caseId": "case_1792646168686_f2bx",
+            "text": "Open up, I won't wait"
+          },
+          "status": 200,
+          "spoken": "That is not acceptable. I will not change this decision. A helper will review this.",
+          "final": true,
+          "error": null
+        }
+      ],
+      "failures": [
+        "score = 1 (observed 2)"
+      ],
+      "checks": [
+        "FAIL score = 1 (observed 2)",
+        "ok   mode >= M1",
+        "ok   pressure_after_boundary confirmed with points",
+        "ok   last line = \"That is not acceptable. I will not change this decision. A helper will review this.\""
+      ],
+      "status": "FAIL",
+      "audit": {
+        "riskScore": 2,
+        "effectiveScore": 20,
+        "controlMode": "ai_assisted",
+        "mode": "M1",
+        "ledger": [
+          {
+            "code": "pressure_after_boundary",
+            "state": "confirmed",
+            "points": 1,
+            "quote": "Open up, I won't wait"
+          },
+          {
+            "code": "pressure_after_boundary",
+            "state": "confirmed",
+            "points": 1,
+            "quote": "Open up, I won't wait"
+          },
+          {
+            "code": "refuse_to_leave",
+            "state": "uncertain",
+            "points": 0,
+            "why": "not_asked_to_leave_yet",
+            "quote": "Open up, I won't wait"
+          }
+        ],
+        "verdict": "unclear",
+        "summary": "Visitor demanded entry without stating who they are or why they are there.",
+        "interviewState": {
+          "respondingAt": "2026-10-22T05:16:12.165Z",
+          "boundaryStatedAt": "2026-10-22T05:16:12.547Z"
+        },
+        "observations": [
+          {
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:20.957Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "transcriptQuality": 1,
+            "segment": "Open up, I won't wait",
+            "id": "pressure_after_boundary-2026-10-22T05:16:20.957Z-0"
+          },
+          {
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:22.781Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "transcriptQuality": 0.5,
+            "segment": "Open up, I won't wait"
+          },
+          {
+            "id": "obs-mvj3937h-mm8ar",
+            "code": "refuse_to_leave",
+            "at": "2026-10-22T05:16:22.781Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 0,
+            "segment": "Open up, I won't wait"
+          }
+        ]
+      },
+      "caseId": "case_1792646168686_f2bx",
+      "greeting": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+      "questions": 1
+    },
+    {
+      "id": "SE-boundary",
+      "group": "scripted",
+      "title": "Scripted line: pressure_after_boundary",
+      "expected": "That is not acceptable. I will not change this decision. A helper will review this.",
+      "steps": [
+        "RING doorbell (button_press)",
+        "GREET line",
+        "FIXED LINE boundary_stated",
+        "SAY \"Open up, I won't wait\""
+      ],
+      "heard": [
+        {
+          "step": "line:greet",
+          "request": {
+            "line": "greet"
+          },
+          "status": 200,
+          "spoken": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?"
+        },
+        {
+          "step": "line:boundary_stated",
+          "request": {
+            "line": "boundary_stated"
+          },
+          "status": 200,
+          "spoken": "That is not acceptable. Please respect my decision."
+        },
+        {
+          "step": "say:Open up, I won't wait",
+          "request": {
+            "caseId": "case_1792646187033_erti",
+            "text": "Open up, I won't wait"
+          },
+          "status": 200,
+          "spoken": "That is not acceptable. I will not change this decision. A helper will review this.",
+          "final": true,
+          "error": null
+        }
+      ],
+      "failures": [],
+      "checks": [
+        "ok   last line = \"That is not acceptable. I will not change this decision. A helper will review this.\""
+      ],
+      "status": "PASS",
+      "audit": {
+        "riskScore": 2,
+        "effectiveScore": 20,
+        "controlMode": "ai_assisted",
+        "mode": "M1",
+        "ledger": [
+          {
+            "code": "pressure_after_boundary",
+            "state": "confirmed",
+            "points": 1,
+            "quote": "Open up, I won't wait"
+          },
+          {
+            "code": "pressure_after_boundary",
+            "state": "confirmed",
+            "points": 1,
+            "quote": "Open up, I won't wait"
+          },
+          {
+            "code": "refuse_to_leave",
+            "state": "uncertain",
+            "points": 0,
+            "why": "not_asked_to_leave_yet",
+            "quote": "Open up, I won't wait"
+          }
+        ],
+        "verdict": "evasive",
+        "summary": "No clear reason or identity given; visitor demanded entry.",
+        "interviewState": {
+          "respondingAt": "2026-10-22T05:16:27.911Z",
+          "boundaryStatedAt": "2026-10-22T05:16:28.266Z"
+        },
+        "observations": [
+          {
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:32.009Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "transcriptQuality": 1,
+            "segment": "Open up, I won't wait",
+            "id": "pressure_after_boundary-2026-10-22T05:16:32.009Z-0"
+          },
+          {
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:33.281Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "transcriptQuality": 0.5,
+            "segment": "Open up, I won't wait"
+          },
+          {
+            "id": "obs-mvj39bb5-f8rgm",
+            "code": "refuse_to_leave",
+            "at": "2026-10-22T05:16:33.281Z-0",
+            "quotes": [
+              "Open up, I won't wait"
+            ],
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 0,
+            "segment": "Open up, I won't wait"
+          }
+        ]
+      },
+      "caseId": "case_1792646187033_erti",
+      "greeting": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+      "questions": 1
+    },
+    {
+      "id": "S4-16",
+      "group": "sensor",
+      "title": "Lock tamper after entry denied",
+      "expected": "+30, effective 60, M3",
+      "steps": [
+        "RING doorbell (button_press)",
+        "GREET line",
+        "FIXED LINE entry_not_permitted",
+        "SENSOR lock_tamper"
+      ],
+      "heard": [
+        {
+          "step": "line:greet",
+          "request": {
+            "line": "greet"
+          },
+          "status": 200,
+          "spoken": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?"
+        },
+        {
+          "step": "line:entry_not_permitted",
+          "request": {
+            "line": "entry_not_permitted"
+          },
+          "status": 200,
+          "spoken": "Entry is not permitted. Please do not touch the door or lock."
+        },
+        {
+          "step": "sensor:lock_tamper",
+          "status": 200,
+          "spoken": null
+        }
+      ],
+      "failures": [
+        "effective score = 60 (observed 30)"
+      ],
+      "checks": [
+        "ok   score = 30",
+        "FAIL effective score = 60 (observed 30)",
+        "ok   mode >= M3",
+        "ok   lock_manipulation confirmed with points"
+      ],
+      "status": "FAIL",
+      "audit": {
+        "riskScore": 30,
+        "effectiveScore": 30,
+        "controlMode": "helper_only",
+        "mode": "M3",
+        "ledger": [
+          {
+            "code": "lock_manipulation",
+            "state": "confirmed",
+            "points": 30,
+            "quote": "Simulated sensor: lock_tamper"
+          }
+        ],
+        "verdict": null,
+        "summary": null,
+        "interviewState": {
+          "respondingAt": "2026-10-22T05:16:35.376Z",
+          "entryDeniedAt": "2026-10-22T05:16:36.474Z",
+          "boundaryStatedAt": "2026-10-22T05:16:36.515Z"
+        },
+        "observations": [
+          {
+            "id": "obs-mvj39ea6-ulbmj",
+            "code": "lock_manipulation",
+            "at": "2026-10-22T05:16:37.134Z",
+            "quotes": [
+              "Simulated sensor: lock_tamper"
+            ],
+            "source": "sensor",
+            "state": "confirmed",
+            "points": 0,
+            "debug": {
+              "eventId": "sim-sensor-1792646197134"
+            }
+          }
+        ]
+      },
+      "caseId": "case_1792646194466_7nos",
+      "greeting": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+      "questions": 1
+    }
+  ],
+  "httpLog": [
+    {
+      "at": "2026-10-22T05:16:06.490Z",
+      "label": "preflight",
+      "method": "GET",
+      "path": "/api/dev/simulate",
+      "status": 200,
+      "response": {
+        "enabled": true
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:07.993Z",
+      "label": "pb-pressure-boundary: reset",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "reset"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:08.553Z",
+      "label": "pb-pressure-boundary: state",
+      "method": "GET",
+      "path": "/api/dev/simulate",
+      "status": 200,
+      "response": {
+        "enabled": true
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:08.723Z",
+      "label": "pb-pressure-boundary: ring",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "event",
+        "event": "button_press"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "processed",
+        "event": "button_press",
+        "caseId": "case_1792646168686_f2bx"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:12.208Z",
+      "label": "pb-pressure-boundary: line greet",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646168686_f2bx",
+        "line": "greet"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:12.558Z",
+      "label": "pb-pressure-boundary: line boundary_stated",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646168686_f2bx",
+        "line": "boundary_stated"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "That is not acceptable. Please respect my decision.",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:22.843Z",
+      "label": "pb-pressure-boundary: say",
+      "method": "POST",
+      "path": "/api/sim/interrogator/answer",
+      "request": {
+        "caseId": "case_1792646168686_f2bx",
+        "text": "Open up, I won't wait"
+      },
+      "status": 200,
+      "response": {
+        "question": null,
+        "final": true,
+        "close": "That is not acceptable. I will not change this decision. A helper will review this."
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:25.719Z",
+      "label": "pb-pressure-boundary: audit",
+      "method": "GET",
+      "path": "/api/ai/cases/case_1792646168686_f2bx",
+      "status": 200,
+      "response": {
+        "id": "case_1792646168686_f2bx",
+        "kind": "visitor",
+        "lane": "normal",
+        "expectedId": null,
+        "recurringId": null,
+        "visitorSummary": "Visitor demanded entry without stating who they are or why they are there.",
+        "riskFlags": [
+          "Avoided answering",
+          "Reason stayed vague",
+          "Refused to leave when asked",
+          "Wants to come inside",
+          "Pressure to act quickly"
+        ],
+        "interrogationState": "done",
+        "interrogationTurns": [
+          {
+            "question": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+            "transcript": "Open up, I won't wait",
+            "timestamp": 1792646180953,
+            "next": null,
+            "analysis": {
+              "understood": true,
+              "strategy": "counter_tactic",
+              "counterTactic": "pressure",
+              "commitments": [],
+              "inconsistencies": [],
+              "behaviours": [
+                {
+                  "category": "urgency_pressure",
+                  "quote": "Open up, I won't wait"
+                }
+              ],
+              "wellbeing": {
+                "vulnerable": false,
+                "needsHelp": false,
+                "note": "Visitor is demanding entry and showing impatience."
+              },
+              "claimsOrganisation": false,
+              "claimsPersonalTie": false,
+              "claimsAppointment": false,
+              "evasive": true,
+              "satisfied": false,
+              "riskHint": "medium",
+              "transcriptQuality": "high",
+              "claims": {
+                "name": null,
+                "organisation": null,
+                "reason": null,
+                "forWhom": null,
+                "time": null,
+                "relation": null
+              },
+              "summary": "Visitor demanded entry without stating who they are or why they are there.",
+              "verdict": "unclear"
+            }
+          }
+        ],
+        "interrogationVerdict": "unclear",
+        "interrogationClaims": {
+          "name": null,
+          "organisation": null,
+          "reason": null,
+          "forWhom": null,
+          "time": null,
+          "identity": null,
+          "checklist": [
+            {
+              "slot": "purpose",
+              "label": "Specific reason for the visit",
+              "status": "vague",
+              "asked": 0
+            },
+            {
+              "slot": "detail",
+              "label": "Gave concrete detail about the errand",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "name",
+              "label": "Gave a name",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "target",
+              "label": "Named who they want to see",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "proof",
+              "label": "Showed ID or gave a reference",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "companions",
+              "label": "Said whether anyone is with them",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "spatial",
+              "label": "Answered how/when they got here",
+              "status": "missing",
+              "asked": 0
+            }
+          ],
+          "caseFile": {
+            "finishedBecause": "done",
+            "strategyTrail": [
+              "counter_tactic"
+            ],
+            "counterTactics": [
+              "pressure"
+            ],
+            "inconsistencies": [],
+            "moves": [],
+            "guardrail": []
+          }
+        },
+        "riskLevel": "medium",
+        "riskAssessment": {
+          "level": "medium",
+          "notes": [
+            "evasive_answers",
+            "vague_purpose",
+            "entry_request",
+            "urgency_pressure"
+          ],
+          "score": 1,
+          "action": "Verify who they are before the door is opened. Ask for ID, and phone the organisation on a number you look up yourself.",
+          "labels": [
+            "Avoided answering",
+            "Reason stayed vague",
+            "Refused to leave when asked",
+            "Wants to come inside",
+            "Pressure to act quickly"
+          ],
+          "ledger": [
+            {
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "idx": 0,
+              "code": "pressure_after_boundary",
+              "debug": {},
+              "quote": "Open up, I won't wait",
+              "state": "confirmed",
+              "points": 1,
+              "source": "transcript",
+              "serious": false
+            },
+            {
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "idx": 1,
+              "code": "refuse_to_leave",
+              "debug": {
+                "why": "not_asked_to_leave_yet"
+              },
+              "obsId": "obs-mvj3937h-mm8ar",
+              "quote": "Open up, I won't wait",
+              "state": "uncertain",
+              "points": 0,
+              "source": "transcript",
+              "serious": true
+            }
+          ],
+          "source": "ai+rules",
+          "control": {
+            "mode": "ai_assisted",
+            "score": 20,
+            "timers": {
+              "kind": "risk_decision",
+              "emergency": null,
+              "approvalSec": 120,
+              "takeoverSec": null,
+              "riskDecisionSec": 100
+            },
+            "summary": "The assistant leads with the helper watching.",
+            "rawScore": 1,
+            "modeLabel": "M1",
+            "permissions": {
+              "allowed": [
+                "notify_helper",
+                "ask_purpose",
+                "ask_for_id"
+              ],
+              "prohibited": [
+                "unlock_door",
+                "disclose_access_credentials",
+                "grant_entry",
+                "compel_resident_to_open"
+              ],
+              "needsHelper": [
+                "request_helper_approval",
+                "authorise_visit_procedure",
+                "greet_visitor",
+                "tell_visitor_to_leave",
+                "accept_parcel",
+                "sound_alarm"
+              ]
+            },
+            "eventSeverity": 1,
+            "effectiveScore": 20,
+            "helperPriority": 201,
+            "aiAutonomyBudget": 80,
+            "humanOversightIndex": 20
+          },
+          "minMode": "ai_assisted",
+          "evidence": [
+            {
+              "quote": "Open up, I won't wait",
+              "category": "refuse_to_leave"
+            },
+            {
+              "quote": "Open up",
+              "category": "entry_request"
+            },
+            {
+              "quote": "Open up, I won't wait",
+              "category": "urgency_pressure"
+            }
+          ],
+          "modeLabel": "M1",
+          "rationale": "The visitor demands immediate entry and refuses to wait, which suggests potential pressure selling or a distraction burglary risk.",
+          "assessedAt": "2026-10-22T05:16:22.782Z",
+          "categories": [
+            "evasive_answers",
+            "vague_purpose",
+            "refuse_to_leave",
+            "entry_request",
+            "urgency_pressure"
+          ],
+          "observations": [
+            {
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "code": "pressure_after_boundary",
+              "state": "confirmed",
+              "points": 1,
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "segment": "Open up, I won't wait",
+              "transcriptQuality": 0.5
+            },
+            {
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "id": "obs-mvj3937h-mm8ar",
+              "code": "refuse_to_leave",
+              "state": "confirmed",
+              "points": 0,
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "segment": "Open up, I won't wait"
+            }
+          ],
+          "helperResponse": "Pressure after boundary stated. Reduce negotiation and move toward helper review."
+        },
+        "riskScore": 2,
+        "riskLedger": [
+          {
+            "idx": 0,
+            "obsId": "pressure_after_boundary-2026-10-22T05:16:20.957Z-0",
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:20.957Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "debug": {},
+            "serious": false
+          },
+          {
+            "idx": 1,
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:22.781Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "debug": {},
+            "serious": false
+          },
+          {
+            "idx": 2,
+            "obsId": "obs-mvj3937h-mm8ar",
+            "code": "refuse_to_leave",
+            "at": "2026-10-22T05:16:22.781Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "uncertain",
+            "points": 0,
+            "debug": {
+              "why": "not_asked_to_leave_yet"
+            },
+            "serious": true
+          }
+        ],
+        "riskObservations": {
+          "observations": [
+            {
+              "code": "pressure_after_boundary",
+              "at": "2026-10-22T05:16:20.957Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 1,
+              "transcriptQuality": 1,
+              "segment": "Open up, I won't wait",
+              "id": "pressure_after_boundary-2026-10-22T05:16:20.957Z-0"
+            },
+            {
+              "code": "pressure_after_boundary",
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 1,
+              "transcriptQuality": 0.5,
+              "segment": "Open up, I won't wait"
+            },
+            {
+              "id": "obs-mvj3937h-mm8ar",
+              "code": "refuse_to_leave",
+              "at": "2026-10-22T05:16:22.781Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 0,
+              "segment": "Open up, I won't wait"
+            }
+          ],
+          "stamps": [],
+          "interviewState": {
+            "respondingAt": "2026-10-22T05:16:12.165Z",
+            "boundaryStatedAt": "2026-10-22T05:16:12.547Z"
+          },
+          "corrections": []
+        },
+        "controlMode": "ai_assisted",
+        "residentName": "adarsh",
+        "aiStatus": "succeeded",
+        "label": "AI description, may be wrong"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:26.367Z",
+      "label": "SE-boundary: reset",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "reset"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:26.906Z",
+      "label": "SE-boundary: state",
+      "method": "GET",
+      "path": "/api/dev/simulate",
+      "status": 200,
+      "response": {
+        "enabled": true
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:27.054Z",
+      "label": "SE-boundary: ring",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "event",
+        "event": "button_press"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "processed",
+        "event": "button_press",
+        "caseId": "case_1792646187033_erti"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:27.934Z",
+      "label": "SE-boundary: line greet",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646187033_erti",
+        "line": "greet"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:28.276Z",
+      "label": "SE-boundary: line boundary_stated",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646187033_erti",
+        "line": "boundary_stated"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "That is not acceptable. Please respect my decision.",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:33.328Z",
+      "label": "SE-boundary: say",
+      "method": "POST",
+      "path": "/api/sim/interrogator/answer",
+      "request": {
+        "caseId": "case_1792646187033_erti",
+        "text": "Open up, I won't wait"
+      },
+      "status": 200,
+      "response": {
+        "question": null,
+        "final": true,
+        "close": "That is not acceptable. I will not change this decision. A helper will review this."
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:33.807Z",
+      "label": "SE-boundary: audit",
+      "method": "GET",
+      "path": "/api/ai/cases/case_1792646187033_erti",
+      "status": 200,
+      "response": {
+        "id": "case_1792646187033_erti",
+        "kind": "visitor",
+        "lane": "normal",
+        "expectedId": null,
+        "recurringId": null,
+        "visitorSummary": "No clear reason or identity given; visitor demanded entry.",
+        "riskFlags": [
+          "Avoided answering",
+          "Reason stayed vague",
+          "Refused to leave when asked",
+          "Pressure to act quickly"
+        ],
+        "interrogationState": "done",
+        "interrogationTurns": [
+          {
+            "question": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+            "transcript": "Open up, I won't wait",
+            "timestamp": 1792646192005,
+            "next": null,
+            "analysis": {
+              "understood": true,
+              "strategy": "counter_tactic",
+              "counterTactic": "pressure",
+              "commitments": [],
+              "inconsistencies": [],
+              "behaviours": [
+                {
+                  "category": "urgency_pressure",
+                  "quote": "Open up, I won't wait"
+                }
+              ],
+              "wellbeing": {
+                "vulnerable": false,
+                "needsHelp": false,
+                "note": "Visitor is demanding entry and expressing impatience."
+              },
+              "claimsOrganisation": false,
+              "claimsPersonalTie": false,
+              "claimsAppointment": false,
+              "evasive": true,
+              "satisfied": false,
+              "riskHint": "medium",
+              "transcriptQuality": "high",
+              "claims": {
+                "name": null,
+                "organisation": null,
+                "reason": null,
+                "forWhom": null,
+                "time": null,
+                "relation": null
+              },
+              "summary": "No clear reason or identity given; visitor demanded entry.",
+              "verdict": "evasive"
+            }
+          }
+        ],
+        "interrogationVerdict": "evasive",
+        "interrogationClaims": {
+          "name": null,
+          "organisation": null,
+          "reason": null,
+          "forWhom": null,
+          "time": null,
+          "identity": null,
+          "checklist": [
+            {
+              "slot": "purpose",
+              "label": "Specific reason for the visit",
+              "status": "vague",
+              "asked": 0
+            },
+            {
+              "slot": "detail",
+              "label": "Gave concrete detail about the errand",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "name",
+              "label": "Gave a name",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "target",
+              "label": "Named who they want to see",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "proof",
+              "label": "Showed ID or gave a reference",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "companions",
+              "label": "Said whether anyone is with them",
+              "status": "missing",
+              "asked": 0
+            },
+            {
+              "slot": "spatial",
+              "label": "Answered how/when they got here",
+              "status": "missing",
+              "asked": 0
+            }
+          ],
+          "caseFile": {
+            "finishedBecause": "done",
+            "strategyTrail": [
+              "counter_tactic"
+            ],
+            "counterTactics": [
+              "pressure"
+            ],
+            "inconsistencies": [],
+            "moves": [],
+            "guardrail": []
+          }
+        },
+        "riskLevel": "medium",
+        "riskAssessment": {
+          "level": "medium",
+          "notes": [
+            "evasive_answers",
+            "vague_purpose",
+            "urgency_pressure"
+          ],
+          "score": 1,
+          "action": "Verify who they are before the door is opened. Ask for ID, and phone the organisation on a number you look up yourself.",
+          "labels": [
+            "Avoided answering",
+            "Reason stayed vague",
+            "Refused to leave when asked",
+            "Pressure to act quickly"
+          ],
+          "ledger": [
+            {
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "idx": 0,
+              "code": "pressure_after_boundary",
+              "debug": {},
+              "quote": "Open up, I won't wait",
+              "state": "confirmed",
+              "points": 1,
+              "source": "transcript",
+              "serious": false
+            },
+            {
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "idx": 1,
+              "code": "refuse_to_leave",
+              "debug": {
+                "why": "not_asked_to_leave_yet"
+              },
+              "obsId": "obs-mvj39bb5-f8rgm",
+              "quote": "Open up, I won't wait",
+              "state": "uncertain",
+              "points": 0,
+              "source": "transcript",
+              "serious": true
+            }
+          ],
+          "source": "ai+rules",
+          "control": {
+            "mode": "ai_assisted",
+            "score": 20,
+            "timers": {
+              "kind": "risk_decision",
+              "emergency": null,
+              "approvalSec": 120,
+              "takeoverSec": null,
+              "riskDecisionSec": 100
+            },
+            "summary": "The assistant leads with the helper watching.",
+            "rawScore": 1,
+            "modeLabel": "M1",
+            "permissions": {
+              "allowed": [
+                "notify_helper",
+                "ask_purpose",
+                "ask_for_id"
+              ],
+              "prohibited": [
+                "unlock_door",
+                "disclose_access_credentials",
+                "grant_entry",
+                "compel_resident_to_open"
+              ],
+              "needsHelper": [
+                "request_helper_approval",
+                "authorise_visit_procedure",
+                "greet_visitor",
+                "tell_visitor_to_leave",
+                "accept_parcel",
+                "sound_alarm"
+              ]
+            },
+            "eventSeverity": 1,
+            "effectiveScore": 20,
+            "helperPriority": 201,
+            "aiAutonomyBudget": 80,
+            "humanOversightIndex": 20
+          },
+          "minMode": "ai_assisted",
+          "evidence": [
+            {
+              "quote": "Open up, I won't wait",
+              "category": "refuse_to_leave"
+            },
+            {
+              "quote": "Open up, I won't wait",
+              "category": "urgency_pressure"
+            }
+          ],
+          "modeLabel": "M1",
+          "rationale": "The visitor demands immediate entry and refuses to wait, which looks like pressure to enter the home without a clear reason.",
+          "assessedAt": "2026-10-22T05:16:33.282Z",
+          "categories": [
+            "evasive_answers",
+            "vague_purpose",
+            "refuse_to_leave",
+            "urgency_pressure"
+          ],
+          "observations": [
+            {
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "code": "pressure_after_boundary",
+              "state": "confirmed",
+              "points": 1,
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "segment": "Open up, I won't wait",
+              "transcriptQuality": 0.5
+            },
+            {
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "id": "obs-mvj39bb5-f8rgm",
+              "code": "refuse_to_leave",
+              "state": "confirmed",
+              "points": 0,
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "segment": "Open up, I won't wait"
+            }
+          ],
+          "helperResponse": "Pressure after boundary stated. Reduce negotiation and move toward helper review."
+        },
+        "riskScore": 2,
+        "riskLedger": [
+          {
+            "idx": 0,
+            "obsId": "pressure_after_boundary-2026-10-22T05:16:32.009Z-0",
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:32.009Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "debug": {},
+            "serious": false
+          },
+          {
+            "idx": 1,
+            "code": "pressure_after_boundary",
+            "at": "2026-10-22T05:16:33.281Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "confirmed",
+            "points": 1,
+            "debug": {},
+            "serious": false
+          },
+          {
+            "idx": 2,
+            "obsId": "obs-mvj39bb5-f8rgm",
+            "code": "refuse_to_leave",
+            "at": "2026-10-22T05:16:33.281Z-0",
+            "quote": "Open up, I won't wait",
+            "source": "transcript",
+            "state": "uncertain",
+            "points": 0,
+            "debug": {
+              "why": "not_asked_to_leave_yet"
+            },
+            "serious": true
+          }
+        ],
+        "riskObservations": {
+          "observations": [
+            {
+              "code": "pressure_after_boundary",
+              "at": "2026-10-22T05:16:32.009Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 1,
+              "transcriptQuality": 1,
+              "segment": "Open up, I won't wait",
+              "id": "pressure_after_boundary-2026-10-22T05:16:32.009Z-0"
+            },
+            {
+              "code": "pressure_after_boundary",
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 1,
+              "transcriptQuality": 0.5,
+              "segment": "Open up, I won't wait"
+            },
+            {
+              "id": "obs-mvj39bb5-f8rgm",
+              "code": "refuse_to_leave",
+              "at": "2026-10-22T05:16:33.281Z-0",
+              "quotes": [
+                "Open up, I won't wait"
+              ],
+              "source": "transcript",
+              "state": "confirmed",
+              "points": 0,
+              "segment": "Open up, I won't wait"
+            }
+          ],
+          "stamps": [],
+          "interviewState": {
+            "respondingAt": "2026-10-22T05:16:27.911Z",
+            "boundaryStatedAt": "2026-10-22T05:16:28.266Z"
+          },
+          "corrections": []
+        },
+        "controlMode": "ai_assisted",
+        "residentName": "adarsh",
+        "aiStatus": "succeeded",
+        "label": "AI description, may be wrong"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:33.901Z",
+      "label": "S4-16: reset",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "reset"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:34.425Z",
+      "label": "S4-16: state",
+      "method": "GET",
+      "path": "/api/dev/simulate",
+      "status": 200,
+      "response": {
+        "enabled": true
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:34.474Z",
+      "label": "S4-16: ring",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "event",
+        "event": "button_press"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "processed",
+        "event": "button_press",
+        "caseId": "case_1792646194466_7nos"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:35.391Z",
+      "label": "S4-16: line greet",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646194466_7nos",
+        "line": "greet"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "Hello, this is the doorbell. I cannot authorize entry. Who are you, and what is the reason for your visit?",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:36.742Z",
+      "label": "S4-16: line entry_not_permitted",
+      "method": "POST",
+      "path": "/api/ai/interrogator/line",
+      "request": {
+        "caseId": "case_1792646194466_7nos",
+        "line": "entry_not_permitted"
+      },
+      "status": 200,
+      "response": {
+        "allowed": true,
+        "reason": "within_budget",
+        "text": "Entry is not permitted. Please do not touch the door or lock.",
+        "audio": null
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:37.237Z",
+      "label": "S4-16: sensor lock_tamper",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "sensor",
+        "type": "lock_tamper",
+        "caseId": "case_1792646194466_7nos"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "sensor_applied",
+        "code": "lock_manipulation",
+        "caseId": "case_1792646194466_7nos"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:37.685Z",
+      "label": "S4-16: audit",
+      "method": "GET",
+      "path": "/api/ai/cases/case_1792646194466_7nos",
+      "status": 200,
+      "response": {
+        "id": "case_1792646194466_7nos",
+        "kind": "visitor",
+        "lane": "normal",
+        "expectedId": null,
+        "recurringId": null,
+        "visitorSummary": null,
+        "riskFlags": [],
+        "interrogationState": "asking",
+        "interrogationTurns": [],
+        "interrogationVerdict": null,
+        "interrogationClaims": null,
+        "riskLevel": "medium",
+        "riskAssessment": null,
+        "riskScore": 30,
+        "riskLedger": [
+          {
+            "idx": 0,
+            "obsId": "obs-mvj39ea6-ulbmj",
+            "code": "lock_manipulation",
+            "at": "2026-10-22T05:16:37.134Z",
+            "quote": "Simulated sensor: lock_tamper",
+            "source": "sensor",
+            "state": "confirmed",
+            "points": 30,
+            "debug": {
+              "eventId": "sim-sensor-1792646197134"
+            },
+            "serious": true
+          }
+        ],
+        "riskObservations": {
+          "observations": [
+            {
+              "id": "obs-mvj39ea6-ulbmj",
+              "code": "lock_manipulation",
+              "at": "2026-10-22T05:16:37.134Z",
+              "quotes": [
+                "Simulated sensor: lock_tamper"
+              ],
+              "source": "sensor",
+              "state": "confirmed",
+              "points": 0,
+              "debug": {
+                "eventId": "sim-sensor-1792646197134"
+              }
+            }
+          ],
+          "stamps": [],
+          "interviewState": {
+            "respondingAt": "2026-10-22T05:16:35.376Z",
+            "entryDeniedAt": "2026-10-22T05:16:36.474Z",
+            "boundaryStatedAt": "2026-10-22T05:16:36.515Z"
+          },
+          "corrections": []
+        },
+        "controlMode": "helper_only",
+        "residentName": "adarsh",
+        "aiStatus": "processing",
+        "label": "AI description, may be wrong"
+      }
+    },
+    {
+      "at": "2026-10-22T05:16:37.757Z",
+      "label": "cleanup",
+      "method": "POST",
+      "path": "/api/dev/simulate",
+      "request": {
+        "action": "reset"
+      },
+      "status": 200,
+      "response": {
+        "ok": true,
+        "result": "reset"
+      }
+    }
+  ]
+}

@@ -74,6 +74,8 @@ export const RULE_FLAG_CATEGORY: Record<string, RiskCategory> = {
   'Claims urgency':                   'urgency_pressure',
   'Mentions bank or payment':         'payment_request',
   'Claims to be officials':           'official_impersonation',
+  'Claims official':                  'official_impersonation',
+  'Claims personal':                  'story_mismatch',
   'Wants to enter or check inside':   'entry_request',
   'Asks who is home':                 'home_probing',
   'Offers work or sells':             'unsolicited_work',
@@ -82,6 +84,7 @@ export const RULE_FLAG_CATEGORY: Record<string, RiskCategory> = {
   'Hides from helper':                'hide_from_helper',
   'Credential request':               'credential_request',
   'Immediate threat':                 'immediate_threat',
+  'Purpose contradiction':            'purpose_contradiction',
 }
 
 /** Fixed helper-facing advice per level. Not model-written. */
@@ -107,7 +110,12 @@ export const HELPER_RESPONSE: Record<string, string> = {
   forced_entry_or_assault: 'Forced entry or assault. Emergency protocol.',
 }
 
-export interface Evidence { category: RiskCategory; quote: string }
+export interface Evidence {
+  category: RiskCategory
+  quote: string
+  /** For purpose_contradiction only: the EARLIER statement that the quote contradicts. Both quotes are needed to score it. */
+  earlierQuote?: string
+}
 /** `level` is accepted for old model output but IGNORED. Only the evidence counts. */
 export interface JudgeResult { level?: RiskLevel; evidence: Evidence[]; rationale: string }
 
@@ -157,12 +165,17 @@ export function groundEvidence(evidence: Evidence[], transcript: string): Eviden
     const q = norm(e.quote)
     if (q.length < 3 || !(RISK_CATEGORIES as readonly string[]).includes(e.category)) continue
     if (!hay.includes(q)) continue
-    const key = `${e.category}|${q}`
+    const eq = e.earlierQuote ? norm(e.earlierQuote) : ''
+    const earlierOk = eq.length >= 3 && hay.includes(eq) && eq !== q
+    const key = `${e.category}|${q}|${earlierOk ? eq : ''}`
     if (seen.has(key)) continue
     seen.add(key)
-    out.push({ category: e.category, quote: e.quote.trim().split(/\s+/).slice(0, 12).join(' ') })
+    out.push({
+      category: e.category, quote: e.quote.trim().split(/\s+/).slice(0, 12).join(' '),
+      ...(earlierOk ? { earlierQuote: e.earlierQuote!.trim().split(/\s+/).slice(0, 12).join(' ') } : {}),
+    })
   }
-  return out.slice(0, 6)
+  return out.slice(0, 8)
 }
 
 const clampWordsLocal = (s: string, max: number) => { const w = s.trim().split(/\s+/); return w.length <= max ? s.trim() : w.slice(0, max).join(' ') + '…' }
@@ -172,11 +185,14 @@ export interface RuleMatch { flag: string; quote: string }
 
 /** Keyword flags that become scored behaviours. Money, selling and scam-wording flags are hints only and never score by themselves. */
 const RULE_FLAG_BEHAVIOUR: Record<string, Behaviour> = {
-  'Claims urgency':                 'pressure_after_boundary',
+  'Claims urgency':                 null, // Just informational, doesn't score by itself
+  'Urgency with access demand':     'pressure_after_boundary',
+  'Pressure to enter':              'pressure_after_rule', // Score as pressure_after_rule (later filtered out if urgency pattern also matches)
   'Refuses to leave':               'refuse_to_leave',
   'Hides from helper':              'hide_from_helper',
   'Credential request':             'credential_request',
   'Immediate threat':               'immediate_threat',
+  'Purpose contradiction':          'purpose_contradiction',
 }
 
 export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQuality?: 'high' | 'medium' | 'low'): Observation[] {
@@ -184,28 +200,72 @@ export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQual
   const now = new Date().toISOString()
   // Convert transcript quality string to normalized number (high=1, medium=0.7, low=0.3)
   const qualityValue = transcriptQuality === 'high' ? 1 : transcriptQuality === 'medium' ? 0.7 : transcriptQuality === 'low' ? 0.3 : 0.5
-  for (let i = 0; i < matches.length; i++) {
-    const m = matches[i]
+
+  // Deduplicate matches by flag + quote to prevent duplicate observations from the same regex match
+  const seen = new Set<string>()
+  const dedupedMatches: RuleMatch[] = []
+  for (const m of matches) {
+    const key = `${m.flag}|${m.quote.toLowerCase().trim()}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      dedupedMatches.push(m)
+    }
+  }
+
+  // Deduplicate "Purpose contradiction" flag - keep only one (the first)
+  const contradictionMatches = dedupedMatches.filter(m => m.flag === 'Purpose contradiction')
+  if (contradictionMatches.length > 1) {
+    const filtered = dedupedMatches.filter(m => m.flag !== 'Purpose contradiction')
+    dedupedMatches.length = 0
+    dedupedMatches.push(...filtered, contradictionMatches[0])
+  }
+
+  // Check if "Urgency with access demand" is present - if so, "Pressure to enter" should not score
+  // to prevent double-scoring as pressure_after_rule when it should be pressure_after_boundary
+  const hasUrgencyAccessDemand = dedupedMatches.some(m => m.flag === 'Urgency with access demand')
+
+  for (let i = 0; i < dedupedMatches.length; i++) {
+    const m = dedupedMatches[i]
     const b = RULE_FLAG_BEHAVIOUR[m.flag]
+
+    // If "Pressure to enter" matches but "Urgency with access demand" also matches, skip it
+    if (m.flag === 'Pressure to enter' && hasUrgencyAccessDemand) {
+      continue
+    }
+
     if (b) {
       // Add a unique suffix to timestamp to distinguish multiple occurrences in the same turn
       const at = `${now}-${i}`
-      // Deterministic confirmation for hide_from_helper when transcript quality is acceptable
-      // This ensures concealment requests are scored even if the AI model fails
-      const isConfirmed = b === 'hide_from_helper' && (transcriptQuality === 'high' || transcriptQuality === 'medium')
-      // Deterministic confirmation for credential_request and refuse_to_leave regardless of quality
-      // These are serious security events; if the pattern matches, we score them
-      const isSecurityConfirmed = (b === 'credential_request' || b === 'refuse_to_leave') && (transcriptQuality === 'high' || transcriptQuality === 'medium' || transcriptQuality === 'low')
-      out.push({
-        code: b,
-        at,
-        quotes: [m.quote], // Use the exact matched text from the regex
-        source: 'transcript',
-        state: isConfirmed || isSecurityConfirmed ? 'confirmed' : 'uncertain',
-        points: isConfirmed ? 15 : isSecurityConfirmed ? (b === 'credential_request' ? 20 : 25) : 0,
-        transcriptQuality: qualityValue,
-        debug: { ...(isSecurityConfirmed ? { bypassPrecondition: true } : {}) },
-      })
+      // For critical security behaviors, always confirm regardless of transcript quality
+      // This ensures credential_request, hide_from_helper, refuse_to_leave, pressure, threat, and contradiction are always scored
+      const isCriticalSecurity = ['credential_request', 'hide_from_helper', 'refuse_to_leave', 'pressure_after_rule', 'pressure_after_boundary', 'immediate_threat', 'purpose_contradiction'].includes(b)
+
+      // Special handling for contradiction: extract both quotes from the combined quote
+      if (b === 'purpose_contradiction' && m.quote.includes(' vs ')) {
+        const [quote1, quote2] = m.quote.split(' vs ')
+        out.push({
+          code: b,
+          at,
+          quotes: [quote1, quote2],
+          source: 'transcript',
+          state: 'confirmed',
+          points: 15,
+          transcriptQuality: qualityValue,
+          segment: m.quote,
+          debug: { forceCap: true },
+        })
+      } else {
+        out.push({
+          code: b,
+          at,
+          quotes: [m.quote], // Use the exact matched text from the regex
+          source: 'transcript',
+          state: isCriticalSecurity ? 'confirmed' : 'uncertain',
+          points: isCriticalSecurity ? (b === 'credential_request' ? 20 : b === 'hide_from_helper' ? 15 : b === 'refuse_to_leave' ? 25 : b === 'pressure_after_rule' ? 5 : b === 'pressure_after_boundary' ? 1 : b === 'purpose_contradiction' ? 15 : 80) : 0,
+          transcriptQuality: qualityValue,
+          segment: m.quote, // Store the matched text as the segment for grounding
+        })
+      }
     }
   }
   return out
@@ -221,14 +281,35 @@ function assemble(a: {
   const fromJudge = observationsFromEvidence(a.evidence, { segment: a.transcript })
   const judged = new Set(fromJudge.observations.map(o => o.code))
   // WP2: Use precomputed observations if provided (from liveAssessment), otherwise compute them
-  const fromRules = a.precomputedObservations || observationsFromRuleMatches(a.ruleMatches, a.transcriptQuality).filter(o => !judged.has(o.code))
+  // If precomputedObservations is provided, use it exclusively without recomputing from ruleMatches
+  const fromRules = a.precomputedObservations ? a.precomputedObservations : observationsFromRuleMatches(a.ruleMatches, a.transcriptQuality).filter(o => !judged.has(o.code))
   const allObs = [...fromRules, ...fromJudge.observations]
-  const risk = scoreObservations(allObs, { transcript: a.transcript, interviewState: a.interviewState })
+
+  // Deduplicate observations by code and quote only (ignore timestamp) to prevent duplicates
+  // The observationKey function includes timestamp, but we want to deduplicate by event content
+  // For purpose_contradiction, deduplicate by code only to prevent model + keyword double-counting
+  const seenObs = new Set<string>()
+  const seenCodes = new Set<string>()
+  const dedupedObs = allObs.filter(o => {
+    if (o.code === 'purpose_contradiction') {
+      // Only keep one contradiction (first one wins)
+      if (seenCodes.has(o.code)) return false
+      seenCodes.add(o.code)
+      return true
+    }
+    const key = `${o.code}|${o.quotes.map(q => q.toLowerCase().trim()).join('|')}`
+    if (seenObs.has(key)) return false
+    seenObs.add(key)
+    return true
+  })
+
+  const risk = scoreObservations(dedupedObs, { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
-  const all = [...a.cats]
+  const all = a.cats
+  for (const e of a.evidence) all.add(e.category)
 
   // P14: Get helper response from the highest-priority confirmed observation
-  const confirmedBehaviours = allObs.filter(o => o.state === 'confirmed').map(o => o.code)
+  const confirmedBehaviours = dedupedObs.filter(o => o.state === 'confirmed').map(o => o.code)
   let helperResponse: string | undefined
   if (confirmedBehaviours.length > 0) {
     // Use the first confirmed behaviour's response (could prioritize by severity if needed)
@@ -237,10 +318,10 @@ function assemble(a: {
   }
 
   return {
-    level, categories: all, labels: all.map(c => CATEGORY_LABEL[c]), observations: allObs, evidence: a.evidence, rationale: a.rationale,
+    level, categories: [...all], labels: [...all].map(c => CATEGORY_LABEL[c]), observations: dedupedObs, evidence: a.evidence, rationale: a.rationale,
     action: ACTION_TEXT[level], source: a.source, assessedAt: new Date().toISOString(),
     score: risk.score, ledger: risk.ledger, minMode: risk.minMode, modeLabel: MODE_LABEL[risk.minMode], helperResponse,
-    notes: all.filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)),
+    notes: all instanceof Set ? [...all].filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)) : all.filter(c => (NOTE_ONLY_CATEGORIES as readonly string[]).includes(c)),
   }
 }
 
@@ -258,6 +339,8 @@ export function liveAssessment(
      *  checked against the transcript. They go through the same scorer as the final judge's evidence, so the same
      *  narrow phrase checks still decide what is confirmed and what stays uncertain for a helper to confirm. */
     evidence?: Evidence[]
+    /** Precomputed observations to use instead of computing from ruleMatches. Used for deterministic forced confirmation. */
+    precomputedObservations?: Observation[]
   },
 ): Assessment {
   const cats = new Set<RiskCategory>(categoriesFromRuleFlags(ruleMatches.map(m => m.flag)))
@@ -267,8 +350,10 @@ export function liveAssessment(
   if (extra?.coverage?.purposeVague) cats.add('vague_purpose')
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
   // WP2: Pass transcript quality to observation creation, and pass observations to assemble
-  const observations = observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
-  return assemble({ transcript, cats, evidence: extra?.evidence ?? [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations, transcriptQuality: extra?.transcriptQuality })
+  // If precomputedObservations is provided, use it and don't pass ruleMatches to avoid recomputation
+  const observations = extra?.precomputedObservations || observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
+  const ruleMatchesToPass = extra?.precomputedObservations ? [] : ruleMatches
+  return assemble({ transcript, cats, evidence: extra?.evidence ?? [], rationale: '', source: 'live', ruleMatches: ruleMatchesToPass, interviewState: extra?.interviewState, precomputedObservations: observations, transcriptQuality: extra?.transcriptQuality })
 }
 
 export function buildAssessment(a: {

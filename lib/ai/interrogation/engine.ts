@@ -40,17 +40,36 @@ const PURPOSE_TOPICS = new Set(['purpose', 'organisation', 'detail', 'appointmen
  * Grounded behaviours and central contradictions from stored analyses, in the shape the risk scorer takes.
  * Rebuilt from ALL turns every time, because the live score is recomputed from the whole conversation.
  */
-export function riskEvidenceOf(analyses: StoredAnalysis[]): Evidence[] {
+export function riskEvidenceOf(analyses: StoredAnalysis[], turnTexts: string[] = []): Evidence[] {
   const out: Evidence[] = []
-  for (const a of analyses) {
-    for (const b of a.behaviours) out.push({ category: b.category, quote: b.quote })
+  analyses.forEach((a, i) => {
+    for (const b of a.behaviours) {
+      if (b.category !== 'purpose_contradiction') { out.push({ category: b.category, quote: b.quote }); continue }
+      // The model reports a changed story as ONE quote (the new claim). The scorer needs the earlier claim too, so find it.
+      const earlier = earlierClaimBefore(analyses, i, turnTexts, b.quote)
+      out.push(earlier ? { category: b.category, quote: b.quote, earlierQuote: earlier } : { category: b.category, quote: b.quote })
+    }
     for (const x of a.inconsistencies.filter(x => !x.peripheral)) {
       if (x.kind === 'statement_evidence') out.push({ category: x.topic === 'appointment' ? 'unverifiable_claims' : 'story_mismatch', quote: x.nowQuote })
-      else if (PURPOSE_TOPICS.has(x.topic)) out.push({ category: 'purpose_contradiction', quote: x.earlierQuote }, { category: 'purpose_contradiction', quote: x.nowQuote })
+      else if (PURPOSE_TOPICS.has(x.topic)) out.push({ category: 'purpose_contradiction', quote: x.nowQuote, earlierQuote: x.earlierQuote })
       else out.push({ category: 'story_mismatch', quote: x.nowQuote })
     }
-  }
+  })
   return out.filter(e => e.quote.trim().length >= 3)
+}
+
+/** The visitor's own earlier words that a later purpose claim contradicts: their latest earlier organisation/purpose statement, else their first answer. */
+function earlierClaimBefore(analyses: StoredAnalysis[], turn: number, turnTexts: string[], nowQuote: string): string | null {
+  const same = (s: string) => s.trim().toLowerCase() === nowQuote.trim().toLowerCase()
+  for (let j = turn - 1; j >= 0; j--) {
+    const c = analyses[j]?.commitments.find(c => PURPOSE_TOPICS.has(c.topic) && c.quote.trim().length >= 3 && !same(c.quote))
+    if (c) return c.quote
+  }
+  for (let j = 0; j < turn; j++) {
+    const t = (turnTexts[j] ?? '').trim()
+    if (t.length >= 3 && !same(t)) return t.slice(0, 200)
+  }
+  return null
 }
 
 export interface AnalyseTurnInput {

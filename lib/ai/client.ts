@@ -7,6 +7,7 @@ import { reserve } from './budget'
 import { chainFor, aiConfigured, AI_GLOBAL_OFF, MODEL_IDS, FALLBACK_MODELS, type ModelRole } from './models'
 import { extractJson } from './guard'
 import { logRun } from './runs'
+import { getCurrentKey, rotateKey, forceRotateKey, getKeyStatus } from './keyRotation'
 
 const BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com/v1beta'
 const TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 20_000)
@@ -25,9 +26,10 @@ export interface GenArgs<S extends ZodTypeAny> {
 }
 
 async function post(path: string, body: unknown, signal: AbortSignal) {
+  const apiKey = getCurrentKey()
   return fetch(`${BASE}/${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY || '' },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
     body: JSON.stringify(body),
     signal,
   })
@@ -58,6 +60,15 @@ async function tryModel<S extends ZodTypeAny>(
         if (attempt < maxRetries - 1) {
           const body = (await res.text().catch(() => '')).slice(0, 300)
           console.warn(`[AI] Gemini HTTP ${res.status} model=${model} (retry ${attempt + 1}/${maxRetries}): ${body}`)
+
+          // If it's a 429 quota error, try rotating the key
+          if (res.status === 429) {
+            const rotated = rotateKey(new Error(`HTTP ${res.status}: ${body}`))
+            if (rotated) {
+              console.log(`[AI] Rotated to new key for retry ${attempt + 1}/${maxRetries}`)
+            }
+          }
+
           await new Promise(r => setTimeout(r, 600))
           continue
         }

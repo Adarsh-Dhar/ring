@@ -48,3 +48,22 @@ describe('scripted event responses', () => {
     expect(decideNext(ctx([{ ...obs('hide_from_helper'), retracted: true }])).type).toBe('ask')
   })
 })
+
+// Regression: the model reports a changed story as ONE quote. It must be paired with the earlier claim and scored.
+import { riskEvidenceOf } from '@/lib/ai/interrogation/engine'
+import { liveAssessment } from '@/lib/ai/risk/combine'
+describe('lone purpose_contradiction quote', () => {
+  const a = (over: any) => ({ understood: true, strategy: 'unclear', counterTactic: null, commitments: [], inconsistencies: [], behaviours: [], wellbeing: { vulnerable: false, needsHelp: false, note: null }, claimsOrganisation: false, claimsPersonalTie: false, claimsAppointment: false, evasive: false, satisfied: false, ...over }) as any
+  it('scores 15 and floors to ai_assisted', () => {
+    const text = "I'm from the council to check the meter I'm a friend of the family vikram"
+    const analyses = [
+      a({ commitments: [{ topic: 'organisation', value: 'council', specificity: 'vague', checkable: false, quote: "I'm from the council to check the meter", count: null, turn: 0 }] }),
+      a({ behaviours: [{ category: 'purpose_contradiction', quote: "I'm a friend of the family" }] }),
+      a({}),
+    ]
+    const ev = riskEvidenceOf(analyses, ["I'm from the council to check the meter", "I'm a friend of the family", 'vikram'])
+    const r = liveAssessment(text, [], { evidence: ev })
+    expect(r.score).toBe(15)
+    expect(r.minMode).toBe('ai_assisted')
+  })
+})

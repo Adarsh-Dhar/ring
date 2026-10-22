@@ -1,0 +1,5 @@
+#!/bin/bash
+# Run only the currently failing runbook tests to avoid wasting API quota
+HELPER="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJraW5kIjoidXNlciIsInN1YiI6ImNtdmU2NTA5MDAwMDNraXIwcnpjNzUzdzciLCJob3VzZWhvbGRJZCI6ImNtdmU2MWxvajAwMDBraXIwY2NxeW9zenAiLCJtZW1iZXJzaGlwSWQiOiJjbXZlNjcxcTEwMDA1a2lyMHJ6Ymhka2lzIiwidXNlcklkIjoiY212ZTY1MDkwMDAwM2tpcjByemM3NTN3NyIsInNlc3Npb25WZXJzaW9uIjoxLCJleHAiOjE3OTUyMjQxMDZ9.tKM74a-Y9mLY74RMG9NNiE6yu72g_w9Nnu7sGMmJegI" \
+BASE=http://localhost:3000 \
+npx tsx scripts/runbook-full-agent-test.ts --only=pb-contradiction,IM02,SE-contradiction,S4-13

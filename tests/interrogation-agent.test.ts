@@ -199,7 +199,7 @@ describe('engine: SUE flow', () => {
       deps(raw({ inconsistencies: [inc], move: { tactic: 'consistency_clarify', objective: 'organisation', rationale: 'org changed' }, utterance: 'Earlier you said the council, now Bright Roofing. Which is right?' }))))!
     expect(r.inconsistent).toBe(true)
     expect(r.file.open).toHaveLength(1)
-    expect(riskEvidenceOf([r.analysis]).filter(e => e.category === 'purpose_contradiction')).toHaveLength(2)
+    expect(riskEvidenceOf([r.analysis]).filter(e => e.category === 'purpose_contradiction' && e.earlierQuote && e.quote)).toHaveLength(1)
     const d = deps(null)
     const c = await composeQuestion({ householdId: 'h', caseId: 'c', result: r, questionsLeft: null, householdTerms: [], spoken: [], lastExchange: null }, d)
     expect(c.kind).toBe('ask')

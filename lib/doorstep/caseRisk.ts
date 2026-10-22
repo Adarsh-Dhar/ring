@@ -120,7 +120,23 @@ export function mergeFresh(stored: StoredRisk, fresh: Observation[]): StoredRisk
   }
   const keptKeys = new Set(kept.map(observationKey))
   const keptIds = new Set(kept.map(o => o.id).filter(Boolean))
-  const fresher = fresh.filter(o => !keptKeys.has(observationKey(o)) && !(o.id && keptIds.has(o.id)))
+
+  // Additional deduplication: for transcript observations, also check by code + normalized quote
+  // This prevents the same quote from being added multiple times with different timestamps
+  const keptQuoteKeys = new Set(kept.filter(o => o.source === 'transcript').map(o => `${o.code}|${o.quotes.map(q => q.toLowerCase().trim()).join('|')}`))
+
+  const fresher = fresh.filter(o => {
+    // Skip if same full observation key exists
+    if (keptKeys.has(observationKey(o))) return false
+    // Skip if same ID exists
+    if (o.id && keptIds.has(o.id)) return false
+    // For transcript observations, also skip if same code + quote exists (even with different timestamp)
+    if (o.source === 'transcript') {
+      const quoteKey = `${o.code}|${o.quotes.map(q => q.toLowerCase().trim()).join('|')}`
+      if (keptQuoteKeys.has(quoteKey)) return false
+    }
+    return true
+  })
 
   return {
     observations: [...kept, ...fresher],

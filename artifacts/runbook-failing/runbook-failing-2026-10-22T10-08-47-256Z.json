@@ -1,0 +1,52 @@
+{
+  "total": 6,
+  "pass": 0,
+  "fail": 0,
+  "review": 0,
+  "recorded": 0,
+  "blocked": 6,
+  "results": [
+    {
+      "id": "pb-credential-pin",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    },
+    {
+      "id": "pb-credential-code",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    },
+    {
+      "id": "pb-contradiction",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    },
+    {
+      "id": "SE-boundary",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    },
+    {
+      "id": "S4-12",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    },
+    {
+      "id": "S4-13",
+      "status": "BLOCKED",
+      "failures": [
+        "greet failed (400)"
+      ]
+    }
+  ]
+}

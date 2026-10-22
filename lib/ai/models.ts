@@ -49,5 +49,5 @@ export function chainFor(role: ModelRole, needsMedia: boolean): ModelRole[] {
   return [role]
 }
 
-export const aiConfigured = () => !!process.env.GEMINI_API_KEY
+export const aiConfigured = () => !!(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS)
 export const AI_GLOBAL_OFF = () => process.env.AI_DISABLED === '1'

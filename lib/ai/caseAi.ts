@@ -119,6 +119,7 @@ export async function getCaseAi(householdId: string, caseId: string): Promise<Ca
       riskAssessment: true,
       riskScore: true,
       riskLedger: true,
+      riskObservations: true,
       controlMode: true,
     } as Prisma.CaseSelect,
   })

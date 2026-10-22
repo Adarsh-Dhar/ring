@@ -26,6 +26,6 @@ export const DigestOut = z.object({ text: z.string().max(700) })
 export const RiskJudgeOut = z.object({
   /** Old output field. Accepted and ignored: the model never sets the level. */
   level:     z.enum(LEVELS).default('none'),
-  evidence:  z.array(z.object({ category: z.enum(RISK_CATEGORIES), quote: z.string().max(200) })).max(6).default([]),
+  evidence:  z.array(z.object({ category: z.enum(RISK_CATEGORIES), quote: z.string().max(200), earlierQuote: z.string().max(200).optional() })).max(8).default([]),
   rationale: z.string().max(400).default(''),
 })

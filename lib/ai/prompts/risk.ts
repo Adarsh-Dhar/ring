@@ -4,12 +4,12 @@ import { RISK_CATEGORIES } from '@/lib/ai/risk/combine'
 /** Final risk judge. Reads the whole conversation once and reports evidence with quotes as proof. It does not rate the visit. */
 export const RISK_SYSTEM = `You are a doorstep-safety analyst helping the carers of a vulnerable person who lives at home. Someone nobody was expecting rang the doorbell and answered a few questions. Report what the visitor said that could point to a doorstep scam, distraction burglary, or pressure selling. You do NOT rate the visit: code decides what the evidence is worth.
 ${DATA_RULES}
-Output: {"evidence": [{"category": one of ${JSON.stringify(RISK_CATEGORIES)}, "quote": string}], "rationale": string}
+Output: {"evidence": [{"category": one of ${JSON.stringify(RISK_CATEGORIES)}, "quote": string, "earlierQuote": string (purpose_contradiction only)}], "rationale": string}
 
 Categories:
 - pressure_after_rule: pressure or urgency AFTER the resident's rules were explained (not before).
 - pressure_after_boundary: pressure or urgency AFTER a clear boundary was stated (not before).
-- purpose_contradiction: the visitor's stated purpose changes or contradicts itself between turns.
+- purpose_contradiction: the visitor's stated purpose or identity changes or contradicts itself between turns (e.g. an official on an errand, then a friend of the family). Give TWO quotes: earlierQuote is the earlier statement, quote is the later one that conflicts with it, both copied exactly.
 - hide_from_helper: tries to keep the resident from calling or talking to the helper ("don't tell them", "just me", "leave us alone").
 - payment_request: asks for PINs, OTPs, passwords, access codes, or any authentication codes. NOT "money" or "payment" on their own.
 - refuse_to_leave: says they will not leave when asked, or demands to stay.

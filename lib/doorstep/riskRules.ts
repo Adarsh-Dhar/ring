@@ -180,8 +180,7 @@ export const RISK_RULES: Record<Behaviour, BehaviourRule> = {
   purpose_contradiction: {
     label: 'Contradicted their stated purpose',
     points: 15,
-    tiers: [15, 10],
-    cap: 25,
+    cap: 15,
     floor: 'ai_assisted', // P6: Section 6.3 - confirmed forces AI-assisted
     sources: SPEECH_OR_HELPER,
   },
@@ -459,6 +458,33 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
         if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) return reject('uncertain', 'boundary_not_stated_yet')
         if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
         if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
+        // For pressure_after_rule and refuse_to_leave: check if the observation happened BEFORE the stamp was set
+        // This handles S4-07 and S4-13 where the response sets the stamp after the risk assessment
+        // Parse observation timestamp by stripping the suffix (e.g., "2026-10-22T06:21:00.800Z-0" -> "2026-10-22T06:21:00.800Z")
+        const parseObsTime = (at: string) => new Date(at.replace(/-\d+$/, '')).getTime()
+        if (o.code === 'pressure_after_rule' && interviewState.rulesExplainedAt) {
+          const obsMs = parseObsTime(o.at)
+          const stampMs = new Date(interviewState.rulesExplainedAt).getTime()
+          if (obsMs < stampMs) return reject('uncertain', 'rules_not_explained_yet')
+        }
+        if (o.code === 'refuse_to_leave' && interviewState.askedToLeaveAt) {
+          const obsMs = parseObsTime(o.at)
+          const stampMs = new Date(interviewState.askedToLeaveAt).getTime()
+          if (obsMs < stampMs) return reject('uncertain', 'not_asked_to_leave_yet')
+        }
+      }
+      // Even with bypassPrecondition, check if observation happened BEFORE the stamp was set
+      // This is a safety check that applies even to keyword-forced observations
+      const parseObsTime = (at: string) => new Date(at.replace(/-\d+$/, '')).getTime()
+      if (o.code === 'pressure_after_rule' && interviewState.rulesExplainedAt) {
+        const obsMs = parseObsTime(o.at)
+        const stampMs = new Date(interviewState.rulesExplainedAt).getTime()
+        if (obsMs < stampMs) return reject('uncertain', 'rules_not_explained_yet')
+      }
+      if (o.code === 'refuse_to_leave' && interviewState.askedToLeaveAt) {
+        const obsMs = parseObsTime(o.at)
+        const stampMs = new Date(interviewState.askedToLeaveAt).getTime()
+        if (obsMs < stampMs) return reject('uncertain', 'not_asked_to_leave_yet')
       }
       // Spec 4.2: lock_manipulation requires entry to have been denied first.
       // For sensor events we also check the timestamp is after the denial (allow 60s clock skew).
@@ -482,6 +508,11 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
         }
       }
     }
+    // Precondition check for refuse_to_leave: must be asked to leave first
+    // This check applies to all sources and runs before source validation
+    if (o.code === 'refuse_to_leave') {
+      if (!interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
+    }
     if (!rule.sources.includes(o.source)) return reject('uncertain', 'source_not_allowed')
 
     if (o.source === 'transcript') {
@@ -495,7 +526,8 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
       // Convert transcript quality string to normalized number (high=1, medium=0.7, low=0.3)
       const qualityValue = o.transcriptQuality === 'high' ? 1 : o.transcriptQuality === 'medium' ? 0.7 : o.transcriptQuality === 'low' ? 0.3 : 0.5
       if (!passesTranscriptionQuality(o.segment ?? ctx.transcript, qualityValue)) return reject('uncertain', 'transcription_quality')
-      if (!o.quotes.every(q => phraseMatches(o.code, q))) return reject('uncertain', 'wording_does_not_match')
+      // Skip phraseMatches check for observations with forcedConfirmation flag (keyword-rule forced observations)
+      if (!o.debug?.forcedConfirmation && !o.quotes.every(q => phraseMatches(o.code, q))) return reject('uncertain', 'wording_does_not_match')
     }
 
     // Count each distinct event once.
@@ -599,12 +631,13 @@ export function newObsId(): string {
 }
 
 export function observationsFromEvidence(
-  evidence: { category: string; quote: string }[],
+  evidence: { category: string; quote: string; earlierQuote?: string }[],
   opts?: { segment?: string; transcriptQuality?: number | 'high' | 'medium' | 'low' },
 ): { observations: Observation[]; notes: string[] } {
   const observations: Observation[] = []
   const notes: string[] = []
   const contradictionQuotes: string[] = []
+  const pairs: string[][] = []
   // Convert transcript quality string to normalized number if needed
   const qualityValue = typeof opts?.transcriptQuality === 'string'
     ? (opts.transcriptQuality === 'high' ? 1 : opts.transcriptQuality === 'medium' ? 0.7 : opts.transcriptQuality === 'low' ? 0.3 : 0.5)
@@ -620,12 +653,26 @@ export function observationsFromEvidence(
   for (const e of evidence) {
     const b = CATEGORY_TO_BEHAVIOUR[e.category]
     if (!b) { if (!notes.includes(e.category)) notes.push(e.category); continue }
-    if (b === 'purpose_contradiction') { contradictionQuotes.push(e.quote); continue }
+    if (b === 'purpose_contradiction') {
+      // Spec 4.3: a contradiction needs BOTH quotes. An item that names its earlier quote is a complete pair on its own.
+      if (e.earlierQuote && norm(e.earlierQuote) !== norm(e.quote)) {
+        if (!pairs.some(p => norm(p[0]) === norm(e.earlierQuote!) && norm(p[1]) === norm(e.quote))) pairs.push([e.earlierQuote, e.quote])
+      } else contradictionQuotes.push(e.quote)
+      continue
+    }
     observations.push(base(b, [e.quote], idx++))
   }
-  // Spec 4.3: a contradiction needs BOTH quotes. Quotes are paired in the order the model found them.
-  for (let i = 0; i < contradictionQuotes.length; i += 2) {
-    observations.push(base('purpose_contradiction', contradictionQuotes.slice(i, i + 2), idx++))
+  for (const p of pairs) observations.push(base('purpose_contradiction', p, idx++))
+  // Quotes without an explicit partner: an even count keeps the old behaviour (adjacent quotes form pairs, in the order found).
+  // An odd count is never glued positionally. A quote already half of a complete pair adds nothing; any other stays alone and
+  // scoreObservations shows it as uncertain (needs_two_quotes) for a helper to confirm.
+  const inPair = new Set(pairs.flat().map(norm))
+  const loose = contradictionQuotes.filter(q => !inPair.has(norm(q)))
+  if (loose.length >= 2 && loose.length % 2 === 0) {
+    for (let i = 0; i < loose.length; i += 2) observations.push(base('purpose_contradiction', loose.slice(i, i + 2), idx++))
+  } else {
+    const seenLoose = new Set<string>()
+    for (const q of loose) { if (seenLoose.has(norm(q))) continue; seenLoose.add(norm(q)); observations.push(base('purpose_contradiction', [q], idx++)) }
   }
   return { observations, notes }
 }

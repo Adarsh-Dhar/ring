@@ -45,7 +45,8 @@ const ENV_CONFIGS: EnvVarConfig[] = [
   { name: 'GOOGLE_CLIENT_SECRET', required: false, description: 'Google OAuth client secret for Calendar' },
 
   // AI Agents (Gemini)
-  { name: 'GEMINI_API_KEY', required: false, description: 'Gemini API key for AI features' },
+  { name: 'GEMINI_API_KEY', required: false, description: 'Gemini API key for AI features (or use GEMINI_API_KEYS for rotation)' },
+  { name: 'GEMINI_API_KEYS', required: false, description: 'Comma-separated Gemini API keys for rotation' },
   { name: 'GEMINI_MODEL_WORKHORSE', required: false, defaultValue: 'gemini-3.1-flash-lite', description: 'Gemini workhorse model ID' },
   { name: 'GEMINI_MODEL_QUALITY', required: false, defaultValue: 'gemini-3.8-flash', description: 'Gemini quality model ID' },
   { name: 'GEMINI_MODEL_FALLBACK', required: false, defaultValue: 'gemma-4-26b', description: 'Gemini fallback model ID' },
