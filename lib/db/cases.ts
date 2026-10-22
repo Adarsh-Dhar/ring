@@ -180,6 +180,22 @@ export async function deleteAllCasesForHousehold(householdId: string) {
 }
 
 /**
+ * Delete only simulator device cases (deviceId starts with 'sim-')
+ * Used for simulator reset without affecting real incident cases
+ */
+export async function deleteSimulatorCases(householdId: string) {
+  return getDb().case.deleteMany({
+    where: {
+      householdId,
+      OR: [
+        { deviceId: { startsWith: 'sim-' } },
+        { deviceId: null }
+      ]
+    }
+  })
+}
+
+/**
  * Atomically move a waiting case to its next escalation step.
  *
  * The WHERE clause only matches if nobody has moved the case since the caller read it

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:interrogation-request-response": "vitest run tests/interrogation-request-response.test.ts",
     "test:runbook-conversations": "tsx scripts/runbook-phrase-conversations.ts",
+    "stale:delete": "tsx scripts/delete-stale-cases.ts",
     "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",

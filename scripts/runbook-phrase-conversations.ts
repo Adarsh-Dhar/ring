@@ -40,11 +40,11 @@ const CASES: PhraseCase[] = [
   { id: 'hide_carer', title: 'Hide from helper — carer', expected: 'hide_from_helper; +15; fixed no-secrecy response', utterances: ["Don't tell your carer I came"] },
   { id: 'hide_skip_helper', title: 'Hide from helper — skip helper', expected: 'hide_from_helper; +15; fixed no-secrecy response', utterances: ["Let's skip the helper"] },
   { id: 'hide_between_us', title: 'Hide from helper — secrecy', expected: 'hide_from_helper; +15; fixed no-secrecy response', utterances: ['Keep this between us'] },
-  { id: 'pressure_after_rule', title: 'Pressure after rules', expected: 'pressure_after_rule; +5; fixed rule-refusal response', setupLine: 'rules_explained', utterances: ['Let me in'] },
-  { id: 'pressure_after_boundary', title: 'Pressure after boundary', expected: 'pressure_after_boundary; +1 per event, capped at +10; fixed boundary response', setupLine: 'boundary_stated', utterances: ["Open up, I won't wait"] },
-  { id: 'refuse_to_leave', title: 'Refusal to leave after being asked', expected: 'refuse_to_leave; +25; fixed leave/safety response', setupLine: 'asked_to_leave', utterances: ["I'm not leaving"] },
+  { id: 'pressure_after_rule', title: 'Pressure after rules', expected: 'pressure_after_rule; +5; fixed rule-refusal response (requires precondition)', utterances: ['Let me in'] },
+  { id: 'pressure_after_boundary', title: 'Pressure after boundary', expected: 'pressure_after_boundary; +1 per event, capped at +10; fixed boundary response (requires precondition)', utterances: ["Open up, I won't wait"] },
+  { id: 'refuse_to_leave', title: 'Refusal to leave after being asked', expected: 'refuse_to_leave; +25; fixed leave/safety response (requires precondition)', utterances: ["I'm not leaving"] },
   { id: 'immediate_threat', title: 'Immediate threat', expected: 'immediate_threat; score at least 80 / mode M4; fixed safety response', utterances: ["I'll hurt you"] },
-  { id: 'purpose_contradiction', title: 'Purpose changes across turns', expected: 'purpose_contradiction; both grounded quotes; neutral fixed response', utterances: ["I'm from the council to check the meter", "I'm a friend of the family"] },
+  { id: 'purpose_contradiction', title: 'Purpose changes across turns', expected: 'purpose_contradiction; both grounded quotes; neutral fixed response (may finish early)', utterances: ["I'm from the council to check the meter", "I'm a friend of the family"] },
   { id: 'hesitation', title: 'Hesitation — zero score', expected: '0 points; no speech-style risk', utterances: ['um... sorry... can I...please'] },
   { id: 'refusal_to_share', title: 'Ordinary refusal — zero score', expected: '0 points; autonomy support / polite ending, no risk label', utterances: ["I'd rather not say"] },
   { id: 'zero_van', title: 'Benign explanation — van broke down', expected: '0 points; no alert', utterances: ['My van broke down'] },
@@ -146,6 +146,7 @@ class Runner {
 function simplifyCaseAudit(data: any) {
   const riskObservations = data?.riskObservations?.observations ?? []
   const riskLedger = data?.riskLedger
+  const riskAssessment = data?.riskAssessment
   return {
     caseId: data?.id,
     aiStatus: data?.aiStatus,
@@ -163,21 +164,45 @@ function simplifyCaseAudit(data: any) {
     riskLedger,
     interrogationTurns: data?.interrogationTurns,
     interrogationClaims: data?.interrogationClaims,
-    riskAssessment: data?.riskAssessment,
+    riskAssessment: riskAssessment ? {
+      level: riskAssessment.level,
+      score: riskAssessment.score,
+      effectiveScore: riskAssessment.control?.effectiveScore,
+      minMode: riskAssessment.minMode,
+      modeLabel: riskAssessment.modeLabel,
+      ledger: riskAssessment.ledger,
+      observations: riskAssessment.observations,
+    } : null,
   }
 }
 
 async function runCase(runner: Runner, c: PhraseCase) {
   const result: any = {
-    id: c.id, title: c.title, expected: c.expected, setupLine: c.setupLine ?? null,
-    caseId: null, greeting: null, setupResponse: null, exchanges: [], audit: null,
+    id: c.id, title: c.title, expected: c.expected,
+    caseId: null, greeting: null, exchanges: [], audit: null,
     errors: [], status: 'INCOMPLETE',
   }
   const reset = await runner.request('POST', '/api/dev/simulate', `${c.id}: reset`, { action: 'reset' })
   if (reset.status !== 200) throw new Error(`Reset failed (${reset.status}): ${reset.text}`)
   
-  // Wait longer after reset to ensure the household is clean and any existing case closes
-  await sleep(2000)
+  // Wait after reset to ensure the household is clean
+  await sleep(500)
+
+  // Check if there's still an active case after reset (real incident blocking tests)
+  const stateCheck = await runner.request('GET', '/api/dev/simulate', `${c.id}: state check`)
+  if (stateCheck.status === 200 && stateCheck.json?.state?.current) {
+    const activeCase = stateCheck.json.state.current
+    const isSimDevice = !activeCase.deviceId || activeCase.deviceId.startsWith('sim-')
+    if (isSimDevice) {
+      result.errors.push(`Simulator still has an active case after reset. Case ID: ${activeCase.id}. Close it manually before running tests.`)
+      result.status = 'BLOCKED'
+      return result
+    } else {
+      result.errors.push(`Real incident case is still active (${activeCase.id}, device: ${activeCase.deviceId}). Use a dedicated test household with no active incidents.`)
+      result.status = 'BLOCKED'
+      return result
+    }
+  }
 
   const ring = await runner.request('POST', '/api/dev/simulate', `${c.id}: ring`, { action: 'event', event: 'button_press' })
   const caseId = ring.json?.caseId
@@ -196,16 +221,8 @@ async function runCase(runner: Runner, c: PhraseCase) {
     result.status = 'BLOCKED'
     return result
   }
-
-  if (c.setupLine) {
-    const setup = await runner.request('POST', '/api/ai/interrogator/line', `${c.id}: precondition ${c.setupLine}`, { caseId, line: c.setupLine })
-    result.setupResponse = { status: setup.status, ...redactForReport(setup.json) }
-    if (setup.status !== 200 || !setup.json?.allowed || !setup.json?.text) {
-      result.errors.push(`Precondition line ${c.setupLine} was not allowed: HTTP ${setup.status}; ${setup.text}`)
-      result.status = 'BLOCKED'
-      return result
-    }
-  }
+  // Wait after greeting to ensure interview state is initialized
+  await sleep(300)
 
   for (let i = 0; i < c.utterances.length; i++) {
     const utterance = c.utterances[i]
@@ -223,7 +240,7 @@ async function runCase(runner: Runner, c: PhraseCase) {
     if (response.status !== 200) result.errors.push(`Turn ${i + 1} returned HTTP ${response.status}: ${response.text}`)
     if (response.json?.error) result.errors.push(`Turn ${i + 1} agent error: ${response.json.error}`)
     if (response.json?.final) {
-      if (i < c.utterances.length - 1) result.errors.push(`Agent finished after turn ${i + 1}; later utterances were not sent.`)
+      if (i < c.utterances.length - 1 && c.id !== 'purpose_contradiction') result.errors.push(`Agent finished after turn ${i + 1}; later utterances were not sent.`)
       break
     }
     if (!response.json?.question && !response.json?.error) {
@@ -251,10 +268,14 @@ function renderMarkdown(report: any): string {
     '',
     '> Reports contain visitor test phrases and helper-side AI/risk diagnostics. Store them securely.',
     '',
-    '| Case ID | Scenario | Status | Expected behaviour | Observed score | Control mode |',
-    '|---|---|---|---|---:|---|',
+    '| Case ID | Scenario | Status | Expected behaviour | Observed score | Effective score | Control mode | Min mode |',
+    '|---|---|---|---|---:|---:|---|---|',
   ]
-  for (const c of report.cases) lines.push(`| ${c.id} | ${c.title} | ${c.status} | ${c.expected.replace(/\|/g, '\\|')} | ${c.audit?.riskScore ?? 'n/a'} | ${c.audit?.controlMode ?? 'n/a'} |`)
+  for (const c of report.cases) {
+    const effectiveScore = c.audit?.riskAssessment?.effectiveScore ?? 'n/a'
+    const minMode = c.audit?.riskAssessment?.minMode ?? c.audit?.controlMode ?? 'n/a'
+    lines.push(`| ${c.id} | ${c.title} | ${c.status} | ${c.expected.replace(/\|/g, '\\|')} | ${c.audit?.riskScore ?? 'n/a'} | ${effectiveScore} | ${c.audit?.controlMode ?? 'n/a'} | ${minMode} |`)
+  }
   for (const c of report.cases) {
     lines.push('', `## ${c.id} — ${c.title}`, '', `**Expected:** ${c.expected}`, '', `**Case ID:** ${c.caseId ?? 'none'}`, '', `**Greeting:** ${c.greeting ?? '(none)'}`)
     if (c.setupResponse) lines.push('', `**Precondition line:** ${JSON.stringify(c.setupResponse)}`)

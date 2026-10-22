@@ -36,11 +36,19 @@ export default function NotificationsPage() {
       // Mark all unread notifications as read
       const unreadIds = data.notifications.filter((n: Notification) => !n.read).map((n: Notification) => n.id)
       if (unreadIds.length > 0) {
-        await fetch('/api/notifications', {
+        const markRes = await fetch('/api/notifications', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ notificationIds: unreadIds }),
         })
+        if (markRes.ok) {
+          // Reload to get updated read status
+          const reloadRes = await fetch('/api/notifications', { cache: 'no-store' })
+          if (reloadRes.ok) {
+            const reloadData = await reloadRes.json()
+            setNotifications(reloadData.notifications ?? [])
+          }
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to load notifications')

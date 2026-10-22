@@ -97,7 +97,9 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ notificationIds: [notificationId] }),
       })
       console.log('Mark as read response:', res.status, await res.text())
-      loadNotifications()
+      if (res.ok) {
+        await loadNotifications()
+      }
     } catch (e) {
       console.error('Failed to mark notification as read', e)
     }
@@ -288,12 +290,14 @@ function WorkspaceShell({ children }: { children: React.ReactNode }) {
                         // Mark all unread notifications as read when opening the dropdown
                         const unreadIds = notifications.filter(n => !n.read).map(n => n.id)
                         if (unreadIds.length > 0) {
-                          await fetch('/api/notifications', {
+                          const res = await fetch('/api/notifications', {
                             method: 'PATCH',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ notificationIds: unreadIds }),
                           })
-                          loadNotifications()
+                          if (res.ok) {
+                            await loadNotifications()
+                          }
                         }
                       }
                     }}

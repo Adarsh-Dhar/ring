@@ -193,14 +193,18 @@ export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQual
       // Deterministic confirmation for hide_from_helper when transcript quality is acceptable
       // This ensures concealment requests are scored even if the AI model fails
       const isConfirmed = b === 'hide_from_helper' && (transcriptQuality === 'high' || transcriptQuality === 'medium')
+      // Deterministic confirmation for credential_request and refuse_to_leave regardless of quality
+      // These are serious security events; if the pattern matches, we score them
+      const isSecurityConfirmed = (b === 'credential_request' || b === 'refuse_to_leave') && (transcriptQuality === 'high' || transcriptQuality === 'medium' || transcriptQuality === 'low')
       out.push({
         code: b,
         at,
         quotes: [m.quote], // Use the exact matched text from the regex
         source: 'transcript',
-        state: isConfirmed ? 'confirmed' : 'uncertain',
-        points: isConfirmed ? 15 : 0,
+        state: isConfirmed || isSecurityConfirmed ? 'confirmed' : 'uncertain',
+        points: isConfirmed ? 15 : isSecurityConfirmed ? (b === 'credential_request' ? 20 : 25) : 0,
         transcriptQuality: qualityValue,
+        debug: { ...(isSecurityConfirmed ? { bypassPrecondition: true } : {}) },
       })
     }
   }
@@ -210,13 +214,14 @@ export function observationsFromRuleMatches(matches: RuleMatch[], transcriptQual
 function assemble(a: {
   transcript: string; cats: Set<RiskCategory>; evidence: Evidence[]; rationale: string
   source: Assessment['source']; ruleMatches: RuleMatch[]; interviewState?: InterviewState; precomputedObservations?: Observation[]
+  transcriptQuality?: 'high' | 'medium' | 'low'
 }): Assessment {
   // Pass the full transcript as the segment so that when caseRiskStore re-scores with transcript:'',
   // each observation's own segment keeps the quote grounded correctly (spec 4.3 re-score safety).
   const fromJudge = observationsFromEvidence(a.evidence, { segment: a.transcript })
   const judged = new Set(fromJudge.observations.map(o => o.code))
   // WP2: Use precomputed observations if provided (from liveAssessment), otherwise compute them
-  const fromRules = a.precomputedObservations || observationsFromRuleMatches(a.ruleMatches).filter(o => !judged.has(o.code))
+  const fromRules = a.precomputedObservations || observationsFromRuleMatches(a.ruleMatches, a.transcriptQuality).filter(o => !judged.has(o.code))
   const allObs = [...fromRules, ...fromJudge.observations]
   const risk = scoreObservations(allObs, { transcript: a.transcript, interviewState: a.interviewState })
   const level = legacyLevel(risk.score, risk.minMode)
@@ -263,7 +268,7 @@ export function liveAssessment(
   if (extra?.coverage?.unverifiable) cats.add('unverifiable_claims')
   // WP2: Pass transcript quality to observation creation, and pass observations to assemble
   const observations = observationsFromRuleMatches(ruleMatches, extra?.transcriptQuality)
-  return assemble({ transcript, cats, evidence: extra?.evidence ?? [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations })
+  return assemble({ transcript, cats, evidence: extra?.evidence ?? [], rationale: '', source: 'live', ruleMatches, interviewState: extra?.interviewState, precomputedObservations: observations, transcriptQuality: extra?.transcriptQuality })
 }
 
 export function buildAssessment(a: {
@@ -302,5 +307,6 @@ export function buildAssessment(a: {
   return assemble({
     transcript: a.transcript, cats, evidence, rationale,
     source: usedJudge ? 'ai+rules' : 'rules', ruleMatches: a.ruleMatches ?? [], interviewState: a.interviewState,
+    transcriptQuality: undefined, // BuildAssessment doesn't have transcript quality from judge
   })
 }

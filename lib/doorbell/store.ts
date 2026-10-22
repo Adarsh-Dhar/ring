@@ -4,7 +4,7 @@ import { fetchDeviceOnline, listDeviceIds, forceRefreshConnection, ringConfigure
 import { pushToMembership, sendSms, recentFailures, type PushSub } from './notify'
 import { getHousehold, getResidentEpoch, updateHousehold, getMembershipsForHousehold as dbGetMembershipsForHousehold } from '../db/households'
 import { getMembership, getApprovedMemberships } from '../db/memberships'
-import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, deleteOldNotificationsForHousehold, claimEscalationStep, getOverdueCases } from '../db/cases'
+import { createCase, getCase, getCasesForHousehold, getOpenCasesForHousehold, getActiveLifecycleCase, updateCase, deleteOldCases, deleteOldNotificationsForHousehold, claimEscalationStep, getOverdueCases, deleteSimulatorCases } from '../db/cases'
 import { escalateDueCase, type EscalationDeps } from './escalation'
 import { backupTimeoutSec } from '@/lib/doorstep/helperEscalation'
 import { effectiveModeFor, effectiveScore } from '@/lib/doorstep/collaborationController'
@@ -1658,7 +1658,13 @@ export async function setPlannedMode(householdId: string, mode: PlannedMode) {
 
 export async function resetAll(householdId: string) {
   const state = await getOrCreateState(householdId)
-  state.cases.length = 0
+  // For simulator reset, remove ALL cases with sim-device IDs regardless of lifecycle
+  // This is safe because sim devices are for testing only
+  state.cases = state.cases.filter(c => {
+    const isSimDevice = !c.deviceId || c.deviceId.startsWith('sim-')
+    // Keep only non-sim-device cases
+    return !isSimDevice
+  })
   state.offline      = false
   state.devices      = {}
   state.recurring    = []
@@ -1666,6 +1672,8 @@ export async function resetAll(householdId: string) {
   // Re-read plannedMode from DB so tests that change it don't bleed into the next test
   const household = await getHousehold(householdId)
   if (household) state.plannedMode = asMode((household as any).plannedMode)
+  // Delete simulator cases from database so they don't get reloaded
+  await deleteSimulatorCases(householdId)
   await deleteOldCases(householdId, 0)
   await deleteOldExpectedVisits(householdId)
   await deleteOldNotificationsForHousehold(householdId, 0)

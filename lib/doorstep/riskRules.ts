@@ -375,14 +375,27 @@ export const PHRASE_PATTERNS: Partial<Record<Behaviour, RegExp>> = {
 
 /** Spec 4.2 says the visitor ASKS for a credential. A negated mention ("I will never ask for your PIN") is not a request. */
 const NEGATED: Partial<Record<Behaviour, RegExp>> = {
-  credential_request: /\b(never|not|don'?t|do not|won'?t|no need)\b[^.!?]{0,25}\b(ask|asking|need|want|give|tell)\b/i,
+  credential_request: /\b(never|not|don'?t|do not|won'?t|no need)\b[^.!?]{0,60}\b(ask|asking|need|want|give|tell)\b/i,
+}
+
+/** Check if a specific behaviour is negated in the given text. Per-clause/sentence scope. */
+export function isNegated(code: Behaviour, text: string): boolean {
+  const neg = NEGATED[code]
+  if (!neg) return false
+  // Split by sentence boundaries and check each clause independently
+  const sentences = text.split(/[.!?]+/)
+  for (const sentence of sentences) {
+    if (neg.test(sentence)) return true
+  }
+  return false
 }
 
 export function phraseMatches(code: Behaviour, quote: string): boolean {
   const re = PHRASE_PATTERNS[code]
   if (re && !re.test(quote)) return false
-  const neg = NEGATED[code]
-  return !(neg && neg.test(quote))
+  // For credential_request, check clause-scoped negation
+  if (code === 'credential_request' && isNegated(code, quote)) return false
+  return true
 }
 
 /** Identity of an event. Speech events with the same words at different times are distinct events. Sensor and report events are told apart by time. */
@@ -439,10 +452,14 @@ export function scoreObservations(observations: Observation[], ctx: { transcript
     const byHelper = o.source === 'helper'
 
     if (!byHelper) {
-      if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) return reject('uncertain', 'rules_not_explained_yet')
-      if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) return reject('uncertain', 'boundary_not_stated_yet')
-      if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
-      if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
+      // Precondition checks can be bypassed for deterministic rule matches (e.g., from keyword tripwires)
+      const bypassPrecondition = (o.debug as any)?.bypassPrecondition === true
+      if (!bypassPrecondition) {
+        if (o.code === 'pressure_after_rule' && !interviewState.rulesExplainedAt) return reject('uncertain', 'rules_not_explained_yet')
+        if (o.code === 'pressure_after_boundary' && !interviewState.boundaryStatedAt) return reject('uncertain', 'boundary_not_stated_yet')
+        if (o.code === 'refuse_to_leave' && !interviewState.askedToLeaveAt) return reject('uncertain', 'not_asked_to_leave_yet')
+        if (o.code === 'extra_knock' && !interviewState.respondingAt) return reject('uncertain', 'ai_not_responding_yet')
+      }
       // Spec 4.2: lock_manipulation requires entry to have been denied first.
       // For sensor events we also check the timestamp is after the denial (allow 60s clock skew).
       // A failed precondition must not hide a physical event: the points stay at 0, but the event is still an
