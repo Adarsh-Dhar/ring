@@ -70,7 +70,9 @@ export async function setCaseAi(caseId: string, data: {
       const verdict = data.interrogationVerdict || 'unclear'
       const risk = data.riskLevel ?? 'none'
       const title = risk === 'high' ? '⚠️ Doorbell: high-risk visitor' : risk === 'medium' ? '⚠️ Doorbell: check this visitor' : '🎙️ Doorbell AI update'
-      const body = `Visitor claims: ${data.visitorSummary.slice(0, 80)}${data.visitorSummary.length > 80 ? '...' : ''}. Verdict: ${verdict}.${risk !== 'none' ? ` Risk: ${risk}.` : ''}`
+      const idn = data.interrogationClaims?.identity
+      const who = idn ? `${idn.name ?? 'Name not given'}${idn.forWhom ? `, says they know ${idn.forWhom}`: ''}.` : ''
+      const body = `${who}Visitor claims: ${data.visitorSummary.slice(0, 80)}${data.visitorSummary.length > 80 ? '...' : ''}. Verdict: ${verdict}.${risk !== 'none' ? ` Risk: ${risk}.` : ''}`
       for (const m of helperMemberships) {
         // In-app notification (separate from web push; failure must not block the push or the save)
         await getDb().notification.create({

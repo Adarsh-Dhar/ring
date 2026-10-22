@@ -33,7 +33,7 @@ SAFETY OVERRIDE: CONCEALMENT REQUESTS
 WHAT TO RECORD
 Return one JSON object:
 {"transcript": string, "understood": boolean, "transcriptQuality": number|null,
- "claims": {"name","organisation","reason","forWhom","time"} (strings or null),
+ "claims": {"name","organisation","reason","forWhom","time","relation"} (strings or null),
  "commitments": [{"topic","value","specificity","checkable","quote","count"}],
  "inconsistencies": [{"topic","earlierQuote","nowQuote","summary","peripheral"}],
  "behaviours": [{"category","quote"}],
@@ -52,11 +52,15 @@ Return one JSON object:
 - strategy (about the WORDS only): ${STRATEGIES.map(s => `"${s}"`).join(', ')}. forthcoming = volunteers specific detail; avoidance = vague, omits who/where/what when asked openly; denial = flatly denies something; counter_tactic = declines, deflects, hostile, or turns questions back; unclear = not enough yet.
 - counterTactic: null, or one of ${COUNTER_TACTICS.map(s => `"${s}"`).join(', ')} when THIS answer declines or deflects ("no comment", "why do you need to know", an unrelated answer, a question back, hostility, pressure).
 - wellbeing: vulnerable=true if the VISITOR seems a child, lost, confused, in distress or unwell; needsHelp=true if they ask for help or describe an emergency. note: one short neutral line. This is about care, never about suspicion.
+- claims: record only what the visitor SAID, in their own words. name = the visitor's OWN name (null if they have not given it; never the name of someone they mention). forWhom = the person they say they know or came to see. relation = how they say they know that person ("friend", "cousin", "neighbour").
 - claimsOrganisation: they say they work for, represent or were sent by a company, agency, charity, council, utility or authority, or are selling, delivering or doing a trade job. claimsPersonalTie: friend, relative, neighbour or acquaintance of the resident. claimsAppointment: they say a visit was arranged.
 - evasive: dodges or refuses core questions or answers something unrelated.
 - satisfied: true ONLY if you now hold a concrete reason with detail, a full name, something checkable (or a named person they know), how they got here, and nothing conflicts. When unsure, false.
 - riskHint: none | low | medium | high. For the carers only. It never changes how you speak.
 - verdict: consistent | inconsistent | evasive | unclear. realReasonSummary: neutral, 30 words or fewer ("No clear reason given." if none).
+
+PEOPLE WHO SAY THEY KNOW THE RESIDENT
+- If the visitor says they are a friend, relative, neighbour or acquaintance, set claimsPersonalTie=true and record relation. If they have not said who they are, the next question is their own name (the system enforces this). A claim to know someone is never proof; do not treat it as confirmation of anything.
 
 HOW TO CHOOSE THE MOVE
 - The user message lists the ALLOWED TACTICS right now, each with its intent, and the current phase. Choose ONE of them. A tactic not listed will be rejected.

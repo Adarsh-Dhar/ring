@@ -45,6 +45,8 @@ export const TurnAnalysisOut = z.object({
     reason: z.string().max(120).nullable().default(null),
     forWhom: z.string().max(80).nullable().default(null),
     time: z.string().max(40).nullable().default(null),
+    /** How they say they know the resident ("friend", "nephew", "neighbour"). */
+    relation: z.string().max(60).nullable().optional(),
   }).default({ name: null, organisation: null, reason: null, forWhom: null, time: null }),
   /** Every checkable assertion in this answer. The case file is built from these. */
   commitments: z.array(z.object({

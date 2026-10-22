@@ -39,3 +39,17 @@ screen behave exactly as before if AI is off, slow, over quota or wrong.
 - Visitor UI for the intake questions (`app/visit/[token]/page.tsx`) is not wired: the API is ready
   (`POST .../intake` with `{statusToken}` to start, `{statusToken, answer}` to reply).
 - Could not run `tsc`/`vitest`/`prisma generate` here (no `node_modules`, no network). Run `npm i && npx prisma generate && npm run typecheck && npm test`.
+
+
+## Visitors who say they know the resident
+
+If a visitor says they are a friend, relative, neighbour or acquaintance of the resident, the door asks **who they are** before it
+ends the interview, and, if still open, **how they know them**. Code decides this (`lib/ai/interrogation/identity.ts`, used by
+`playbook.ts`); the model only words the question (for example "May I have your name, please?").
+
+- Asked once each, never pressed. A decline gets autonomy support, as for every other question.
+- Exempt from `AI_INTERVIEW_MAX_QUESTIONS` (default 1 follow-up), so the interview no longer ends before the name is asked.
+- The helper card shows **Visitor claims to be** directly under the risk badge: the name (or "Name not given yet" / "Declined to give a name"),
+  who they say they know and how, and always "Not verified". It is display only and never changes the risk score.
+- A name or person the model reports must appear in what the visitor actually said, otherwise it is dropped.
+

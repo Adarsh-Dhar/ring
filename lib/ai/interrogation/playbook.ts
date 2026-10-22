@@ -15,6 +15,7 @@ import { TACTICS, type Tactic, type Move, type CounterTactic } from './schemas'
 import { MAX_CONSECUTIVE_DECLINES, type CaseFile } from './casefile'
 import type { Slot } from './plan'
 import type { EvidenceItem } from './evidence'
+import { identityObjectiveDue, IDENTITY_RATIONALE } from './identity'
 
 export const TACTIC_INTENT: Record<Tactic, string> = {
   probe_specifics: 'Narrow what they said to who / what / where / when, using their own words. Do not reveal what you know.',
@@ -49,6 +50,8 @@ export function allowedTactics(ctx: MoveContext): Tactic[] {
   if (!ctx.understood) return ['clarify_audio']
   if (f.consecutiveDeclines >= MAX_CONSECUTIVE_DECLINES) return ['close']
   if (ctx.counterTactic) return ['autonomy_support', 'close']
+  // They say they know the resident but have not said who they are: ask that first (see identity.ts).
+  if (identityObjectiveDue(f)) return ['probe_specifics']
 
   const ok = new Set<Tactic>(TACTICS)
   ok.delete('clarify_audio')
@@ -82,6 +85,12 @@ export interface ChosenMove { move: Move; overridden: boolean; note: string; all
 
 export function chooseMove(proposed: Move | null, ctx: MoveContext): ChosenMove {
   const allowed = allowedTactics(ctx)
+  // Identity first. The model may word the question, but whether it is asked is decided here.
+  const due = ctx.understood && !ctx.counterTactic ? identityObjectiveDue(ctx.file) : null
+  if (due && !(proposed?.tactic === 'probe_specifics' && proposed.objective === due)) {
+    const move: Move = { tactic: 'probe_specifics', objective: due, rationale: IDENTITY_RATIONALE[due] ?? 'Identity question' }
+    return { move, overridden: true, note: `Visitor says they know the resident: asking for ${due} first`, allowed }
+  }
   // The same move on the same objective twice in a row is a repeat. (A new inconsistency may be clarified again.)
   const last = ctx.file.moves[ctx.file.moves.length - 1]
   const repeat = !!proposed && !!last && last.tactic === proposed.tactic && last.objective === proposed.objective

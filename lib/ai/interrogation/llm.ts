@@ -11,6 +11,7 @@ import { TurnAnalysisOut, SpeakerOut, type Tactic, type TurnAnalysisRaw, type Mo
 import { playbookText, TACTIC_INTENT } from './playbook'
 import type { CaseFile } from './casefile'
 import { SLOT_LABEL } from './plan'
+import { OBJECTIVE_HINT } from './identity'
 
 export type AnswerInput = { typed: string } | { audio: Buffer; mimeType: string }
 
@@ -91,6 +92,7 @@ export async function speak(i: SpeakCall, deps: LlmDeps = realLlm): Promise<stri
     system: SPEAKER_SYSTEM,
     parts: [{ text: [
       `Move: ${i.move.tactic}${i.move.objective ? ` (about: ${SLOT_LABEL[i.move.objective]})` : ''}\nIntent: ${TACTIC_INTENT[i.move.tactic]}\nWhy: ${sanitize(i.move.rationale, 200)}`,
+      i.move.objective && OBJECTIVE_HINT[i.move.objective] ? `Objective guidance: ${OBJECTIVE_HINT[i.move.objective]}` : '',
       fact, spoken, caseFileDigest(i.file, []), review,
     ].join('\n\n') }],
   })

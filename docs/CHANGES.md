@@ -6,6 +6,12 @@ was changed, which files were touched, and how to verify the fix.
 
 ---
 
+## Interrogator asks who a self-described friend or relative is
+
+See the end of `docs/AI_AGENTS.md`. Adds `lib/ai/interrogation/identity.ts`, a forced name question, and the "Visitor claims to be" strip on the helper card.
+
+---
+
 ## Guardian role removed
 
 Only resident (one), helper (many) and visitors (planned and unplanned) remain. See `docs/ROLES.md`.

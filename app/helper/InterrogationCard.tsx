@@ -4,8 +4,14 @@ import { useEffect, useState } from 'react'
 
 type InterrogationTurn = { question: string; transcript: string; timestamp: number }
 type ChecklistItem = { slot: string; label: string; status: 'missing' | 'vague' | 'specific' | 'refused'; asked: number; note?: string }
+type ClaimedIdentity = {
+  name: string | null; nameStatus: 'given' | 'declined' | 'not_given'
+  relation: string | null; forWhom: string | null; organisation: string | null; summary: string
+}
 type Claims = {
   name: string | null; organisation: string | null; reason: string | null; forWhom: string | null; time: string | null
+  /** Who the visitor SAYS they are. A claim, never verified. */
+  identity?: ClaimedIdentity | null
   checklist?: ChecklistItem[]
 }
 
@@ -162,6 +168,25 @@ function RiskBar({ level, live, turns }: { level: RiskLevel; live: boolean; turn
   )
 }
 
+/** Who the visitor says they are, shown right under the risk score. Always labelled as unverified. */
+function IdentityStrip({ identity }: { identity: ClaimedIdentity }) {
+  const who = identity.name ?? (identity.nameStatus === 'declined' ? 'Declined to give a name' : 'Name not given yet')
+  return (
+    <div className="mb-2 rounded-lg bg-slate-900 p-2" aria-label="Who the visitor says they are">
+      <p className="text-xs uppercase tracking-wide text-slate-400">Visitor claims to be</p>
+      <p className={`font-semibold ${identity.name ? '' : 'text-amber-300'}`}>{who}</p>
+      {(identity.forWhom || identity.relation) && (
+        <p className="text-slate-300">
+          {identity.forWhom ? `Says they know ${identity.forWhom}` : 'Says they are'}
+          {identity.relation ? ` (${identity.relation})` : ''}
+        </p>
+      )}
+      {identity.organisation && <p className="text-slate-300">From: {identity.organisation}</p>}
+      <p className="mt-1 text-xs text-amber-300">⚠️ Not verified. This is only what the visitor said.</p>
+    </div>
+  )
+}
+
 /** Advisory AI info for an open case. Renders nothing for planned visits. */
 export default function InterrogationCard({ caseId }: { caseId: string }) {
   const [ai, setAi] = useState<Ai | null>(null)
@@ -259,6 +284,8 @@ export default function InterrogationCard({ caseId }: { caseId: string }) {
   return (
     <div className="mb-3 rounded-xl bg-slate-800 p-3 text-sm space-y-3">
       <RiskBar level={riskLevel} live={ai?.interrogationState === 'asking' || ai?.interrogationState === 'listening'} turns={turns.length} />
+      {/* Who the visitor says they are, next to the score */}
+      {claims?.identity && <IdentityStrip identity={claims.identity} />}
       {/* Risk assessment: the first thing a helper reads */}
       {(hasRisk || ai?.interrogationState === 'done') && (
         <div className={`rounded-lg p-3 ${RISK_BOX[riskLevel]}`}>

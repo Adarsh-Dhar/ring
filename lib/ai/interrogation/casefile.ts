@@ -40,7 +40,7 @@ export interface StoredAnalysis {
   riskHint: 'none' | 'low' | 'medium' | 'high'
   transcriptQuality?: 'high' | 'medium' | 'low'
   /** What the visitor said about themselves in this answer, for the helper card. */
-  claims?: { name: string | null; organisation: string | null; reason: string | null; forWhom: string | null; time: string | null }
+  claims?: { name: string | null; organisation: string | null; reason: string | null; forWhom: string | null; time: string | null; relation?: string | null }
   summary?: string | null
   verdict?: 'consistent' | 'inconsistent' | 'evasive' | 'unclear'
   /** The move chosen for the question asked AFTER this answer. */

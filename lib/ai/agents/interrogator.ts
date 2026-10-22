@@ -20,6 +20,7 @@ import { foldCaseFile, planStateOf, isStalled, analysisOf, type InterrogationTur
 import { ingestEvidence, householdTerms } from '@/lib/ai/interrogation/evidence'
 import { analyseTurn, composeQuestion, riskEvidenceOf } from '@/lib/ai/interrogation/engine'
 import { decideNext, type DecisionContext } from '@/lib/ai/interrogation/respond'
+import { identityObjectiveDue, IDENTITY_EXTRA_QUESTIONS, claimsBlock } from '@/lib/ai/interrogation/identity'
 import { MAX_TURNS } from './intake'
 
 export type InterrogatorState = 'idle' | 'asking' | 'listening' | 'done' | 'failed' | 'unsupported' | 'greeting'
@@ -44,6 +45,8 @@ export type FinishReason =
 
 /** Operator ceiling on follow-up questions. The interview normally ends well before it (satisfied, declined twice, a safety event). */
 const MAX_FOLLOW_UPS = Number(process.env.AI_INTERVIEW_MAX_QUESTIONS || 1)   // greeting + 1 follow-up = 2 questions
+/** A visitor who says they know the resident is also asked who they are (and how they know them), once each, even past the ceiling above. */
+const IDENTITY_QUESTIONS_ALLOWED = IDENTITY_EXTRA_QUESTIONS
 
 /** Consecutive silent turns (nothing intelligible) before we assume the visitor left. */
 const SILENT_LIMIT = 3
@@ -272,9 +275,11 @@ export async function processAnswer(
       hasPreconditionLine: missing ? PRECONDITION_LINE[String(missing.debug?.why)] : null,
     }
     const decision = decideNext(decisionCtx)
+    // Live: the helper sees who the visitor claims to be next to the risk score while the interview is still running.
+    const liveClaims = { ...claimsBlock(analyses, liveText), checklist: coverageSummary(plan, r.file.answered) }
     const persist = (extra: Record<string, unknown> = {}) => setCaseAi(caseId, {
       interrogationTurns: updatedTurns as any, interrogationState: 'asking',
-      visitorSummary: r.summary ?? undefined,
+      visitorSummary: r.summary ?? undefined, interrogationClaims: liveClaims as any,
       riskLevel: live.level, riskFlags: live.labels, riskAssessment: { ...live, control } as any, ...extra,
     })
 
@@ -349,7 +354,9 @@ export async function processAnswer(
       await finishInterrogation(householdId, caseId, updatedTurns, 'done_verified')
       return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
-    if (questionsLeft !== null && questionsLeft <= 0) {
+    // The identity question (who are you / how do you know them) is exempt from the ceiling. Each is asked once, so this is bounded.
+    const identityDue = identityObjectiveDue(r.file) !== null && IDENTITY_QUESTIONS_ALLOWED > 0
+    if (questionsLeft !== null && questionsLeft <= 0 && !identityDue) {
       await finishInterrogation(householdId, caseId, updatedTurns, 'max_turns')
       return { question: null, final: true, close: await closeWith(householdId, caseId, 'close') }
     }
@@ -451,9 +458,8 @@ async function finishInterrogation(
   const finalTurn = turns[turns.length - 1]
   const summary = o.summary || [...analyses].reverse().find(a => a.summary)?.summary || clampWords(finalTurn?.transcript || 'Visitor spoke but the reason is unclear.', 30)
   const verdict = last?.verdict || 'unclear'
-  // Latest non-empty value per field, across all answers.
-  const claims = { name: null, organisation: null, reason: null, forWhom: null, time: null } as Record<'name' | 'organisation' | 'reason' | 'forWhom' | 'time', string | null>
-  for (const a of analyses) for (const k of Object.keys(claims) as (keyof typeof claims)[]) if (a.claims?.[k]) claims[k] = a.claims[k]
+  // Latest non-empty value per field across all answers, plus who the visitor says they are (a claim, never verified).
+  const claims = claimsBlock(analyses, allTranscripts)
 
   // Write the fresh model pass through the single risk writer.
   const { applyRiskEdit } = await import('@/lib/doorstep/caseRiskStore')
@@ -486,6 +492,7 @@ async function finishInterrogation(
  *  which runs the dispatcher (gate, audit, stamp). `allowed` is advisory, for the UI. */
 export async function interrogatorScript(householdId: string, _residentName: string | null, caseId?: string) {
   const allowed = caseId ? await allowedLines(householdId, caseId) : null   // null = no case to gate against
-  return { allowed, listenSeconds: LISTEN_SECONDS, maxTurns: Number.isFinite(MAX_TURNS) ? MAX_TURNS : null }
+  const shown = Number.isFinite(MAX_FOLLOW_UPS) ? MAX_FOLLOW_UPS + 1 + IDENTITY_QUESTIONS_ALLOWED : null   // answers the interview can take at most
+  return { allowed, listenSeconds: LISTEN_SECONDS, maxTurns: shown }
 }
 export { wrapPcmAsWav }
